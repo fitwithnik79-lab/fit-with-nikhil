@@ -43,3 +43,47 @@ export async function searchExerciseVideos(exerciseName: string) {
     return [];
   }
 }
+
+export async function analyzeMealImage(base64Image: string, mimeType: string) {
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: {
+        parts: [
+          {
+            inlineData: {
+              data: base64Image,
+              mimeType: mimeType,
+            },
+          },
+          {
+            text: "Analyze this meal image. Identify the food items and estimate the total calories, protein, carbs, and fats. Return the result as a JSON object.",
+          },
+        ],
+      },
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            mealName: { type: Type.STRING },
+            calories: { type: Type.NUMBER },
+            protein: { type: Type.NUMBER },
+            carbs: { type: Type.NUMBER },
+            fats: { type: Type.NUMBER },
+            ingredients: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING }
+            },
+            advice: { type: Type.STRING, description: "Short nutritional advice for this meal" }
+          },
+          required: ["mealName", "calories", "protein", "carbs", "fats", "ingredients", "advice"]
+        }
+      }
+    });
+    return JSON.parse(response.text || "{}");
+  } catch (error) {
+    console.error("Error analyzing meal image:", error);
+    return null;
+  }
+}

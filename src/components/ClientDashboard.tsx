@@ -37,7 +37,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import Chat from './Chat';
-import { generateMotivationalMessage } from '../lib/gemini';
+import { generateMotivationalMessage, analyzeMealImage } from '../lib/gemini';
 import { 
   format, 
   startOfMonth, 
@@ -54,6 +54,7 @@ import {
   startOfDay
 } from 'date-fns';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
+import { Camera, Upload, Settings, User as UserIcon2, LogOut, Info } from 'lucide-react';
 
 function getYouTubeId(url: string) {
   const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
@@ -76,7 +77,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   const [submitting, setSubmitting] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [adminProfile, setAdminProfile] = useState<UserProfile | null>(null);
-  const [activeTab, setActiveTab] = useState<'dash' | 'calendar' | 'goals' | 'program' | 'meal' | 'progress' | 'badges' | 'classes'>('dash');
+  const [activeTab, setActiveTab] = useState<'dash' | 'calendar' | 'goals' | 'program' | 'meal' | 'progress' | 'badges' | 'classes' | 'profile' | 'meal-ai'>('dash');
   const [selectedWorkout, setSelectedWorkout] = useState<Workout | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [metrics, setMetrics] = useState<BodyMetrics[]>([]);
@@ -182,6 +183,18 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
         motivationalMessage,
         createdAt: serverTimestamp()
       }).catch(err => handleFirestoreError(err, OperationType.CREATE, 'feedback'));
+
+      // Automatically send a message to the coach
+      if (adminProfile) {
+        await addDoc(collection(db, 'messages'), {
+          senderId: user.uid,
+          receiverId: adminProfile.uid,
+          text: `Workout Completed! ${profile.displayName || 'Client'} finished Week ${workout.weekNumber} Day ${workout.dayNumber}. Notes: ${clientNote || 'No notes provided.'}`,
+          isRead: false,
+          type: 'motivation',
+          createdAt: serverTimestamp()
+        }).catch(err => handleFirestoreError(err, OperationType.CREATE, 'messages'));
+      }
       
       setShowFeedbackForm(false);
       setClientNote('');
@@ -214,10 +227,9 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     { id: 'calendar', label: 'Calendar', icon: CalendarIcon },
     { id: 'goals', label: 'Goals and Habits', icon: Target },
     { id: 'program', label: 'Training Program', icon: Folder },
-    { id: 'meal', label: 'Meal Plan', icon: Utensils },
+    { id: 'meal-ai', label: 'AI Meal Analysis', icon: Sparkles },
     { id: 'progress', label: 'Progress', icon: TrendingUp },
-    { id: 'badges', label: 'Badges Earned', icon: Award },
-    { id: 'classes', label: 'Classes', icon: Users },
+    { id: 'profile', label: 'My Profile', icon: UserIcon },
   ];
 
   return (
@@ -273,7 +285,13 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                 <MessageCircle className="w-4 h-4" />
                 Message
               </button>
-              <button className="flex items-center gap-2 text-zinc-500 hover:text-orange-500 transition-colors text-sm font-medium">
+              <button 
+                onClick={() => {
+                  setActiveTab('profile');
+                  setIsMobileMenuOpen(false);
+                }}
+                className="flex items-center gap-2 text-zinc-500 hover:text-orange-500 transition-colors text-sm font-medium"
+              >
                 <UserIcon className="w-4 h-4" />
                 View Profile
               </button>
@@ -372,6 +390,28 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                     </div>
                   </div>
                 )}
+              </motion.div>
+            )}
+
+            {activeTab === 'profile' && (
+              <motion.div
+                key="profile"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+              >
+                <ProfileSection user={user} profile={profile} />
+              </motion.div>
+            )}
+
+            {activeTab === 'meal-ai' && (
+              <motion.div
+                key="meal-ai"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+              >
+                <MealAI user={user} />
               </motion.div>
             )}
 
@@ -941,6 +981,253 @@ function WorkoutCard({
           </motion.div>
         )}
       </AnimatePresence>
+    </div>
+  );
+}
+
+function MealAI({ user }: { user: User }) {
+  const [image, setImage] = useState<string | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [result, setResult] = useState<any>(null);
+
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImage(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleAnalyze = async () => {
+    if (!image) return;
+    setAnalyzing(true);
+    try {
+      const base64 = image.split(',')[1];
+      const mimeType = image.split(';')[0].split(':')[1];
+      const analysis = await analyzeMealImage(base64, mimeType);
+      setResult(analysis);
+    } catch (error) {
+      console.error('Error analyzing meal:', error);
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  return (
+    <div className="max-w-2xl mx-auto space-y-8">
+      <div className="text-center space-y-2">
+        <div className="inline-flex p-4 bg-orange-500/10 rounded-full text-orange-500 mb-4">
+          <Sparkles className="w-8 h-8" />
+        </div>
+        <h2 className="text-3xl font-bold">AI Meal Analysis</h2>
+        <p className="text-zinc-500">Upload a photo of your meal and let Nik's AI analyze the nutrition.</p>
+      </div>
+
+      <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 space-y-6">
+        {!image ? (
+          <label className="flex flex-col items-center justify-center border-2 border-dashed border-zinc-800 rounded-3xl p-12 cursor-pointer hover:border-orange-500/50 transition-all group">
+            <div className="p-4 bg-zinc-950 rounded-2xl text-zinc-500 group-hover:text-orange-500 transition-colors mb-4">
+              <Camera className="w-8 h-8" />
+            </div>
+            <span className="text-zinc-400 font-bold">Click to upload or take a photo</span>
+            <span className="text-zinc-600 text-xs mt-2">Supports JPG, PNG</span>
+            <input type="file" accept="image/*" className="hidden" onChange={handleImageChange} />
+          </label>
+        ) : (
+          <div className="space-y-6">
+            <div className="relative aspect-video rounded-2xl overflow-hidden border border-zinc-800">
+              <img src={image} alt="Meal" className="w-full h-full object-cover" />
+              <button 
+                onClick={() => { setImage(null); setResult(null); }}
+                className="absolute top-4 right-4 p-2 bg-black/50 backdrop-blur-md rounded-full text-white hover:bg-black transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            {!result && (
+              <button 
+                onClick={handleAnalyze}
+                disabled={analyzing}
+                className="w-full py-4 bg-orange-500 text-white font-bold rounded-2xl hover:bg-orange-600 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
+              >
+                {analyzing ? <Clock className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
+                {analyzing ? 'Analyzing Meal...' : 'Analyze Nutrition'}
+              </button>
+            )}
+          </div>
+        )}
+
+        {result && (
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="space-y-6 pt-6 border-t border-zinc-800"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-2xl font-bold text-orange-500">{result.mealName}</h3>
+              <div className="px-3 py-1 bg-orange-500/10 rounded-full text-[10px] font-bold text-orange-500 uppercase tracking-widest">
+                AI ESTIMATE
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800 text-center">
+                <div className="text-xl font-bold">{result.calories}</div>
+                <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Calories</div>
+              </div>
+              <div className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800 text-center">
+                <div className="text-xl font-bold text-blue-500">{result.protein}g</div>
+                <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Protein</div>
+              </div>
+              <div className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800 text-center">
+                <div className="text-xl font-bold text-green-500">{result.carbs}g</div>
+                <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Carbs</div>
+              </div>
+              <div className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800 text-center">
+                <div className="text-xl font-bold text-yellow-500">{result.fats}g</div>
+                <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Fats</div>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <h4 className="text-sm font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2">
+                <Info className="w-4 h-4" /> Ingredients Identified
+              </h4>
+              <div className="flex flex-wrap gap-2">
+                {result.ingredients.map((ing: string, i: number) => (
+                  <span key={i} className="px-3 py-1 bg-zinc-800 rounded-lg text-xs font-medium text-zinc-300">
+                    {ing}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div className="bg-orange-500/5 border border-orange-500/10 p-4 rounded-2xl">
+              <p className="text-sm text-zinc-300 italic">" {result.advice} "</p>
+            </div>
+          </motion.div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ProfileSection({ user, profile }: { user: User, profile: UserProfile }) {
+  const [formData, setFormData] = useState({
+    displayName: profile.displayName || '',
+    photoURL: profile.photoURL || '',
+    height: profile.height || '',
+    weight: profile.weight || '',
+    programGoals: profile.programGoals || '',
+  });
+  const [isSaving, setIsSaving] = useState(false);
+  const [message, setMessage] = useState<{ text: string, type: 'success' | 'error' } | null>(null);
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    setMessage(null);
+    try {
+      await updateDoc(doc(db, 'users', user.uid), formData)
+        .catch(err => handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}`));
+      setMessage({ text: 'Profile updated successfully!', type: 'success' });
+    } catch (error) {
+      console.error('Error updating profile:', error);
+      setMessage({ text: 'Failed to update profile.', type: 'error' });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="max-w-2xl mx-auto space-y-8">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-3xl font-bold tracking-tight">My Profile</h2>
+          <p className="text-zinc-500">Manage your personal information and preferences.</p>
+        </div>
+        <div className="w-16 h-16 rounded-full overflow-hidden border-2 border-orange-500/20">
+          <img 
+            src={formData.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.email}`} 
+            alt="Profile" 
+            className="w-full h-full object-cover"
+            referrerPolicy="no-referrer"
+          />
+        </div>
+      </div>
+
+      <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 space-y-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Display Name</label>
+            <input 
+              type="text" 
+              value={formData.displayName}
+              onChange={(e) => setFormData({ ...formData, displayName: e.target.value })}
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:ring-1 focus:ring-orange-500 outline-none"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Profile Picture URL</label>
+            <input 
+              type="text" 
+              value={formData.photoURL}
+              onChange={(e) => setFormData({ ...formData, photoURL: e.target.value })}
+              placeholder="https://example.com/photo.jpg"
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:ring-1 focus:ring-orange-500 outline-none"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Height (cm)</label>
+            <input 
+              type="number" 
+              value={formData.height}
+              onChange={(e) => setFormData({ ...formData, height: e.target.value })}
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:ring-1 focus:ring-orange-500 outline-none"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Weight (kg)</label>
+            <input 
+              type="number" 
+              value={formData.weight}
+              onChange={(e) => setFormData({ ...formData, weight: e.target.value })}
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:ring-1 focus:ring-orange-500 outline-none"
+            />
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest">My Fitness Goals</label>
+          <textarea 
+            value={formData.programGoals}
+            onChange={(e) => setFormData({ ...formData, programGoals: e.target.value })}
+            placeholder="What are you working towards?"
+            className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:ring-1 focus:ring-orange-500 outline-none min-h-[100px]"
+          />
+        </div>
+
+        {message && (
+          <div className={cn(
+            "p-4 rounded-xl text-sm font-medium",
+            message.type === 'success' ? "bg-green-500/10 text-green-500 border border-green-500/20" : "bg-red-500/10 text-red-500 border border-red-500/20"
+          )}>
+            {message.text}
+          </div>
+        )}
+
+        <button 
+          onClick={handleSave}
+          disabled={isSaving}
+          className="w-full py-4 bg-white text-black font-bold rounded-2xl hover:bg-zinc-200 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
+        >
+          {isSaving ? <Clock className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
+          {isSaving ? 'Saving Changes...' : 'Update Profile'}
+        </button>
+      </div>
     </div>
   );
 }
