@@ -1,0 +1,75 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "A user of the platform, either an admin or a client.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string", "enum": ["admin", "client"] },
+        "displayName": { "type": "string" },
+        "programGoals": { "type": "string", "description": "Client's fitness goals" },
+        "programDetails": { "type": "string", "description": "Details about the client's current program" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Workout": {
+      "title": "Workout",
+      "description": "A daily workout routine for a client.",
+      "type": "object",
+      "properties": {
+        "clientId": { "type": "string", "description": "UID of the client" },
+        "weekNumber": { "type": "integer" },
+        "dayNumber": { "type": "integer" },
+        "exercises": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "youtubeLink": { "type": "string", "format": "uri" },
+              "sets": { "type": "integer" },
+              "reps": { "type": "string" },
+              "weight": { "type": "string" },
+              "rest": { "type": "string" },
+              "coachNote": { "type": "string" }
+            }
+          }
+        }
+      },
+      "required": ["clientId", "weekNumber", "dayNumber", "exercises"]
+    },
+    "Feedback": {
+      "title": "Feedback",
+      "description": "Client feedback for a completed workout.",
+      "type": "object",
+      "properties": {
+        "clientId": { "type": "string" },
+        "workoutId": { "type": "string" },
+        "weekNumber": { "type": "integer" },
+        "dayNumber": { "type": "integer" },
+        "completionStatus": { "type": "boolean" },
+        "clientNote": { "type": "string" },
+        "motivationalMessage": { "type": "string", "description": "AI generated message" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["clientId", "workoutId", "completionStatus"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": "User",
+      "description": "User profiles and roles"
+    },
+    "/workouts/{workoutId}": {
+      "schema": "Workout",
+      "description": "Workout routines assigned to clients"
+    },
+    "/feedback/{feedbackId}": {
+      "schema": "Feedback",
+      "description": "Client feedback and completion tracking"
+    }
+  }
+}
