@@ -22,6 +22,9 @@ export interface BodyMetrics {
   waterIntake: number; // in ml or glasses
   stepCount: number;
   calories: number;
+  protein?: number;
+  carbs?: number;
+  fats?: number;
   weight?: number;
   createdAt: any;
 }

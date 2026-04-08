@@ -88,7 +88,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     const q = query(collection(db, 'users'), where('role', '==', 'admin'), limit(1));
     getDocs(q).then(snap => {
       if (!snap.empty) {
-        setAdminProfile(snap.docs[0].data() as UserProfile);
+        setAdminProfile({ uid: snap.docs[0].id, ...snap.docs[0].data() } as UserProfile);
       }
     });
   }, []);
@@ -411,7 +411,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -20 }}
               >
-                <MealAI user={user} />
+                <MealAI user={user} todayMetrics={todayMetrics} />
               </motion.div>
             )}
 
@@ -493,6 +493,55 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                   todayMetrics={todayMetrics} 
                   history={metrics} 
                 />
+
+                {/* Nutrition Breakdown */}
+                <div className="bg-zinc-900 p-8 rounded-[32px] border border-zinc-800 space-y-6">
+                  <h3 className="text-xl font-bold flex items-center gap-2">
+                    <Flame className="w-5 h-5 text-orange-500" />
+                    Daily Nutrition Breakdown
+                  </h3>
+                  <div className="grid grid-cols-3 gap-6">
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-end">
+                        <span className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Protein</span>
+                        <span className="text-lg font-bold text-blue-400">{todayMetrics?.protein || 0}g</span>
+                      </div>
+                      <div className="w-full h-2 bg-zinc-950 rounded-full overflow-hidden border border-zinc-800">
+                        <motion.div 
+                          initial={{ width: 0 }}
+                          animate={{ width: `${Math.min((todayMetrics?.protein || 0) / 2, 100)}%` }}
+                          className="h-full bg-blue-400" 
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-end">
+                        <span className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Carbs</span>
+                        <span className="text-lg font-bold text-green-400">{todayMetrics?.carbs || 0}g</span>
+                      </div>
+                      <div className="w-full h-2 bg-zinc-950 rounded-full overflow-hidden border border-zinc-800">
+                        <motion.div 
+                          initial={{ width: 0 }}
+                          animate={{ width: `${Math.min((todayMetrics?.carbs || 0) / 3, 100)}%` }}
+                          className="h-full bg-green-400" 
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-end">
+                        <span className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Fats</span>
+                        <span className="text-lg font-bold text-yellow-400">{todayMetrics?.fats || 0}g</span>
+                      </div>
+                      <div className="w-full h-2 bg-zinc-950 rounded-full overflow-hidden border border-zinc-800">
+                        <motion.div 
+                          initial={{ width: 0 }}
+                          animate={{ width: `${Math.min((todayMetrics?.fats || 0) / 1, 100)}%` }}
+                          className="h-full bg-yellow-400" 
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 space-y-6">
@@ -696,6 +745,9 @@ function MetricsTracker({ user, todayMetrics, history }: { user: User, todayMetr
   const [water, setWater] = useState(todayMetrics?.waterIntake || 0);
   const [steps, setSteps] = useState(todayMetrics?.stepCount || 0);
   const [calories, setCalories] = useState(todayMetrics?.calories || 0);
+  const [protein, setProtein] = useState(todayMetrics?.protein || 0);
+  const [carbs, setCarbs] = useState(todayMetrics?.carbs || 0);
+  const [fats, setFats] = useState(todayMetrics?.fats || 0);
   const [weight, setWeight] = useState(todayMetrics?.weight || 0);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -704,6 +756,9 @@ function MetricsTracker({ user, todayMetrics, history }: { user: User, todayMetr
       setWater(todayMetrics.waterIntake);
       setSteps(todayMetrics.stepCount);
       setCalories(todayMetrics.calories);
+      setProtein(todayMetrics.protein || 0);
+      setCarbs(todayMetrics.carbs || 0);
+      setFats(todayMetrics.fats || 0);
       setWeight(todayMetrics.weight || 0);
     }
   }, [todayMetrics]);
@@ -718,6 +773,9 @@ function MetricsTracker({ user, todayMetrics, history }: { user: User, todayMetr
         waterIntake: Number(water),
         stepCount: Number(steps),
         calories: Number(calories),
+        protein: Number(protein),
+        carbs: Number(carbs),
+        fats: Number(fats),
         weight: Number(weight),
         createdAt: serverTimestamp()
       };
@@ -812,6 +870,37 @@ function MetricsTracker({ user, todayMetrics, history }: { user: User, todayMetr
             className="w-full bg-black border border-zinc-800 rounded-xl px-4 py-2 text-xl font-bold focus:ring-1 focus:ring-purple-500 outline-none"
           />
           <p className="text-[10px] text-zinc-500 font-medium">Current Weight</p>
+        </div>
+      </div>
+
+      {/* Macronutrients Row */}
+      <div className="grid grid-cols-3 gap-4">
+        <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 space-y-2">
+          <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block">Protein (g)</span>
+          <input 
+            type="number" 
+            value={protein} 
+            onChange={(e) => setProtein(Number(e.target.value))}
+            className="w-full bg-black border border-zinc-800 rounded-xl px-4 py-2 text-lg font-bold text-blue-400 focus:ring-1 focus:ring-blue-500 outline-none"
+          />
+        </div>
+        <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 space-y-2">
+          <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block">Carbs (g)</span>
+          <input 
+            type="number" 
+            value={carbs} 
+            onChange={(e) => setCarbs(Number(e.target.value))}
+            className="w-full bg-black border border-zinc-800 rounded-xl px-4 py-2 text-lg font-bold text-green-400 focus:ring-1 focus:ring-green-500 outline-none"
+          />
+        </div>
+        <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 space-y-2">
+          <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block">Fats (g)</span>
+          <input 
+            type="number" 
+            value={fats} 
+            onChange={(e) => setFats(Number(e.target.value))}
+            className="w-full bg-black border border-zinc-800 rounded-xl px-4 py-2 text-lg font-bold text-yellow-400 focus:ring-1 focus:ring-yellow-500 outline-none"
+          />
         </div>
       </div>
 
@@ -985,10 +1074,11 @@ function WorkoutCard({
   );
 }
 
-function MealAI({ user }: { user: User }) {
+function MealAI({ user, todayMetrics }: { user: User, todayMetrics: BodyMetrics | null }) {
   const [image, setImage] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [result, setResult] = useState<any>(null);
+  const [logging, setLogging] = useState(false);
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1013,6 +1103,41 @@ function MealAI({ user }: { user: User }) {
       console.error('Error analyzing meal:', error);
     } finally {
       setAnalyzing(false);
+    }
+  };
+
+  const handleLogMeal = async () => {
+    if (!result) return;
+    setLogging(true);
+    try {
+      const todayStr = format(new Date(), 'yyyy-MM-dd');
+      const metricsData = {
+        clientId: user.uid,
+        date: todayStr,
+        calories: (todayMetrics?.calories || 0) + Number(result.calories),
+        protein: (todayMetrics?.protein || 0) + Number(result.protein),
+        carbs: (todayMetrics?.carbs || 0) + Number(result.carbs),
+        fats: (todayMetrics?.fats || 0) + Number(result.fats),
+        waterIntake: todayMetrics?.waterIntake || 0,
+        stepCount: todayMetrics?.stepCount || 0,
+        weight: todayMetrics?.weight || 0,
+        createdAt: serverTimestamp()
+      };
+
+      if (todayMetrics?.id) {
+        await updateDoc(doc(db, 'metrics', todayMetrics.id), metricsData)
+          .catch(err => handleFirestoreError(err, OperationType.UPDATE, `metrics/${todayMetrics.id}`));
+      } else {
+        await addDoc(collection(db, 'metrics'), metricsData)
+          .catch(err => handleFirestoreError(err, OperationType.CREATE, 'metrics'));
+      }
+      setImage(null);
+      setResult(null);
+      alert('Meal logged successfully!');
+    } catch (error) {
+      console.error('Error logging meal:', error);
+    } finally {
+      setLogging(false);
     }
   };
 
@@ -1109,6 +1234,15 @@ function MealAI({ user }: { user: User }) {
             <div className="bg-orange-500/5 border border-orange-500/10 p-4 rounded-2xl">
               <p className="text-sm text-zinc-300 italic">" {result.advice} "</p>
             </div>
+
+            <button 
+              onClick={handleLogMeal}
+              disabled={logging}
+              className="w-full py-4 bg-white text-black font-bold rounded-2xl hover:bg-zinc-200 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
+            >
+              {logging ? <Clock className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />}
+              {logging ? 'Logging Meal...' : 'Log this meal to Daily Total'}
+            </button>
           </motion.div>
         )}
       </div>

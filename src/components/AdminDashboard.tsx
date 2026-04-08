@@ -1,14 +1,15 @@
 import { useState, useEffect, useMemo } from 'react';
 import { User } from 'firebase/auth';
-import { collection, query, where, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, getDocs, orderBy, deleteDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, getDocs, orderBy, deleteDoc, limit } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { UserProfile, Workout, Exercise, Feedback, WorkoutTemplate } from '../types';
+import { UserProfile, Workout, Exercise, Feedback, WorkoutTemplate, BodyMetrics } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { searchExerciseVideos } from '../lib/gemini';
-import { Plus, Users, Calendar, CheckCircle, ExternalLink, ChevronRight, Search, Activity, Clock, MessageSquare, Trash2, Edit2, ChevronDown, ChevronUp, Save, Download, Layout, Copy, ChevronLeft, Play, Sparkles, Loader2 } from 'lucide-react';
+import { Plus, Users, Calendar, CheckCircle, ExternalLink, ChevronRight, Search, Activity, Clock, MessageSquare, Trash2, Edit2, ChevronDown, ChevronUp, Save, Download, Layout, Copy, ChevronLeft, Play, Sparkles, Loader2, Droplets, Footprints, Flame, Scale } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import Chat from './Chat';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
 import { 
   format, 
   startOfMonth, 
@@ -48,10 +49,12 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
     setConfirmModal({ title, message, onConfirm });
   };
 
+  const [clientViewTab, setClientViewTab] = useState<'program' | 'dashboard' | 'chat'>('program');
+
   useEffect(() => {
     const q = query(collection(db, 'users'), where('role', '==', 'client'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const clientData = snapshot.docs.map(doc => doc.data() as UserProfile);
+      const clientData = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() }) as UserProfile);
       setClients(clientData);
       setLoading(false);
     }, (error) => {
@@ -120,7 +123,7 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
-            className="grid grid-cols-1 md:grid-cols-3 gap-6"
+            className="grid grid-cols-1 md:grid-cols-4 gap-6"
           >
             <div className="md:col-span-1 space-y-4">
               <div className="relative">
@@ -132,7 +135,7 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
                 />
               </div>
               
-              <div className="space-y-2">
+              <div className="space-y-2 max-h-[calc(100vh-20rem)] overflow-y-auto custom-scrollbar pr-2">
                 {clients.map((client) => (
                   <button
                     key={client.uid}
@@ -159,19 +162,96 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
               </div>
             </div>
 
-            <div className="md:col-span-2 space-y-6">
+            <div className="md:col-span-3 space-y-6">
               {selectedClient ? (
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                  <div className="lg:col-span-2 space-y-6">
-                    <ClientDetailsEditor client={selectedClient} showToast={showToast} />
-                    <WorkoutManager client={selectedClient} showToast={showToast} confirmAction={confirmAction} />
-                    <ClientHistory client={selectedClient} />
-                  </div>
-                  <div className="lg:col-span-1">
-                    <div className="sticky top-6 h-[600px]">
-                      <Chat currentUser={{ uid: user.uid, role: profile.role }} otherUser={selectedClient} />
+                <div className="space-y-6">
+                  <div className="flex items-center justify-between bg-zinc-900 p-4 rounded-2xl border border-zinc-800">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 rounded-full bg-orange-500 flex items-center justify-center font-bold text-white text-xl">
+                        {selectedClient.displayName?.[0] || 'C'}
+                      </div>
+                      <div>
+                        <h3 className="text-xl font-bold">{selectedClient.displayName}</h3>
+                        <p className="text-zinc-500 text-sm">{selectedClient.email}</p>
+                      </div>
+                    </div>
+                    
+                    <div className="flex bg-zinc-950 p-1 rounded-xl border border-zinc-800">
+                      <button
+                        onClick={() => setClientViewTab('program')}
+                        className={cn(
+                          "px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all",
+                          clientViewTab === 'program' ? "bg-orange-500 text-white" : "text-zinc-500 hover:text-white"
+                        )}
+                      >
+                        Program
+                      </button>
+                      <button
+                        onClick={() => setClientViewTab('dashboard')}
+                        className={cn(
+                          "px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all",
+                          clientViewTab === 'dashboard' ? "bg-orange-500 text-white" : "text-zinc-500 hover:text-white"
+                        )}
+                      >
+                        Dashboard
+                      </button>
+                      <button
+                        onClick={() => setClientViewTab('chat')}
+                        className={cn(
+                          "px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all",
+                          clientViewTab === 'chat' ? "bg-orange-500 text-white" : "text-zinc-500 hover:text-white"
+                        )}
+                      >
+                        Chat
+                      </button>
                     </div>
                   </div>
+
+                  <AnimatePresence mode="wait">
+                    {clientViewTab === 'program' && (
+                      <motion.div
+                        key="program"
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -10 }}
+                        className="grid grid-cols-1 lg:grid-cols-3 gap-6"
+                      >
+                        <div className="lg:col-span-2 space-y-6">
+                          <ClientDetailsEditor client={selectedClient} showToast={showToast} />
+                          <WorkoutManager client={selectedClient} showToast={showToast} confirmAction={confirmAction} />
+                          <ClientHistory client={selectedClient} />
+                        </div>
+                        <div className="lg:col-span-1">
+                          <div className="sticky top-6 h-[600px]">
+                            <Chat currentUser={{ uid: user.uid, role: profile.role }} otherUser={selectedClient} />
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+
+                    {clientViewTab === 'dashboard' && (
+                      <motion.div
+                        key="dashboard"
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -10 }}
+                      >
+                        <ClientDashboardView client={selectedClient} />
+                      </motion.div>
+                    )}
+
+                    {clientViewTab === 'chat' && (
+                      <motion.div
+                        key="chat"
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -10 }}
+                        className="h-[700px]"
+                      >
+                        <Chat currentUser={{ uid: user.uid, role: profile.role }} otherUser={selectedClient} />
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </div>
               ) : (
                 <div className="h-full min-h-[400px] flex flex-col items-center justify-center bg-zinc-900/50 border border-dashed border-zinc-800 rounded-2xl text-zinc-500 p-8 text-center">
@@ -1401,6 +1481,154 @@ function WorkoutManager({ client, initialDate, initialWorkout, onSave, showToast
           </div>
         )}
       </AnimatePresence>
+    </div>
+  );
+}
+
+function ClientDashboardView({ client }: { client: UserProfile }) {
+  const [metrics, setMetrics] = useState<BodyMetrics[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const q = query(
+      collection(db, 'metrics'),
+      where('clientId', '==', client.uid),
+      orderBy('date', 'desc'),
+      limit(30)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as BodyMetrics);
+      setMetrics(data.reverse());
+      setLoading(false);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'metrics');
+    });
+
+    return () => unsubscribe();
+  }, [client.uid]);
+
+  const latestMetrics = metrics[metrics.length - 1];
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center p-12">
+        <Loader2 className="w-8 h-8 animate-spin text-orange-500" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Stats Overview */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <div className="bg-zinc-900 p-4 rounded-2xl border border-zinc-800">
+          <div className="flex items-center gap-2 text-zinc-500 mb-2">
+            <Scale className="w-4 h-4" />
+            <span className="text-[10px] font-bold uppercase">Weight</span>
+          </div>
+          <div className="text-2xl font-bold">{latestMetrics?.weight || client.weight || '--'} <span className="text-sm font-normal text-zinc-500">kg</span></div>
+        </div>
+        <div className="bg-zinc-900 p-4 rounded-2xl border border-zinc-800">
+          <div className="flex items-center gap-2 text-zinc-500 mb-2">
+            <Flame className="w-4 h-4" />
+            <span className="text-[10px] font-bold uppercase">Calories</span>
+          </div>
+          <div className="text-2xl font-bold">{latestMetrics?.calories || 0} <span className="text-sm font-normal text-zinc-500">kcal</span></div>
+        </div>
+        <div className="bg-zinc-900 p-4 rounded-2xl border border-zinc-800">
+          <div className="flex items-center gap-2 text-zinc-500 mb-2">
+            <Droplets className="w-4 h-4" />
+            <span className="text-[10px] font-bold uppercase">Water</span>
+          </div>
+          <div className="text-2xl font-bold">{latestMetrics?.waterIntake || 0} <span className="text-sm font-normal text-zinc-500">ml</span></div>
+        </div>
+        <div className="bg-zinc-900 p-4 rounded-2xl border border-zinc-800">
+          <div className="flex items-center gap-2 text-zinc-500 mb-2">
+            <Footprints className="w-4 h-4" />
+            <span className="text-[10px] font-bold uppercase">Steps</span>
+          </div>
+          <div className="text-2xl font-bold">{latestMetrics?.stepCount || 0}</div>
+        </div>
+      </div>
+
+      {/* Nutrition Breakdown */}
+      <div className="bg-zinc-900 p-6 rounded-2xl border border-zinc-800">
+        <h4 className="font-bold mb-4 flex items-center gap-2">
+          <Flame className="w-4 h-4 text-orange-500" />
+          Daily Nutrition Breakdown
+        </h4>
+        <div className="grid grid-cols-3 gap-4">
+          <div className="space-y-1">
+            <div className="text-[10px] text-zinc-500 uppercase font-bold">Protein</div>
+            <div className="text-lg font-bold text-blue-400">{latestMetrics?.protein || 0}g</div>
+            <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+              <div className="h-full bg-blue-400" style={{ width: `${Math.min((latestMetrics?.protein || 0) / 2, 100)}%` }} />
+            </div>
+          </div>
+          <div className="space-y-1">
+            <div className="text-[10px] text-zinc-500 uppercase font-bold">Carbs</div>
+            <div className="text-lg font-bold text-green-400">{latestMetrics?.carbs || 0}g</div>
+            <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+              <div className="h-full bg-green-400" style={{ width: `${Math.min((latestMetrics?.carbs || 0) / 3, 100)}%` }} />
+            </div>
+          </div>
+          <div className="space-y-1">
+            <div className="text-[10px] text-zinc-500 uppercase font-bold">Fats</div>
+            <div className="text-lg font-bold text-yellow-400">{latestMetrics?.fats || 0}g</div>
+            <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+              <div className="h-full bg-yellow-400" style={{ width: `${Math.min((latestMetrics?.fats || 0) / 1, 100)}%` }} />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Weight Trend Chart */}
+      <div className="bg-zinc-900 p-6 rounded-2xl border border-zinc-800">
+        <h4 className="font-bold mb-6 flex items-center gap-2">
+          <Activity className="w-4 h-4 text-orange-500" />
+          Weight Progress (Last 30 Days)
+        </h4>
+        <div className="h-[300px] w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={metrics}>
+              <defs>
+                <linearGradient id="colorWeight" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#f97316" stopOpacity={0.3}/>
+                  <stop offset="95%" stopColor="#f97316" stopOpacity={0}/>
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+              <XAxis 
+                dataKey="date" 
+                stroke="#71717a" 
+                fontSize={10} 
+                tickFormatter={(str) => {
+                  try {
+                    return format(parseISO(str), 'MMM d');
+                  } catch (e) {
+                    return str;
+                  }
+                }}
+              />
+              <YAxis stroke="#71717a" fontSize={10} domain={['dataMin - 2', 'dataMax + 2']} />
+              <Tooltip 
+                contentStyle={{ backgroundColor: '#18181b', border: '1px solid #27272a', borderRadius: '12px' }}
+                itemStyle={{ color: '#f97316' }}
+              />
+              <Area 
+                type="monotone" 
+                dataKey="weight" 
+                stroke="#f97316" 
+                strokeWidth={2}
+                fillOpacity={1} 
+                fill="url(#colorWeight)" 
+                connectNulls
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
     </div>
   );
 }
