@@ -14,6 +14,21 @@ service cloud.firestore {
     //   - displayName: string
     //   - programGoals: string
     //   - programDetails: string
+    //   - height: string
+    //   - weight: string
+    //   - chosenProgram: string
+    //   - onboardingComplete: bool
+    //   - createdAt: timestamp
+    //
+    // Collection: metrics
+    // Document ID: {metricId}
+    // Fields:
+    //   - clientId: string (required)
+    //   - date: string (required, YYYY-MM-DD)
+    //   - waterIntake: int (required)
+    //   - stepCount: int (required)
+    //   - calories: int (required)
+    //   - weight: number
     //   - createdAt: timestamp
     //
     // Collection: workouts
@@ -62,7 +77,21 @@ service cloud.firestore {
              data.role in ['admin', 'client'] &&
              (!('displayName' in data) || data.displayName is string) &&
              (!('programGoals' in data) || data.programGoals is string) &&
-             (!('programDetails' in data) || data.programDetails is string);
+             (!('programDetails' in data) || data.programDetails is string) &&
+             (!('height' in data) || data.height is string) &&
+             (!('weight' in data) || data.weight is string) &&
+             (!('chosenProgram' in data) || data.chosenProgram is string) &&
+             (!('onboardingComplete' in data) || data.onboardingComplete is bool);
+    }
+
+    function isValidMetric(data) {
+      return data.keys().hasAll(['clientId', 'date', 'waterIntake', 'stepCount', 'calories']) &&
+             data.clientId is string &&
+             data.date is string &&
+             data.waterIntake is int &&
+             data.stepCount is int &&
+             data.calories is int &&
+             (!('weight' in data) || data.weight is number);
     }
 
     function isValidWorkout(data) {
@@ -131,6 +160,12 @@ service cloud.firestore {
         isAdmin()
       ) && isValidMessage(request.resource.data);
       allow update: if isAdmin() || (isAuthenticated() && request.auth.uid == resource.data.receiverId);
+    }
+
+    match /metrics/{metricId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.clientId || isAdmin());
+      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.clientId && isValidMetric(request.resource.data);
+      allow update: if isAuthenticated() && request.auth.uid == resource.data.clientId && isValidMetric(request.resource.data);
     }
   }
 }

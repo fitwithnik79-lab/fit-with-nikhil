@@ -11,6 +11,10 @@
         "displayName": { "type": "string" },
         "programGoals": { "type": "string", "description": "Client's fitness goals" },
         "programDetails": { "type": "string", "description": "Details about the client's current program" },
+        "height": { "type": "string" },
+        "weight": { "type": "string" },
+        "chosenProgram": { "type": "string" },
+        "onboardingComplete": { "type": "boolean" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["uid", "email", "role"]
@@ -88,6 +92,21 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["senderId", "receiverId", "text", "type"]
+    },
+    "Metric": {
+      "title": "Body Metric",
+      "description": "Daily body metrics tracked by the client.",
+      "type": "object",
+      "properties": {
+        "clientId": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "waterIntake": { "type": "integer" },
+        "stepCount": { "type": "integer" },
+        "calories": { "type": "integer" },
+        "weight": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["clientId", "date", "waterIntake", "stepCount", "calories"]
     }
   },
   "firestore": {
@@ -110,6 +129,10 @@
     "/messages/{messageId}": {
       "schema": "Message",
       "description": "Direct messages between admins and clients"
+    },
+    "/metrics/{metricId}": {
+      "schema": "Metric",
+      "description": "Daily body metrics tracked by clients"
     }
   }
 }

@@ -1,15 +1,59 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { User } from 'firebase/auth';
-import { collection, query, where, onSnapshot, addDoc, serverTimestamp, orderBy, limit, getDocs } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, addDoc, serverTimestamp, orderBy, limit, getDocs, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { UserProfile, Workout, Exercise, Feedback } from '../types';
+import { UserProfile, Workout, Exercise, Feedback, BodyMetrics } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
-import { CheckCircle, ExternalLink, Play, MessageSquare, Trophy, Calendar, Dumbbell, ChevronRight, Sparkles, Activity, X } from 'lucide-react';
+import { 
+  CheckCircle, 
+  ExternalLink, 
+  Play, 
+  MessageSquare, 
+  Trophy, 
+  Calendar as CalendarIcon, 
+  Dumbbell, 
+  ChevronRight, 
+  Sparkles, 
+  Activity, 
+  X,
+  LayoutDashboard,
+  Target,
+  Folder,
+  Utensils,
+  TrendingUp,
+  Award,
+  Users,
+  User as UserIcon,
+  ChevronLeft,
+  Clock,
+  MessageCircle,
+  Droplets,
+  Footprints,
+  Flame,
+  Plus,
+  Save,
+  Scale
+} from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import Chat from './Chat';
 import { generateMotivationalMessage } from '../lib/gemini';
-import { format } from 'date-fns';
+import { 
+  format, 
+  startOfMonth, 
+  endOfMonth, 
+  startOfWeek, 
+  endOfWeek, 
+  eachDayOfInterval, 
+  isSameMonth, 
+  isSameDay, 
+  addMonths, 
+  subMonths,
+  isToday,
+  parseISO,
+  startOfDay
+} from 'date-fns';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
 
 function getYouTubeId(url: string) {
   const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
@@ -24,6 +68,7 @@ interface ClientDashboardProps {
 
 export default function ClientDashboard({ user, profile }: ClientDashboardProps) {
   const [currentWorkout, setCurrentWorkout] = useState<Workout | null>(null);
+  const [allWorkouts, setAllWorkouts] = useState<Workout[]>([]);
   const [lastFeedback, setLastFeedback] = useState<Feedback | null>(null);
   const [loading, setLoading] = useState(true);
   const [showFeedbackForm, setShowFeedbackForm] = useState(false);
@@ -31,6 +76,11 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   const [submitting, setSubmitting] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [adminProfile, setAdminProfile] = useState<UserProfile | null>(null);
+  const [activeTab, setActiveTab] = useState<'dash' | 'calendar' | 'goals' | 'program' | 'meal' | 'progress' | 'badges' | 'classes'>('dash');
+  const [selectedWorkout, setSelectedWorkout] = useState<Workout | null>(null);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [metrics, setMetrics] = useState<BodyMetrics[]>([]);
+  const [todayMetrics, setTodayMetrics] = useState<BodyMetrics | null>(null);
 
   useEffect(() => {
     // Fetch admin profile for chat
@@ -43,48 +93,57 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   }, []);
 
   useEffect(() => {
-    const todayStr = format(new Date(), 'yyyy-MM-dd');
-    
-    // First try to find a workout scheduled for today
-    const qToday = query(
-      collection(db, 'workouts'),
+    // Fetch metrics
+    const q = query(
+      collection(db, 'metrics'),
       where('clientId', '==', user.uid),
-      where('scheduledDate', '==', todayStr),
-      limit(1)
+      orderBy('date', 'desc'),
+      limit(30)
     );
 
-    const unsubscribe = onSnapshot(qToday, (snapshot) => {
-      if (!snapshot.empty) {
-        const data = snapshot.docs[0].data() as Workout;
-        setCurrentWorkout({ id: snapshot.docs[0].id, ...data });
-        setLoading(false);
-      } else {
-        // Fallback to the latest workout if none scheduled for today
-        // This ensures they still see their program even if not explicitly scheduled for today
-        const qLatest = query(
-          collection(db, 'workouts'), 
-          where('clientId', '==', user.uid),
-          orderBy('createdAt', 'desc'),
-          limit(1)
-        );
-        
-        getDocs(qLatest).then(snap => {
-          if (!snap.empty) {
-            const data = snap.docs[0].data() as Workout;
-            setCurrentWorkout({ id: snap.docs[0].id, ...data });
-          } else {
-            setCurrentWorkout(null);
-          }
-          setLoading(false);
-        }).catch(err => {
-          handleFirestoreError(err, OperationType.LIST, 'workouts');
-          setLoading(false);
-        });
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const metricsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as BodyMetrics);
+      setMetrics(metricsData);
+      
+      const todayStr = format(new Date(), 'yyyy-MM-dd');
+      const today = metricsData.find(m => m.date === todayStr);
+      setTodayMetrics(today || null);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'metrics');
+    });
+
+    return () => unsubscribe();
+  }, [user.uid]);
+
+  useEffect(() => {
+    // Fetch all workouts for calendar and program
+    const qAll = query(
+      collection(db, 'workouts'),
+      where('clientId', '==', user.uid),
+      orderBy('scheduledDate', 'desc')
+    );
+
+    const unsubscribe = onSnapshot(qAll, (snapshot) => {
+      const workouts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as Workout);
+      setAllWorkouts(workouts);
+      
+      // Find today's workout
+      const todayStr = format(new Date(), 'yyyy-MM-dd');
+      const todayWorkout = workouts.find(w => w.scheduledDate === todayStr);
+      
+      if (todayWorkout) {
+        setCurrentWorkout(todayWorkout);
+      } else if (workouts.length > 0) {
+        // Fallback to latest
+        setCurrentWorkout(workouts[0]);
       }
+      
+      setLoading(false);
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, 'workouts');
+      setLoading(false);
     });
-    
+
     return () => unsubscribe();
   }, [user.uid]);
 
@@ -108,17 +167,16 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     return () => unsubscribe();
   }, [user.uid]);
 
-  const handleComplete = async () => {
-    if (!currentWorkout) return;
+  const handleComplete = async (workout: Workout) => {
     setSubmitting(true);
     try {
-      const motivationalMessage = await generateMotivationalMessage(profile.displayName || 'Champ', currentWorkout.weekNumber);
+      const motivationalMessage = await generateMotivationalMessage(profile.displayName || 'Champ', workout.weekNumber);
       
       await addDoc(collection(db, 'feedback'), {
         clientId: user.uid,
-        workoutId: currentWorkout.id,
-        weekNumber: currentWorkout.weekNumber,
-        dayNumber: currentWorkout.dayNumber,
+        workoutId: workout.id,
+        weekNumber: workout.weekNumber,
+        dayNumber: workout.dayNumber,
         completionStatus: true,
         clientNote: clientNote,
         motivationalMessage,
@@ -127,6 +185,9 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
       
       setShowFeedbackForm(false);
       setClientNote('');
+      if (selectedWorkout?.id === workout.id) {
+        setSelectedWorkout(null);
+      }
     } catch (error) {
       console.error('Error submitting feedback:', error);
     } finally {
@@ -148,10 +209,417 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     );
   }
 
+  const sidebarItems = [
+    { id: 'dash', label: 'Dash', icon: LayoutDashboard },
+    { id: 'calendar', label: 'Calendar', icon: CalendarIcon },
+    { id: 'goals', label: 'Goals and Habits', icon: Target },
+    { id: 'program', label: 'Training Program', icon: Folder },
+    { id: 'meal', label: 'Meal Plan', icon: Utensils },
+    { id: 'progress', label: 'Progress', icon: TrendingUp },
+    { id: 'badges', label: 'Badges Earned', icon: Award },
+    { id: 'classes', label: 'Classes', icon: Users },
+  ];
+
   return (
-    <div className="max-w-2xl mx-auto space-y-8 relative">
-      {/* Floating Chat Button */}
-      <div className="fixed bottom-6 right-6 z-[60]">
+    <div className="flex min-h-[calc(100vh-4rem)] bg-black text-white -m-4 sm:-m-8 relative">
+      {/* Mobile Header */}
+      <div className="md:hidden fixed top-0 left-0 right-0 h-16 bg-zinc-950 border-b border-zinc-900 z-[100] flex items-center justify-between px-4">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-full overflow-hidden border border-zinc-800">
+            <img 
+              src={profile.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.email}`} 
+              alt={profile.displayName || 'User'} 
+              className="w-full h-full object-cover"
+              referrerPolicy="no-referrer"
+            />
+          </div>
+          <span className="font-bold text-sm">{profile.displayName}</span>
+        </div>
+        <button 
+          onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+          className="p-2 text-zinc-400 hover:text-white"
+        >
+          {isMobileMenuOpen ? <X className="w-6 h-6" /> : <Activity className="w-4 h-4" />}
+        </button>
+      </div>
+
+      {/* Sidebar */}
+      <div className={cn(
+        "fixed inset-y-0 left-0 z-[110] w-64 bg-zinc-950 border-r border-zinc-900 flex flex-col transition-transform duration-300 md:relative md:translate-x-0",
+        isMobileMenuOpen ? "translate-x-0" : "-translate-x-full"
+      )}>
+        {/* Profile Section */}
+        <div className="p-8 flex flex-col items-center text-center space-y-4">
+          <div className="relative">
+            <div className="w-24 h-24 rounded-full overflow-hidden border-2 border-zinc-800">
+              <img 
+                src={profile.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.email}`} 
+                alt={profile.displayName || 'User'} 
+                className="w-full h-full object-cover"
+                referrerPolicy="no-referrer"
+              />
+            </div>
+          </div>
+          <div>
+            <h3 className="text-xl font-bold text-zinc-200">{profile.displayName || 'User'}</h3>
+            <div className="flex flex-col gap-2 mt-4">
+              <button 
+                onClick={() => {
+                  setShowChat(true);
+                  setIsMobileMenuOpen(false);
+                }}
+                className="flex items-center gap-2 text-zinc-500 hover:text-orange-500 transition-colors text-sm font-medium"
+              >
+                <MessageCircle className="w-4 h-4" />
+                Message
+              </button>
+              <button className="flex items-center gap-2 text-zinc-500 hover:text-orange-500 transition-colors text-sm font-medium">
+                <UserIcon className="w-4 h-4" />
+                View Profile
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex-1 px-4 py-2 space-y-1 overflow-y-auto custom-scrollbar">
+          {sidebarItems.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => {
+                setActiveTab(item.id as any);
+                setIsMobileMenuOpen(false);
+              }}
+              className={cn(
+                "w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-all group",
+                activeTab === item.id 
+                  ? "bg-orange-500 text-black shadow-lg shadow-orange-500/20" 
+                  : "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-900"
+              )}
+            >
+              <item.icon className={cn(
+                "w-5 h-5",
+                activeTab === item.id ? "text-black" : "text-zinc-500 group-hover:text-zinc-200"
+              )} />
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Mobile Overlay */}
+      <AnimatePresence>
+        {isMobileMenuOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setIsMobileMenuOpen(false)}
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[105] md:hidden"
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col min-w-0 pt-16 md:pt-0">
+        <div className="flex-1 p-4 sm:p-8 overflow-y-auto custom-scrollbar">
+          <AnimatePresence mode="wait">
+            {activeTab === 'dash' && (
+              <motion.div
+                key="dash"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="max-w-4xl mx-auto space-y-8"
+              >
+                {lastFeedback?.motivationalMessage && (
+                  <div className="bg-orange-500/10 border border-orange-500/20 p-6 rounded-2xl relative overflow-hidden">
+                    <Sparkles className="absolute -right-2 -top-2 w-16 h-16 text-orange-500/10 rotate-12" />
+                    <div className="flex items-start gap-4">
+                      <div className="p-3 bg-orange-500 rounded-full text-white shadow-lg shadow-orange-500/20">
+                        <Trophy className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-orange-500 text-sm uppercase tracking-wider mb-1">Coach Nik says:</h4>
+                        <p className="text-white text-lg font-medium leading-relaxed italic">
+                          "{lastFeedback.motivationalMessage}"
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {currentWorkout ? (
+                  <WorkoutCard 
+                    workout={currentWorkout} 
+                    onComplete={() => setShowFeedbackForm(true)}
+                    showFeedbackForm={showFeedbackForm}
+                    setShowFeedbackForm={setShowFeedbackForm}
+                    clientNote={clientNote}
+                    setClientNote={setClientNote}
+                    submitting={submitting}
+                    handleComplete={() => handleComplete(currentWorkout)}
+                  />
+                ) : (
+                  <div className="py-20 text-center space-y-6">
+                    <div className="inline-flex p-6 bg-zinc-900 rounded-full border border-zinc-800">
+                      <Activity className="w-12 h-12 text-zinc-700" />
+                    </div>
+                    <div className="space-y-2">
+                      <h3 className="text-2xl font-bold">No Workout Assigned</h3>
+                      <p className="text-zinc-500 max-w-xs mx-auto">
+                        Coach Nik hasn't assigned your next routine yet. Check back soon!
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </motion.div>
+            )}
+
+            {activeTab === 'calendar' && (
+              <motion.div
+                key="calendar"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="max-w-6xl mx-auto"
+              >
+                <ClientCalendar 
+                  workouts={allWorkouts} 
+                  onSelectWorkout={(w) => setSelectedWorkout(w)} 
+                />
+              </motion.div>
+            )}
+
+            {activeTab === 'program' && (
+              <motion.div
+                key="program"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="max-w-4xl mx-auto space-y-6"
+              >
+                <div className="flex items-center gap-4 mb-8">
+                  <div className="p-3 bg-orange-500 rounded-2xl text-white shadow-lg shadow-orange-500/20">
+                    <Folder className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h2 className="text-3xl font-bold">Training Program</h2>
+                    <p className="text-zinc-500">All your assigned workouts in one place.</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {allWorkouts.map((w) => (
+                    <button
+                      key={w.id}
+                      onClick={() => setSelectedWorkout(w)}
+                      className="text-left p-6 bg-zinc-900 border border-zinc-800 rounded-2xl hover:border-orange-500/50 transition-all group"
+                    >
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-2 text-orange-500 font-bold text-xs uppercase tracking-widest">
+                          <CalendarIcon className="w-3 h-3" />
+                          {w.scheduledDate ? format(parseISO(w.scheduledDate), 'MMM do, yyyy') : 'Unscheduled'}
+                        </div>
+                        <ChevronRight className="w-4 h-4 text-zinc-600 group-hover:text-orange-500 transition-colors" />
+                      </div>
+                      <h3 className="text-xl font-bold mb-2">Week {w.weekNumber} • Day {w.dayNumber}</h3>
+                      <p className="text-zinc-500 text-sm">{w.exercises.length} Exercises</p>
+                    </button>
+                  ))}
+                </div>
+              </motion.div>
+            )}
+
+            {activeTab === 'progress' && (
+              <motion.div
+                key="progress"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="max-w-4xl mx-auto space-y-8"
+              >
+                <div className="flex items-center gap-4 mb-8">
+                  <div className="p-3 bg-orange-500 rounded-2xl text-white shadow-lg shadow-orange-500/20">
+                    <TrendingUp className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h2 className="text-3xl font-bold">Your Progress</h2>
+                    <p className="text-zinc-500">Track your consistency and body metrics.</p>
+                  </div>
+                </div>
+
+                <MetricsTracker 
+                  user={user} 
+                  todayMetrics={todayMetrics} 
+                  history={metrics} 
+                />
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 space-y-6">
+                    <h3 className="font-bold text-lg flex items-center gap-2">
+                      <Scale className="w-5 h-5 text-purple-500" />
+                      Weight Progress
+                    </h3>
+                    <div className="h-[200px] w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={[...metrics].reverse()}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+                          <XAxis 
+                            dataKey="date" 
+                            stroke="#71717a" 
+                            fontSize={10} 
+                            tickFormatter={(str) => format(parseISO(str), 'MMM d')}
+                          />
+                          <YAxis stroke="#71717a" fontSize={10} domain={['auto', 'auto']} />
+                          <Tooltip 
+                            contentStyle={{ backgroundColor: '#18181b', border: '1px solid #27272a', borderRadius: '12px' }}
+                            itemStyle={{ color: '#a855f7' }}
+                          />
+                          <Line type="monotone" dataKey="weight" stroke="#a855f7" strokeWidth={3} dot={{ fill: '#a855f7', r: 4 }} activeDot={{ r: 6 }} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 space-y-6">
+                    <h3 className="font-bold text-lg flex items-center gap-2">
+                      <Flame className="w-5 h-5 text-orange-500" />
+                      Calorie Intake
+                    </h3>
+                    <div className="h-[200px] w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={[...metrics].reverse()}>
+                          <defs>
+                            <linearGradient id="colorCalories" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#f97316" stopOpacity={0.3}/>
+                              <stop offset="95%" stopColor="#f97316" stopOpacity={0}/>
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+                          <XAxis 
+                            dataKey="date" 
+                            stroke="#71717a" 
+                            fontSize={10} 
+                            tickFormatter={(str) => format(parseISO(str), 'MMM d')}
+                          />
+                          <YAxis stroke="#71717a" fontSize={10} />
+                          <Tooltip 
+                            contentStyle={{ backgroundColor: '#18181b', border: '1px solid #27272a', borderRadius: '12px' }}
+                            itemStyle={{ color: '#f97316' }}
+                          />
+                          <Area type="monotone" dataKey="calories" stroke="#f97316" fillOpacity={1} fill="url(#colorCalories)" />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 space-y-6">
+                    <h3 className="font-bold text-lg flex items-center gap-2">
+                      <Footprints className="w-5 h-5 text-blue-500" />
+                      Step Count
+                    </h3>
+                    <div className="h-[200px] w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={[...metrics].reverse()}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+                          <XAxis 
+                            dataKey="date" 
+                            stroke="#71717a" 
+                            fontSize={10} 
+                            tickFormatter={(str) => format(parseISO(str), 'MMM d')}
+                          />
+                          <YAxis stroke="#71717a" fontSize={10} />
+                          <Tooltip 
+                            contentStyle={{ backgroundColor: '#18181b', border: '1px solid #27272a', borderRadius: '12px' }}
+                            itemStyle={{ color: '#3b82f6' }}
+                          />
+                          <Line type="monotone" dataKey="stepCount" stroke="#3b82f6" strokeWidth={2} dot={{ fill: '#3b82f6' }} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {['goals', 'meal', 'badges', 'classes'].includes(activeTab) && (
+              <motion.div
+                key="placeholder"
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="h-full flex flex-col items-center justify-center text-center space-y-4 py-20"
+              >
+                <div className="p-6 bg-zinc-900 rounded-full border border-zinc-800">
+                  {activeTab === 'goals' && <Target className="w-12 h-12 text-zinc-700" />}
+                  {activeTab === 'meal' && <Utensils className="w-12 h-12 text-zinc-700" />}
+                  {activeTab === 'progress' && <TrendingUp className="w-12 h-12 text-zinc-700" />}
+                  {activeTab === 'badges' && <Award className="w-12 h-12 text-zinc-700" />}
+                  {activeTab === 'classes' && <Users className="w-12 h-12 text-zinc-700" />}
+                </div>
+                <div>
+                  <h3 className="text-2xl font-bold capitalize">{activeTab.replace(/([A-Z])/g, ' $1')}</h3>
+                  <p className="text-zinc-500 max-w-xs mx-auto">
+                    This section is being customized for your fitness journey. Stay tuned!
+                  </p>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      </div>
+
+      {/* Workout Detail Modal */}
+      <AnimatePresence>
+        {selectedWorkout && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSelectedWorkout(null)}
+              className="absolute inset-0 bg-black/90 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-3xl bg-zinc-900 border border-zinc-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              <div className="p-6 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/50">
+                <div>
+                  <div className="flex items-center gap-2 text-orange-500 font-bold text-xs uppercase tracking-widest mb-1">
+                    <CalendarIcon className="w-3 h-3" />
+                    Week {selectedWorkout.weekNumber} • Day {selectedWorkout.dayNumber}
+                  </div>
+                  <h3 className="font-bold text-xl">Workout Details</h3>
+                </div>
+                <button 
+                  onClick={() => setSelectedWorkout(null)}
+                  className="p-2 hover:bg-zinc-800 rounded-xl transition-colors text-zinc-500 hover:text-white"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
+                <WorkoutCard 
+                  workout={selectedWorkout} 
+                  onComplete={() => setShowFeedbackForm(true)}
+                  showFeedbackForm={showFeedbackForm}
+                  setShowFeedbackForm={setShowFeedbackForm}
+                  clientNote={clientNote}
+                  setClientNote={setClientNote}
+                  submitting={submitting}
+                  handleComplete={() => handleComplete(selectedWorkout)}
+                />
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Floating Chat Button (Mobile) */}
+      <div className="fixed bottom-6 right-6 z-[60] md:hidden">
         <button
           onClick={() => setShowChat(!showChat)}
           className={cn(
@@ -163,14 +631,14 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
         </button>
       </div>
 
-      {/* Chat Sidebar */}
+      {/* Chat Sidebar/Modal */}
       <AnimatePresence>
         {showChat && adminProfile && (
           <motion.div
             initial={{ opacity: 0, x: 100, scale: 0.9 }}
             animate={{ opacity: 1, x: 0, scale: 1 }}
             exit={{ opacity: 0, x: 100, scale: 0.9 }}
-            className="fixed bottom-24 right-6 z-[60] w-[calc(100vw-3rem)] sm:w-96 h-[600px] max-h-[calc(100vh-10rem)]"
+            className="fixed bottom-24 right-6 z-[110] w-[calc(100vw-3rem)] sm:w-96 h-[600px] max-h-[calc(100vh-10rem)] shadow-2xl"
           >
             <Chat 
               currentUser={{ uid: user.uid, role: profile.role }} 
@@ -180,164 +648,395 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
           </motion.div>
         )}
       </AnimatePresence>
+    </div>
+  );
+}
 
-      {lastFeedback?.motivationalMessage && (
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-orange-500/10 border border-orange-500/20 p-6 rounded-2xl relative overflow-hidden"
-        >
-          <Sparkles className="absolute -right-2 -top-2 w-16 h-16 text-orange-500/10 rotate-12" />
-          <div className="flex items-start gap-4">
-            <div className="p-3 bg-orange-500 rounded-full text-white shadow-lg shadow-orange-500/20">
-              <Trophy className="w-6 h-6" />
+function MetricsTracker({ user, todayMetrics, history }: { user: User, todayMetrics: BodyMetrics | null, history: BodyMetrics[] }) {
+  const [water, setWater] = useState(todayMetrics?.waterIntake || 0);
+  const [steps, setSteps] = useState(todayMetrics?.stepCount || 0);
+  const [calories, setCalories] = useState(todayMetrics?.calories || 0);
+  const [weight, setWeight] = useState(todayMetrics?.weight || 0);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    if (todayMetrics) {
+      setWater(todayMetrics.waterIntake);
+      setSteps(todayMetrics.stepCount);
+      setCalories(todayMetrics.calories);
+      setWeight(todayMetrics.weight || 0);
+    }
+  }, [todayMetrics]);
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      const todayStr = format(new Date(), 'yyyy-MM-dd');
+      const metricsData = {
+        clientId: user.uid,
+        date: todayStr,
+        waterIntake: Number(water),
+        stepCount: Number(steps),
+        calories: Number(calories),
+        weight: Number(weight),
+        createdAt: serverTimestamp()
+      };
+
+      if (todayMetrics?.id) {
+        await updateDoc(doc(db, 'metrics', todayMetrics.id), metricsData)
+          .catch(err => handleFirestoreError(err, OperationType.UPDATE, `metrics/${todayMetrics.id}`));
+      } else {
+        await addDoc(collection(db, 'metrics'), metricsData)
+          .catch(err => handleFirestoreError(err, OperationType.CREATE, 'metrics'));
+      }
+    } catch (error) {
+      console.error('Error saving metrics:', error);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="p-2 bg-blue-500/10 rounded-xl text-blue-500">
+              <Droplets className="w-5 h-5" />
             </div>
-            <div>
-              <h4 className="font-bold text-orange-500 text-sm uppercase tracking-wider mb-1">Coach Nik says:</h4>
-              <p className="text-white text-lg font-medium leading-relaxed italic">
-                "{lastFeedback.motivationalMessage}"
-              </p>
-            </div>
+            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Water (ml)</span>
           </div>
-        </motion.div>
-      )}
-
-      {currentWorkout ? (
-        <div className="space-y-6">
-          <div className="flex items-end justify-between px-2">
-            <div>
-              <div className="flex items-center gap-2 text-orange-500 font-bold text-sm uppercase tracking-widest mb-1">
-                <Calendar className="w-4 h-4" />
-                Week {currentWorkout.weekNumber} • Day {currentWorkout.dayNumber}
-              </div>
-              <h2 className="text-3xl font-bold tracking-tight">Today's Session</h2>
-            </div>
-            <div className="text-right">
-              <span className="text-zinc-500 text-sm font-medium">{currentWorkout.exercises.length} Exercises</span>
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            {currentWorkout.exercises.map((ex, idx) => (
-              <motion.div
-                key={idx}
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: idx * 0.1 }}
-                className="group bg-zinc-900 border border-zinc-800 rounded-2xl p-5 hover:border-zinc-700 transition-all"
+          <input 
+            type="number" 
+            value={water} 
+            onChange={(e) => setWater(Number(e.target.value))}
+            className="w-full bg-black border border-zinc-800 rounded-xl px-4 py-2 text-xl font-bold focus:ring-1 focus:ring-blue-500 outline-none"
+          />
+          <div className="flex gap-1">
+            {[250, 500].map(amount => (
+              <button 
+                key={amount}
+                onClick={() => setWater(prev => prev + amount)}
+                className="flex-1 py-1 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-[10px] font-bold transition-colors"
               >
-                <div className="flex items-start justify-between gap-4 mb-4">
-                  <div className="flex-1">
-                    <h3 className="text-xl font-bold group-hover:text-orange-500 transition-colors">{ex.name}</h3>
-                    <div className="flex flex-wrap gap-3 mt-2">
-                      <div className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-950 rounded-lg border border-zinc-800 text-xs font-bold text-zinc-400">
-                        <span className="text-orange-500">{ex.sets}</span> SETS
-                      </div>
-                      <div className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-950 rounded-lg border border-zinc-800 text-xs font-bold text-zinc-400">
-                        <span className="text-orange-500">{ex.reps}</span> REPS
-                      </div>
-                      {ex.weight && (
-                        <div className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-950 rounded-lg border border-zinc-800 text-xs font-bold text-zinc-400">
-                          <span className="text-orange-500">{ex.weight}</span>
-                        </div>
-                      )}
-                      <div className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-950 rounded-lg border border-zinc-800 text-xs font-bold text-zinc-400">
-                        <span className="text-orange-500">{ex.rest}</span> REST
-                      </div>
+                +{amount}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="p-2 bg-green-500/10 rounded-xl text-green-500">
+              <Footprints className="w-5 h-5" />
+            </div>
+            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Steps</span>
+          </div>
+          <input 
+            type="number" 
+            value={steps} 
+            onChange={(e) => setSteps(Number(e.target.value))}
+            className="w-full bg-black border border-zinc-800 rounded-xl px-4 py-2 text-xl font-bold focus:ring-1 focus:ring-green-500 outline-none"
+          />
+          <p className="text-[10px] text-zinc-500 font-medium">Goal: 10k</p>
+        </div>
+
+        <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="p-2 bg-orange-500/10 rounded-xl text-orange-500">
+              <Flame className="w-5 h-5" />
+            </div>
+            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Calories</span>
+          </div>
+          <input 
+            type="number" 
+            value={calories} 
+            onChange={(e) => setCalories(Number(e.target.value))}
+            className="w-full bg-black border border-zinc-800 rounded-xl px-4 py-2 text-xl font-bold focus:ring-1 focus:ring-orange-500 outline-none"
+          />
+          <p className="text-[10px] text-zinc-500 font-medium">Daily Intake</p>
+        </div>
+
+        <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="p-2 bg-purple-500/10 rounded-xl text-purple-500">
+              <Scale className="w-5 h-5" />
+            </div>
+            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Weight (kg)</span>
+          </div>
+          <input 
+            type="number" 
+            step="0.1"
+            value={weight} 
+            onChange={(e) => setWeight(Number(e.target.value))}
+            className="w-full bg-black border border-zinc-800 rounded-xl px-4 py-2 text-xl font-bold focus:ring-1 focus:ring-purple-500 outline-none"
+          />
+          <p className="text-[10px] text-zinc-500 font-medium">Current Weight</p>
+        </div>
+      </div>
+
+      <button 
+        onClick={handleSave}
+        disabled={isSaving}
+        className="w-full py-4 bg-white text-black font-bold rounded-2xl hover:bg-zinc-200 transition-all flex items-center justify-center gap-2 disabled:opacity-50 shadow-xl shadow-white/5"
+      >
+        {isSaving ? <Clock className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
+        {isSaving ? 'Saving Progress...' : 'Save Today\'s Metrics'}
+      </button>
+    </div>
+  );
+}
+
+function WorkoutCard({ 
+  workout, 
+  onComplete, 
+  showFeedbackForm, 
+  setShowFeedbackForm, 
+  clientNote, 
+  setClientNote, 
+  submitting, 
+  handleComplete 
+}: { 
+  workout: Workout, 
+  onComplete: () => void,
+  showFeedbackForm: boolean,
+  setShowFeedbackForm: (s: boolean) => void,
+  clientNote: string,
+  setClientNote: (s: string) => void,
+  submitting: boolean,
+  handleComplete: () => void
+}) {
+  return (
+    <div className="space-y-6">
+      <div className="flex items-end justify-between px-2">
+        <div>
+          <div className="flex items-center gap-2 text-orange-500 font-bold text-sm uppercase tracking-widest mb-1">
+            <CalendarIcon className="w-4 h-4" />
+            Week {workout.weekNumber} • Day {workout.dayNumber}
+          </div>
+          <h2 className="text-3xl font-bold tracking-tight">Workout Routine</h2>
+        </div>
+        <div className="text-right">
+          <span className="text-zinc-500 text-sm font-medium">{workout.exercises.length} Exercises</span>
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        {workout.exercises.map((ex, idx) => (
+          <motion.div
+            key={idx}
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: idx * 0.1 }}
+            className="group bg-zinc-900 border border-zinc-800 rounded-2xl p-5 hover:border-zinc-700 transition-all"
+          >
+            <div className="flex items-start justify-between gap-4 mb-4">
+              <div className="flex-1">
+                <h3 className="text-xl font-bold group-hover:text-orange-500 transition-colors">{ex.name}</h3>
+                <div className="flex flex-wrap gap-3 mt-2">
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-950 rounded-lg border border-zinc-800 text-xs font-bold text-zinc-400">
+                    <span className="text-orange-500">{ex.sets}</span> SETS
+                  </div>
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-950 rounded-lg border border-zinc-800 text-xs font-bold text-zinc-400">
+                    <span className="text-orange-500">{ex.reps}</span> REPS
+                  </div>
+                  {ex.weight && (
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-950 rounded-lg border border-zinc-800 text-xs font-bold text-zinc-400">
+                      <span className="text-orange-500">{ex.weight}</span>
                     </div>
+                  )}
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-950 rounded-lg border border-zinc-800 text-xs font-bold text-zinc-400">
+                    <span className="text-orange-500">{ex.rest}</span> REST
                   </div>
                 </div>
-
-                {ex.coachNote && (
-                  <div className="flex gap-2 items-start bg-zinc-950/50 p-3 rounded-xl border border-zinc-800/50 text-sm text-zinc-400 mb-4">
-                    <MessageSquare className="w-4 h-4 mt-0.5 flex-shrink-0 text-orange-500/50" />
-                    <p>{ex.coachNote}</p>
-                  </div>
-                )}
-
-                {ex.youtubeLink && getYouTubeId(ex.youtubeLink) && (
+              </div>
+              {ex.youtubeLink && (
+                <div className="flex flex-col gap-2">
                   <a 
                     href={ex.youtubeLink}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="block relative aspect-video rounded-xl overflow-hidden border border-zinc-800 bg-zinc-950 group/vid"
+                    className="flex items-center gap-2 text-orange-500 hover:text-orange-400 transition-colors text-sm font-bold"
                   >
-                    <img 
-                      src={`https://img.youtube.com/vi/${getYouTubeId(ex.youtubeLink)}/mqdefault.jpg`}
-                      alt="Exercise Video"
-                      className="w-full h-full object-cover opacity-60 group-hover/vid:opacity-80 transition-opacity"
-                      referrerPolicy="no-referrer"
-                    />
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <div className="w-12 h-12 rounded-full bg-orange-500 text-white flex items-center justify-center shadow-xl shadow-orange-500/20 group-hover/vid:scale-110 transition-transform">
-                        <Play className="w-6 h-6 fill-current" />
-                      </div>
-                    </div>
-                    <div className="absolute bottom-3 left-3 px-2 py-1 bg-black/50 backdrop-blur-md rounded text-[10px] font-bold text-white border border-white/10">
-                      WATCH DEMO
-                    </div>
+                    <Play className="w-4 h-4" />
+                    Watch Exercise Video
                   </a>
-                )}
-              </motion.div>
-            ))}
-          </div>
-
-          <AnimatePresence>
-            {!showFeedbackForm ? (
-              <motion.button
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                onClick={() => setShowFeedbackForm(true)}
-                className="w-full bg-orange-500 text-white font-bold py-5 rounded-2xl hover:bg-orange-600 transition-all shadow-xl shadow-orange-500/20 flex items-center justify-center gap-3 text-lg"
-              >
-                <CheckCircle className="w-6 h-6" />
-                Complete Workout
-              </motion.button>
-            ) : (
-              <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 'auto' }}
-                className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 space-y-4"
-              >
-                <h3 className="font-bold text-xl">How was the session?</h3>
-                <textarea
-                  value={clientNote}
-                  onChange={(e) => setClientNote(e.target.value)}
-                  placeholder="Any notes for Coach Nik? (e.g. weight felt light, knee felt a bit tight...)"
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-4 text-sm focus:ring-1 focus:ring-orange-500 outline-none min-h-[120px]"
-                />
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => setShowFeedbackForm(false)}
-                    className="flex-1 py-4 px-6 border border-zinc-800 rounded-xl font-bold text-zinc-400 hover:bg-zinc-800 transition-all"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleComplete}
-                    disabled={submitting}
-                    className="flex-[2] bg-orange-500 text-white font-bold py-4 px-6 rounded-xl hover:bg-orange-600 disabled:opacity-50 transition-all shadow-lg shadow-orange-500/20"
-                  >
-                    {submitting ? 'Submitting...' : 'Submit & Finish'}
-                  </button>
                 </div>
-              </motion.div>
+              )}
+            </div>
+
+            {ex.coachNote && (
+              <div className="flex gap-2 items-start bg-zinc-950/50 p-3 rounded-xl border border-zinc-800/50 text-sm text-zinc-400 mb-4">
+                <MessageSquare className="w-4 h-4 mt-0.5 flex-shrink-0 text-orange-500/50" />
+                <p>{ex.coachNote}</p>
+              </div>
             )}
-          </AnimatePresence>
-        </div>
-      ) : (
-        <div className="py-20 text-center space-y-6">
-          <div className="inline-flex p-6 bg-zinc-900 rounded-full border border-zinc-800">
-            <Activity className="w-12 h-12 text-zinc-700" />
+
+            {ex.youtubeLink && getYouTubeId(ex.youtubeLink) && (
+              <a 
+                href={ex.youtubeLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block relative aspect-video rounded-xl overflow-hidden border border-zinc-800 bg-zinc-950 group/vid"
+              >
+                <img 
+                  src={`https://img.youtube.com/vi/${getYouTubeId(ex.youtubeLink)}/mqdefault.jpg`}
+                  alt="Exercise Video"
+                  className="w-full h-full object-cover opacity-60 group-hover/vid:opacity-80 transition-opacity"
+                  referrerPolicy="no-referrer"
+                />
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="w-12 h-12 rounded-full bg-orange-500 text-white flex items-center justify-center shadow-xl shadow-orange-500/20 group-hover/vid:scale-110 transition-transform">
+                    <Play className="w-6 h-6 fill-current" />
+                  </div>
+                </div>
+                <div className="absolute bottom-3 left-3 px-2 py-1 bg-black/50 backdrop-blur-md rounded text-[10px] font-bold text-white border border-white/10">
+                  WATCH DEMO
+                </div>
+              </a>
+            )}
+          </motion.div>
+        ))}
+      </div>
+
+      <AnimatePresence>
+        {!showFeedbackForm ? (
+          <motion.button
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            onClick={onComplete}
+            className="w-full bg-orange-500 text-white font-bold py-5 rounded-2xl hover:bg-orange-600 transition-all shadow-xl shadow-orange-500/20 flex items-center justify-center gap-3 text-lg"
+          >
+            <CheckCircle className="w-6 h-6" />
+            Complete Workout
+          </motion.button>
+        ) : (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 space-y-4"
+          >
+            <h3 className="font-bold text-xl">How was the session?</h3>
+            <textarea
+              value={clientNote}
+              onChange={(e) => setClientNote(e.target.value)}
+              placeholder="Any notes for Coach Nik? (e.g. weight felt light, knee felt a bit tight...)"
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-4 text-sm focus:ring-1 focus:ring-orange-500 outline-none min-h-[120px]"
+            />
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowFeedbackForm(false)}
+                className="flex-1 py-4 px-6 border border-zinc-800 rounded-xl font-bold text-zinc-400 hover:bg-zinc-800 transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleComplete}
+                disabled={submitting}
+                className="flex-[2] bg-orange-500 text-white font-bold py-4 px-6 rounded-xl hover:bg-orange-600 disabled:opacity-50 transition-all shadow-lg shadow-orange-500/20"
+              >
+                {submitting ? 'Submitting...' : 'Submit & Finish'}
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function ClientCalendar({ workouts, onSelectWorkout }: { workouts: Workout[], onSelectWorkout: (w: Workout) => void }) {
+  const [currentMonth, setCurrentMonth] = useState(new Date());
+
+  const days = useMemo(() => {
+    const start = startOfWeek(startOfMonth(currentMonth));
+    const end = endOfWeek(endOfMonth(currentMonth));
+    return eachDayOfInterval({ start, end });
+  }, [currentMonth]);
+
+  const getWorkoutsForDay = (day: Date) => {
+    const dateStr = format(day, 'yyyy-MM-dd');
+    return workouts.filter(w => w.scheduledDate === dateStr);
+  };
+
+  return (
+    <div className="bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden shadow-2xl">
+      <div className="p-6 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/50">
+        <div className="flex items-center gap-4">
+          <div className="p-3 bg-orange-500 rounded-2xl text-white shadow-lg shadow-orange-500/20">
+            <CalendarIcon className="w-6 h-6" />
           </div>
-          <div className="space-y-2">
-            <h3 className="text-2xl font-bold">No Workout Assigned</h3>
-            <p className="text-zinc-500 max-w-xs mx-auto">
-              Coach Nik hasn't assigned your next routine yet. Check back soon!
-            </p>
+          <div>
+            <h3 className="text-xl font-bold">{format(currentMonth, 'MMMM yyyy')}</h3>
+            <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider">Your Schedule</p>
           </div>
         </div>
-      )}
+        <div className="flex items-center gap-2">
+          <button 
+            onClick={() => setCurrentMonth(subMonths(currentMonth, 1))}
+            className="p-2 hover:bg-zinc-800 rounded-xl transition-colors text-zinc-400"
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+          <button 
+            onClick={() => setCurrentMonth(new Date())}
+            className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-xl text-xs font-bold transition-colors"
+          >
+            Today
+          </button>
+          <button 
+            onClick={() => setCurrentMonth(addMonths(currentMonth, 1))}
+            className="p-2 hover:bg-zinc-800 rounded-xl transition-colors text-zinc-400"
+          >
+            <ChevronRight className="w-5 h-5" />
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-7 border-b border-zinc-800">
+        {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
+          <div key={day} className="py-3 text-center text-[10px] font-bold text-zinc-500 uppercase tracking-widest border-r border-zinc-800 last:border-0">
+            {day}
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-7">
+        {days.map((day, idx) => {
+          const dayWorkouts = getWorkoutsForDay(day);
+          const isCurrentMonth = isSameMonth(day, currentMonth);
+          
+          return (
+            <div 
+              key={idx} 
+              className={cn(
+                "min-h-[100px] sm:min-h-[140px] p-2 border-r border-b border-zinc-800 last:border-r-0 relative group transition-colors",
+                !isCurrentMonth ? "bg-zinc-950/30" : "bg-zinc-900/20",
+                isToday(day) && "bg-orange-500/5"
+              )}
+            >
+              <span className={cn(
+                "text-xs font-bold",
+                isToday(day) ? "text-orange-500" : isCurrentMonth ? "text-zinc-400" : "text-zinc-700"
+              )}>
+                {format(day, 'd')}
+              </span>
+              
+              <div className="mt-2 space-y-1">
+                {dayWorkouts.map(w => (
+                  <button
+                    key={w.id}
+                    onClick={() => onSelectWorkout(w)}
+                    className="w-full text-left px-2 py-1 bg-orange-500/10 border border-orange-500/20 rounded-lg text-[10px] font-bold text-orange-500 hover:bg-orange-500 hover:text-white transition-all truncate"
+                  >
+                    W{w.weekNumber} D{w.dayNumber}
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

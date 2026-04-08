@@ -5,9 +5,25 @@ export interface UserProfile {
   email: string;
   role: UserRole;
   displayName?: string;
+  photoURL?: string;
   programGoals?: string;
   programDetails?: string;
+  height?: string;
+  weight?: string;
+  chosenProgram?: string;
+  onboardingComplete?: boolean;
   createdAt?: any;
+}
+
+export interface BodyMetrics {
+  id?: string;
+  clientId: string;
+  date: string; // YYYY-MM-DD
+  waterIntake: number; // in ml or glasses
+  stepCount: number;
+  calories: number;
+  weight?: number;
+  createdAt: any;
 }
 
 export interface Exercise {
