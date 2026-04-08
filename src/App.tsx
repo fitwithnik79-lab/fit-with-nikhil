@@ -8,6 +8,7 @@ import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, User 
 import { doc, getDoc, setDoc, updateDoc, collection, query, where, onSnapshot, orderBy, limit, addDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from './lib/firebase';
 import { UserProfile, UserRole } from './types';
+import { handleFirestoreError, OperationType } from './lib/firestoreErrors';
 import { LogIn, LogOut, Dumbbell, LayoutDashboard, CheckCircle, Calendar, MessageSquare, Plus, Edit2, Trash2, ExternalLink, ChevronRight, ChevronLeft, Menu, X, Trophy } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
@@ -23,30 +24,38 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setUser(user);
       if (user) {
-        const userDoc = await getDoc(doc(db, 'users', user.uid));
-        const isAdminEmail = user.email === 'fitwithnik79@gmail.com';
-        
-        if (userDoc.exists()) {
-          const userData = userDoc.data() as UserProfile;
-          // Sync admin role if email matches but role is not admin
-          if (isAdminEmail && userData.role !== 'admin') {
-            const updatedProfile = { ...userData, role: 'admin' as UserRole };
-            await updateDoc(doc(db, 'users', user.uid), { role: 'admin' });
-            setProfile(updatedProfile);
+        try {
+          const userDocRef = doc(db, 'users', user.uid);
+          const userDoc = await getDoc(userDocRef).catch(err => handleFirestoreError(err, OperationType.GET, `users/${user.uid}`));
+          
+          if (!userDoc) return; // Error handled
+
+          const isAdminEmail = user.email === 'fitwithnik79@gmail.com';
+          
+          if (userDoc.exists()) {
+            const userData = userDoc.data() as UserProfile;
+            // Sync admin role if email matches but role is not admin
+            if (isAdminEmail && userData.role !== 'admin') {
+              const updatedProfile = { ...userData, role: 'admin' as UserRole };
+              await updateDoc(userDocRef, { role: 'admin' }).catch(err => handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}`));
+              setProfile(updatedProfile);
+            } else {
+              setProfile(userData);
+            }
           } else {
-            setProfile(userData);
+            // New user
+            const newProfile: UserProfile = {
+              uid: user.uid,
+              email: user.email || '',
+              role: isAdminEmail ? 'admin' : 'client',
+              displayName: user.displayName || '',
+              createdAt: serverTimestamp(),
+            };
+            await setDoc(userDocRef, newProfile).catch(err => handleFirestoreError(err, OperationType.CREATE, `users/${user.uid}`));
+            setProfile(newProfile);
           }
-        } else {
-          // New user
-          const newProfile: UserProfile = {
-            uid: user.uid,
-            email: user.email || '',
-            role: isAdminEmail ? 'admin' : 'client',
-            displayName: user.displayName || '',
-            createdAt: serverTimestamp(),
-          };
-          await setDoc(doc(db, 'users', user.uid), newProfile);
-          setProfile(newProfile);
+        } catch (error) {
+          console.error('Error in auth state change:', error);
         }
       } else {
         setProfile(null);

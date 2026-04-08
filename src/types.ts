@@ -26,6 +26,8 @@ export interface Workout {
   weekNumber: number;
   dayNumber: number;
   exercises: Exercise[];
+  scheduledDate?: any; // Timestamp or Date string
+  createdAt?: any;
 }
 
 export interface Feedback {
@@ -37,5 +39,24 @@ export interface Feedback {
   completionStatus: boolean;
   clientNote: string;
   motivationalMessage?: string;
+  createdAt: any;
+}
+
+export interface WorkoutTemplate {
+  id?: string;
+  name: string;
+  category?: string;
+  description?: string;
+  exercises: Exercise[];
+  createdAt?: any;
+}
+
+export interface Message {
+  id?: string;
+  senderId: string;
+  receiverId: string;
+  text: string;
+  isRead: boolean;
+  type: 'chat' | 'motivation' | 'reminder';
   createdAt: any;
 }

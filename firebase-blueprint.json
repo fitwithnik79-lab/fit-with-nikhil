@@ -37,7 +37,9 @@
               "coachNote": { "type": "string" }
             }
           }
-        }
+        },
+        "scheduledDate": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["clientId", "weekNumber", "dayNumber", "exercises"]
     },
@@ -56,6 +58,36 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["clientId", "workoutId", "completionStatus"]
+    },
+    "Template": {
+      "title": "Workout Template",
+      "description": "A reusable workout routine template.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "description": { "type": "string" },
+        "exercises": {
+          "type": "array",
+          "items": { "$ref": "Workout.properties.exercises.items" }
+        },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "exercises"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "A direct message between an admin and a client.",
+      "type": "object",
+      "properties": {
+        "senderId": { "type": "string" },
+        "receiverId": { "type": "string" },
+        "text": { "type": "string" },
+        "isRead": { "type": "boolean" },
+        "type": { "type": "string", "enum": ["chat", "motivation", "reminder"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["senderId", "receiverId", "text", "type"]
     }
   },
   "firestore": {
@@ -70,6 +102,14 @@
     "/feedback/{feedbackId}": {
       "schema": "Feedback",
       "description": "Client feedback and completion tracking"
+    },
+    "/templates/{templateId}": {
+      "schema": "Template",
+      "description": "Reusable workout templates"
+    },
+    "/messages/{messageId}": {
+      "schema": "Message",
+      "description": "Direct messages between admins and clients"
     }
   }
 }

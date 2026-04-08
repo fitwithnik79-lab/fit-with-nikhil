@@ -3,10 +3,19 @@ import { User } from 'firebase/auth';
 import { collection, query, where, onSnapshot, addDoc, serverTimestamp, orderBy, limit, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { UserProfile, Workout, Exercise, Feedback } from '../types';
-import { CheckCircle, ExternalLink, Play, MessageSquare, Trophy, Calendar, Dumbbell, ChevronRight, Sparkles, Activity } from 'lucide-react';
+import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
+import { CheckCircle, ExternalLink, Play, MessageSquare, Trophy, Calendar, Dumbbell, ChevronRight, Sparkles, Activity, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
+import Chat from './Chat';
 import { generateMotivationalMessage } from '../lib/gemini';
+import { format } from 'date-fns';
+
+function getYouTubeId(url: string) {
+  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+  const match = url.match(regExp);
+  return (match && match[2].length === 11) ? match[2] : null;
+}
 
 interface ClientDashboardProps {
   user: User;
@@ -20,22 +29,60 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   const [showFeedbackForm, setShowFeedbackForm] = useState(false);
   const [clientNote, setClientNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [showChat, setShowChat] = useState(false);
+  const [adminProfile, setAdminProfile] = useState<UserProfile | null>(null);
 
   useEffect(() => {
-    // Get the latest workout assigned to this client
-    const q = query(
-      collection(db, 'workouts'), 
+    // Fetch admin profile for chat
+    const q = query(collection(db, 'users'), where('role', '==', 'admin'), limit(1));
+    getDocs(q).then(snap => {
+      if (!snap.empty) {
+        setAdminProfile(snap.docs[0].data() as UserProfile);
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    const todayStr = format(new Date(), 'yyyy-MM-dd');
+    
+    // First try to find a workout scheduled for today
+    const qToday = query(
+      collection(db, 'workouts'),
       where('clientId', '==', user.uid),
-      orderBy('createdAt', 'desc'),
+      where('scheduledDate', '==', todayStr),
       limit(1)
     );
-    
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+
+    const unsubscribe = onSnapshot(qToday, (snapshot) => {
       if (!snapshot.empty) {
         const data = snapshot.docs[0].data() as Workout;
         setCurrentWorkout({ id: snapshot.docs[0].id, ...data });
+        setLoading(false);
+      } else {
+        // Fallback to the latest workout if none scheduled for today
+        // This ensures they still see their program even if not explicitly scheduled for today
+        const qLatest = query(
+          collection(db, 'workouts'), 
+          where('clientId', '==', user.uid),
+          orderBy('createdAt', 'desc'),
+          limit(1)
+        );
+        
+        getDocs(qLatest).then(snap => {
+          if (!snap.empty) {
+            const data = snap.docs[0].data() as Workout;
+            setCurrentWorkout({ id: snap.docs[0].id, ...data });
+          } else {
+            setCurrentWorkout(null);
+          }
+          setLoading(false);
+        }).catch(err => {
+          handleFirestoreError(err, OperationType.LIST, 'workouts');
+          setLoading(false);
+        });
       }
-      setLoading(false);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'workouts');
     });
     
     return () => unsubscribe();
@@ -54,6 +101,8 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
       if (!snapshot.empty) {
         setLastFeedback({ id: snapshot.docs[0].id, ...snapshot.docs[0].data() } as Feedback);
       }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'feedback');
     });
 
     return () => unsubscribe();
@@ -74,7 +123,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
         clientNote: clientNote,
         motivationalMessage,
         createdAt: serverTimestamp()
-      });
+      }).catch(err => handleFirestoreError(err, OperationType.CREATE, 'feedback'));
       
       setShowFeedbackForm(false);
       setClientNote('');
@@ -100,7 +149,38 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   }
 
   return (
-    <div className="max-w-2xl mx-auto space-y-8">
+    <div className="max-w-2xl mx-auto space-y-8 relative">
+      {/* Floating Chat Button */}
+      <div className="fixed bottom-6 right-6 z-[60]">
+        <button
+          onClick={() => setShowChat(!showChat)}
+          className={cn(
+            "w-14 h-14 rounded-full flex items-center justify-center shadow-2xl transition-all hover:scale-110 active:scale-95",
+            showChat ? "bg-zinc-800 text-white" : "bg-orange-500 text-white shadow-orange-500/20"
+          )}
+        >
+          {showChat ? <X className="w-6 h-6" /> : <MessageSquare className="w-6 h-6" />}
+        </button>
+      </div>
+
+      {/* Chat Sidebar */}
+      <AnimatePresence>
+        {showChat && adminProfile && (
+          <motion.div
+            initial={{ opacity: 0, x: 100, scale: 0.9 }}
+            animate={{ opacity: 1, x: 0, scale: 1 }}
+            exit={{ opacity: 0, x: 100, scale: 0.9 }}
+            className="fixed bottom-24 right-6 z-[60] w-[calc(100vw-3rem)] sm:w-96 h-[600px] max-h-[calc(100vh-10rem)]"
+          >
+            <Chat 
+              currentUser={{ uid: user.uid, role: profile.role }} 
+              otherUser={adminProfile} 
+              onClose={() => setShowChat(false)}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {lastFeedback?.motivationalMessage && (
         <motion.div
           initial={{ opacity: 0, y: -20 }}
@@ -166,24 +246,37 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                       </div>
                     </div>
                   </div>
-                  
-                  {ex.youtubeLink && (
-                    <a
-                      href={ex.youtubeLink}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="p-3 bg-zinc-950 border border-zinc-800 rounded-xl hover:bg-orange-500 hover:border-orange-500 hover:text-white transition-all text-zinc-400"
-                    >
-                      <Play className="w-5 h-5 fill-current" />
-                    </a>
-                  )}
                 </div>
 
                 {ex.coachNote && (
-                  <div className="flex gap-2 items-start bg-zinc-950/50 p-3 rounded-xl border border-zinc-800/50 text-sm text-zinc-400">
+                  <div className="flex gap-2 items-start bg-zinc-950/50 p-3 rounded-xl border border-zinc-800/50 text-sm text-zinc-400 mb-4">
                     <MessageSquare className="w-4 h-4 mt-0.5 flex-shrink-0 text-orange-500/50" />
                     <p>{ex.coachNote}</p>
                   </div>
+                )}
+
+                {ex.youtubeLink && getYouTubeId(ex.youtubeLink) && (
+                  <a 
+                    href={ex.youtubeLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block relative aspect-video rounded-xl overflow-hidden border border-zinc-800 bg-zinc-950 group/vid"
+                  >
+                    <img 
+                      src={`https://img.youtube.com/vi/${getYouTubeId(ex.youtubeLink)}/mqdefault.jpg`}
+                      alt="Exercise Video"
+                      className="w-full h-full object-cover opacity-60 group-hover/vid:opacity-80 transition-opacity"
+                      referrerPolicy="no-referrer"
+                    />
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <div className="w-12 h-12 rounded-full bg-orange-500 text-white flex items-center justify-center shadow-xl shadow-orange-500/20 group-hover/vid:scale-110 transition-transform">
+                        <Play className="w-6 h-6 fill-current" />
+                      </div>
+                    </div>
+                    <div className="absolute bottom-3 left-3 px-2 py-1 bg-black/50 backdrop-blur-md rounded text-[10px] font-bold text-white border border-white/10">
+                      WATCH DEMO
+                    </div>
+                  </a>
                 )}
               </motion.div>
             ))}
