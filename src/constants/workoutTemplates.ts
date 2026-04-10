@@ -139,6 +139,21 @@ export const WORKOUT_TEMPLATES: WorkoutTemplate[] = [
     ]
   },
   {
+    id: 'full-body-strength-base',
+    name: 'Full Body Strength Base',
+    category: 'Strength',
+    exercises: [
+      ...warmUp,
+      { name: 'Barbell Squats', youtubeLink: 'https://www.youtube.com/watch?v=ultWZbUMPL8', sets: 3, reps: '8-10', weight: 'Heavy', rest: '90s', coachNote: 'Focus on depth and upright torso.' },
+      { name: 'Bench Press', youtubeLink: 'https://www.youtube.com/watch?v=rT7DgCr-3ps', sets: 3, reps: '8-10', weight: 'Heavy', rest: '90s', coachNote: 'Control the descent, explosive press.' },
+      { name: 'Deadlifts', youtubeLink: 'https://www.youtube.com/watch?v=lJ3QwaXNJfw', sets: 3, reps: '5', weight: 'Heavy', rest: '120s', coachNote: 'Keep back flat, drive through heels.' },
+      { name: 'Dumbbell Rows', youtubeLink: 'https://www.youtube.com/watch?v=roCP6wCXPqo', sets: 3, reps: '10-12', weight: 'Medium', rest: '60s', coachNote: 'Squeeze shoulder blades at the top.' },
+      { name: 'Overhead Press', youtubeLink: 'https://www.youtube.com/watch?v=2yjwXTZQDDI', sets: 3, reps: '8-10', weight: 'Medium', rest: '90s', coachNote: 'Core tight, no leg drive.' },
+      { name: 'Bicep Curls', youtubeLink: 'https://www.youtube.com/watch?v=ykJmrZ5v0BA', sets: 3, reps: '12-15', weight: 'Light/Medium', rest: '45s', coachNote: 'Full range of motion, no swinging.' },
+      ...coolDown
+    ]
+  },
+  {
     id: 'single-chest',
     name: 'Single Muscle: Chest Day',
     category: 'Bro Split',
@@ -152,6 +167,22 @@ export const WORKOUT_TEMPLATES: WorkoutTemplate[] = [
 ];
 
 export const WEEKLY_PROGRAMS: ProgramTemplate[] = [
+  {
+    id: 'full-body-strength-3day',
+    name: '3-Day Full Body Strength',
+    category: 'Strength',
+    description: 'A comprehensive 3-day full body strength program focusing on compound movements.',
+    weeks: [
+      {
+        weekNumber: 1,
+        days: [
+          { dayNumber: 1, workoutTemplateId: 'full-body-strength-base', label: 'Full Body A' },
+          { dayNumber: 2, workoutTemplateId: 'full-body-strength-base', label: 'Full Body B' },
+          { dayNumber: 3, workoutTemplateId: 'full-body-strength-base', label: 'Full Body C' }
+        ]
+      }
+    ]
+  },
   {
     id: 'fat-loss-week-1',
     name: 'Fat Loss - Week 1',

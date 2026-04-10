@@ -205,10 +205,19 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
           if (!snap2.empty) {
             setAdminProfile({ uid: snap2.docs[0].id, ...snap2.docs[0].data() } as UserProfile);
           }
+        }).catch(err => {
+          console.error("Error fetching admin profile fallback:", err);
         });
       }
     }, (error) => {
       console.error("Error fetching admin profile:", error);
+      // If permission denied, try a direct fetch for the specific admin email
+      const q2 = query(collection(db, 'users'), where('email', '==', 'fitwithnik79@gmail.com'));
+      getDocs(q2).then(snap2 => {
+        if (!snap2.empty) {
+          setAdminProfile({ uid: snap2.docs[0].id, ...snap2.docs[0].data() } as UserProfile);
+        }
+      }).catch(err => console.error("Final fallback failed:", err));
     });
     return () => unsubscribe();
   }, []);
@@ -906,18 +915,43 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
 
       {/* Chat Sidebar/Modal */}
       <AnimatePresence>
-        {showChat && adminProfile && (
+        {showChat && (
           <motion.div
             initial={{ opacity: 0, x: 100, scale: 0.9 }}
             animate={{ opacity: 1, x: 0, scale: 1 }}
             exit={{ opacity: 0, x: 100, scale: 0.9 }}
             className="fixed bottom-24 right-6 z-[110] w-[calc(100vw-3rem)] sm:w-96 h-[600px] max-h-[calc(100vh-10rem)] shadow-2xl"
           >
-            <Chat 
-              currentUser={{ uid: user.uid, role: profile.role }} 
-              otherUser={adminProfile} 
-              onClose={() => setShowChat(false)}
-            />
+            {adminProfile ? (
+              <Chat 
+                currentUser={{ uid: user.uid, role: profile.role }} 
+                otherUser={adminProfile} 
+                onClose={() => setShowChat(false)}
+              />
+            ) : (
+              <div className="flex flex-col h-full bg-zinc-950 rounded-3xl border border-zinc-800 overflow-hidden shadow-2xl">
+                <div className="p-4 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/50">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-orange-500/10 rounded-lg text-orange-500">
+                      <MessageCircle className="w-5 h-5" />
+                    </div>
+                    <h3 className="font-bold text-sm">Chat with Coach</h3>
+                  </div>
+                  <button onClick={() => setShowChat(false)} className="p-2 hover:bg-zinc-800 rounded-xl text-zinc-500">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+                <div className="flex-1 flex flex-col items-center justify-center p-8 text-center space-y-4">
+                  <div className="w-16 h-16 rounded-full bg-zinc-900 flex items-center justify-center border border-zinc-800">
+                    <Loader2 className="w-8 h-8 text-zinc-700 animate-spin" />
+                  </div>
+                  <div className="space-y-2">
+                    <p className="font-bold text-zinc-300">Connecting to Coach...</p>
+                    <p className="text-xs text-zinc-500">We're setting up your secure connection to Coach Nik.</p>
+                  </div>
+                </div>
+              </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
@@ -1119,6 +1153,17 @@ function WorkoutCard({
   submitting: boolean,
   handleComplete: () => void
 }) {
+  const [showConfirm, setShowConfirm] = useState(false);
+
+  const handleCompleteClick = () => {
+    setShowConfirm(true);
+  };
+
+  const confirmComplete = () => {
+    setShowConfirm(false);
+    onComplete();
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-end justify-between px-2">
@@ -1217,7 +1262,7 @@ function WorkoutCard({
           <motion.button
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            onClick={onComplete}
+            onClick={handleCompleteClick}
             className="w-full bg-orange-500 text-white font-bold py-5 rounded-2xl hover:bg-orange-600 transition-all shadow-xl shadow-orange-500/20 flex items-center justify-center gap-3 text-lg"
           >
             <CheckCircle className="w-6 h-6" />
@@ -1252,6 +1297,44 @@ function WorkoutCard({
               </button>
             </div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Confirmation Dialog */}
+      <AnimatePresence>
+        {showConfirm && (
+          <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 max-w-md w-full shadow-2xl space-y-6"
+            >
+              <div className="flex flex-col items-center text-center space-y-4">
+                <div className="w-16 h-16 rounded-full bg-orange-500/10 flex items-center justify-center text-orange-500">
+                  <CheckCircle className="w-8 h-8" />
+                </div>
+                <div className="space-y-2">
+                  <h3 className="text-2xl font-bold">Finish Workout?</h3>
+                  <p className="text-zinc-400">Great job! Are you ready to mark this session as complete and leave your feedback?</p>
+                </div>
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => setShowConfirm(false)}
+                  className="flex-1 py-4 px-6 border border-zinc-800 rounded-2xl font-bold text-zinc-400 hover:bg-zinc-800 transition-all"
+                >
+                  Not Yet
+                </button>
+                <button
+                  onClick={confirmComplete}
+                  className="flex-1 bg-orange-500 text-white font-bold py-4 px-6 rounded-2xl hover:bg-orange-600 transition-all shadow-lg shadow-orange-500/20"
+                >
+                  Yes, Finish
+                </button>
+              </div>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
     </div>
