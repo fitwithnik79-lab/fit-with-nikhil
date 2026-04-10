@@ -85,12 +85,25 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
 
   useEffect(() => {
     // Fetch admin profile for chat
-    const q = query(collection(db, 'users'), where('role', '==', 'admin'), limit(1));
-    getDocs(q).then(snap => {
+    const q = query(collection(db, 'users'), where('role', '==', 'admin'));
+    const unsubscribe = onSnapshot(q, (snap) => {
       if (!snap.empty) {
-        setAdminProfile({ uid: snap.docs[0].id, ...snap.docs[0].data() } as UserProfile);
+        // Find the specific admin if possible, otherwise take the first one
+        const adminDoc = snap.docs.find(d => d.data().email === 'fitwithnik79@gmail.com') || snap.docs[0];
+        setAdminProfile({ uid: adminDoc.id, ...adminDoc.data() } as UserProfile);
+      } else {
+        // Fallback: search for the specific admin email if role check fails
+        const q2 = query(collection(db, 'users'), where('email', '==', 'fitwithnik79@gmail.com'));
+        getDocs(q2).then(snap2 => {
+          if (!snap2.empty) {
+            setAdminProfile({ uid: snap2.docs[0].id, ...snap2.docs[0].data() } as UserProfile);
+          }
+        });
       }
+    }, (error) => {
+      console.error("Error fetching admin profile:", error);
     });
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {
