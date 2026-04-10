@@ -35,6 +35,9 @@ export default function App() {
           
           if (userDoc.exists()) {
             const userData = userDoc.data() as UserProfile;
+            // Update lastLogin
+            await updateDoc(userDocRef, { lastLogin: serverTimestamp() }).catch(err => handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}`));
+            
             // Sync admin role if email matches but role is not admin
             if (isAdminEmail && userData.role !== 'admin') {
               const updatedProfile = { ...userData, role: 'admin' as UserRole };

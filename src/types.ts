@@ -12,6 +12,8 @@ export interface UserProfile {
   weight?: string;
   chosenProgram?: string;
   onboardingComplete?: boolean;
+  lastLogin?: any;
+  streak?: number;
   createdAt?: any;
 }
 
@@ -26,6 +28,9 @@ export interface BodyMetrics {
   carbs?: number;
   fats?: number;
   weight?: number;
+  mood?: string;
+  energyLevel?: number; // 1-10
+  sleepHours?: number;
   createdAt: any;
 }
 
@@ -67,6 +72,22 @@ export interface WorkoutTemplate {
   category?: string;
   description?: string;
   exercises: Exercise[];
+  createdAt?: any;
+}
+
+export interface ProgramTemplate {
+  id?: string;
+  name: string;
+  category: string;
+  description: string;
+  weeks: {
+    weekNumber: number;
+    days: {
+      dayNumber: number;
+      workoutTemplateId: string; // Reference to a WorkoutTemplate
+      label: string; // e.g., "Upper Body", "Legs", "Cardio"
+    }[];
+  }[];
   createdAt?: any;
 }
 

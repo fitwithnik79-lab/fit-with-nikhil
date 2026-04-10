@@ -32,7 +32,15 @@ import {
   Flame,
   Plus,
   Save,
-  Scale
+  Scale,
+  Loader2,
+  Trash2,
+  Upload,
+  Camera,
+  Settings,
+  User as UserIcon2,
+  LogOut,
+  Info
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
@@ -51,10 +59,109 @@ import {
   subMonths,
   isToday,
   parseISO,
-  startOfDay
+  startOfDay,
+  differenceInDays
 } from 'date-fns';
+
+const StreakDisplay = ({ history }: { history: BodyMetrics[] }) => {
+  const calculateStreak = () => {
+    if (history.length === 0) return 0;
+    const sorted = [...history].sort((a, b) => parseISO(b.date).getTime() - parseISO(a.date).getTime());
+    
+    let streak = 0;
+    let current = new Date();
+    
+    // If last log wasn't today or yesterday, streak is broken
+    const lastLogDate = parseISO(sorted[0].date);
+    if (differenceInDays(current, lastLogDate) > 1) return 0;
+
+    for (let i = 0; i < sorted.length; i++) {
+      const logDate = parseISO(sorted[i].date);
+      if (i === 0) {
+        streak = 1;
+      } else {
+        const prevLogDate = parseISO(sorted[i-1].date);
+        if (differenceInDays(prevLogDate, logDate) === 1) {
+          streak++;
+        } else {
+          break;
+        }
+      }
+    }
+    return streak;
+  };
+
+  const streak = calculateStreak();
+
+  return (
+    <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 flex items-center justify-between overflow-hidden relative group">
+      <div className="absolute -right-4 -bottom-4 opacity-5 group-hover:opacity-10 transition-opacity">
+        <Flame className="w-32 h-32 text-orange-500" />
+      </div>
+      <div className="space-y-1">
+        <p className="text-zinc-500 text-xs font-bold uppercase tracking-widest">Current Streak</p>
+        <div className="flex items-baseline gap-2">
+          <span className="text-4xl font-black text-white">{streak}</span>
+          <span className="text-zinc-400 font-medium">Days</span>
+        </div>
+      </div>
+      <div className="flex gap-1">
+        {[...Array(7)].map((_, i) => {
+          const isActive = i < streak % 7 || (streak > 0 && streak % 7 === 0);
+          return (
+            <div 
+              key={i} 
+              className={cn(
+                "w-2 h-8 rounded-full transition-all duration-500",
+                isActive ? "bg-orange-500 shadow-[0_0_10px_rgba(249,115,22,0.5)]" : "bg-zinc-800"
+              )} 
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+const QuickLog = ({ todayMetrics, onLog }: { todayMetrics: BodyMetrics | null, onLog: (data: Partial<BodyMetrics>) => void }) => {
+  if (todayMetrics && todayMetrics.waterIntake > 0 && todayMetrics.stepCount > 0) return null;
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      className="bg-orange-500 rounded-[32px] p-8 text-black shadow-2xl shadow-orange-500/20"
+    >
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <div className="space-y-2">
+          <h3 className="text-2xl font-black uppercase tracking-tight leading-none">Quick Log</h3>
+          <p className="text-black/70 font-medium">Keep the momentum going! Log your vitals.</p>
+        </div>
+        <div className="flex flex-wrap gap-3">
+          {!todayMetrics?.waterIntake && (
+            <button 
+              onClick={() => onLog({ waterIntake: 250 })}
+              className="bg-black text-white px-6 py-3 rounded-2xl font-bold text-sm hover:scale-105 transition-transform flex items-center gap-2"
+            >
+              <Droplets className="w-4 h-4" />
+              +1 Glass Water
+            </button>
+          )}
+          {!todayMetrics?.stepCount && (
+            <button 
+              onClick={() => onLog({ stepCount: 5000 })}
+              className="bg-black text-white px-6 py-3 rounded-2xl font-bold text-sm hover:scale-105 transition-transform flex items-center gap-2"
+            >
+              <Footprints className="w-4 h-4" />
+              Log 5k Steps
+            </button>
+          )}
+        </div>
+      </div>
+    </motion.div>
+  );
+};
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
-import { Camera, Upload, Settings, User as UserIcon2, LogOut, Info } from 'lucide-react';
 
 function getYouTubeId(url: string) {
   const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
@@ -240,7 +347,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     { id: 'calendar', label: 'Calendar', icon: CalendarIcon },
     { id: 'goals', label: 'Goals and Habits', icon: Target },
     { id: 'program', label: 'Training Program', icon: Folder },
-    { id: 'meal-ai', label: 'AI Meal Analysis', icon: Sparkles },
+    { id: 'meal-ai', label: 'Daily Nutrition', icon: Utensils },
     { id: 'progress', label: 'Progress', icon: TrendingUp },
     { id: 'profile', label: 'My Profile', icon: UserIcon },
   ];
@@ -362,6 +469,70 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                 exit={{ opacity: 0, y: -20 }}
                 className="max-w-4xl mx-auto space-y-8"
               >
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <StreakDisplay history={metrics} />
+                  <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 flex items-center justify-between">
+                    <div className="space-y-1">
+                      <p className="text-zinc-500 text-xs font-bold uppercase tracking-widest">Today's Calories</p>
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-4xl font-black text-white">{todayMetrics?.calories || 0}</span>
+                        <span className="text-zinc-400 font-medium">/ 2500</span>
+                      </div>
+                    </div>
+                    <div className="w-16 h-16 rounded-full border-4 border-zinc-800 flex items-center justify-center relative">
+                      <svg className="w-full h-full -rotate-90">
+                        <circle
+                          cx="32"
+                          cy="32"
+                          r="28"
+                          stroke="currentColor"
+                          strokeWidth="4"
+                          fill="transparent"
+                          className="text-zinc-800"
+                        />
+                        <circle
+                          cx="32"
+                          cy="32"
+                          r="28"
+                          stroke="currentColor"
+                          strokeWidth="4"
+                          fill="transparent"
+                          strokeDasharray={175.9}
+                          strokeDashoffset={175.9 - (175.9 * Math.min((todayMetrics?.calories || 0) / 2500, 1)) }
+                          className="text-orange-500"
+                        />
+                      </svg>
+                      <Flame className="w-6 h-6 text-orange-500 absolute inset-0 m-auto" />
+                    </div>
+                  </div>
+                </div>
+
+                <QuickLog 
+                  todayMetrics={todayMetrics} 
+                  onLog={async (data) => {
+                    const dateStr = format(new Date(), 'yyyy-MM-dd');
+                    const q = query(collection(db, 'metrics'), where('clientId', '==', user.uid), where('date', '==', dateStr));
+                    const snap = await getDocs(q);
+                    
+                    if (!snap.empty) {
+                      await updateDoc(doc(db, 'metrics', snap.docs[0].id), {
+                        ...data,
+                        createdAt: serverTimestamp()
+                      });
+                    } else {
+                      await addDoc(collection(db, 'metrics'), {
+                        clientId: user.uid,
+                        date: dateStr,
+                        waterIntake: 0,
+                        stepCount: 0,
+                        calories: 0,
+                        ...data,
+                        createdAt: serverTimestamp()
+                      });
+                    }
+                  }} 
+                />
+
                 {lastFeedback?.motivationalMessage && (
                   <div className="bg-orange-500/10 border border-orange-500/20 p-6 rounded-2xl relative overflow-hidden">
                     <Sparkles className="absolute -right-2 -top-2 w-16 h-16 text-orange-500/10 rotate-12" />
@@ -413,7 +584,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -20 }}
               >
-                <ProfileSection user={user} profile={profile} />
+                <ProfileSection user={user} profile={profile} setShowChat={setShowChat} />
               </motion.div>
             )}
 
@@ -1092,6 +1263,8 @@ function MealAI({ user, todayMetrics }: { user: User, todayMetrics: BodyMetrics 
   const [analyzing, setAnalyzing] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [logging, setLogging] = useState(false);
+  const [manualItems, setManualItems] = useState<{ name: string, calories: number, protein: number, carbs: number, fats: number }[]>([]);
+  const [newItem, setNewItem] = useState({ name: '', calories: 0, protein: 0, carbs: 0, fats: 0 });
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1111,7 +1284,17 @@ function MealAI({ user, todayMetrics }: { user: User, todayMetrics: BodyMetrics 
       const base64 = image.split(',')[1];
       const mimeType = image.split(';')[0].split(':')[1];
       const analysis = await analyzeMealImage(base64, mimeType);
-      setResult(analysis);
+      if (analysis) {
+        setResult(analysis);
+        // Add analyzed meal as a single item for now, or we could split it if AI returned items
+        setManualItems([{
+          name: analysis.mealName,
+          calories: analysis.calories,
+          protein: analysis.protein,
+          carbs: analysis.carbs,
+          fats: analysis.fats
+        }]);
+      }
     } catch (error) {
       console.error('Error analyzing meal:', error);
     } finally {
@@ -1119,18 +1302,35 @@ function MealAI({ user, todayMetrics }: { user: User, todayMetrics: BodyMetrics 
     }
   };
 
+  const addManualItem = () => {
+    if (!newItem.name) return;
+    setManualItems([...manualItems, newItem]);
+    setNewItem({ name: '', calories: 0, protein: 0, carbs: 0, fats: 0 });
+  };
+
+  const removeManualItem = (index: number) => {
+    setManualItems(manualItems.filter((_, i) => i !== index));
+  };
+
+  const totalMealMacros = manualItems.reduce((acc, item) => ({
+    calories: acc.calories + Number(item.calories),
+    protein: acc.protein + Number(item.protein),
+    carbs: acc.carbs + Number(item.carbs),
+    fats: acc.fats + Number(item.fats)
+  }), { calories: 0, protein: 0, carbs: 0, fats: 0 });
+
   const handleLogMeal = async () => {
-    if (!result) return;
+    if (manualItems.length === 0) return;
     setLogging(true);
     try {
       const todayStr = format(new Date(), 'yyyy-MM-dd');
       const metricsData = {
         clientId: user.uid,
         date: todayStr,
-        calories: (todayMetrics?.calories || 0) + Number(result.calories),
-        protein: (todayMetrics?.protein || 0) + Number(result.protein),
-        carbs: (todayMetrics?.carbs || 0) + Number(result.carbs),
-        fats: (todayMetrics?.fats || 0) + Number(result.fats),
+        calories: (todayMetrics?.calories || 0) + totalMealMacros.calories,
+        protein: (todayMetrics?.protein || 0) + totalMealMacros.protein,
+        carbs: (todayMetrics?.carbs || 0) + totalMealMacros.carbs,
+        fats: (todayMetrics?.fats || 0) + totalMealMacros.fats,
         waterIntake: todayMetrics?.waterIntake || 0,
         stepCount: todayMetrics?.stepCount || 0,
         weight: todayMetrics?.weight || 0,
@@ -1146,6 +1346,7 @@ function MealAI({ user, todayMetrics }: { user: User, todayMetrics: BodyMetrics 
       }
       setImage(null);
       setResult(null);
+      setManualItems([]);
       alert('Meal logged successfully!');
     } catch (error) {
       console.error('Error logging meal:', error);
@@ -1155,115 +1356,221 @@ function MealAI({ user, todayMetrics }: { user: User, todayMetrics: BodyMetrics 
   };
 
   return (
-    <div className="max-w-2xl mx-auto space-y-8">
+    <div className="max-w-4xl mx-auto space-y-8">
       <div className="text-center space-y-2">
         <div className="inline-flex p-4 bg-orange-500/10 rounded-full text-orange-500 mb-4">
           <Sparkles className="w-8 h-8" />
         </div>
-        <h2 className="text-3xl font-bold">AI Meal Analysis</h2>
-        <p className="text-zinc-500">Upload a photo of your meal and let Nik's AI analyze the nutrition.</p>
+        <h2 className="text-3xl font-bold">Daily Nutrition Tracker</h2>
+        <p className="text-zinc-500">Track your meals for the day using AI or manual entry.</p>
       </div>
 
-      <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 space-y-6">
-        {!image ? (
-          <label className="flex flex-col items-center justify-center border-2 border-dashed border-zinc-800 rounded-3xl p-12 cursor-pointer hover:border-orange-500/50 transition-all group">
-            <div className="p-4 bg-zinc-950 rounded-2xl text-zinc-500 group-hover:text-orange-500 transition-colors mb-4">
-              <Camera className="w-8 h-8" />
-            </div>
-            <span className="text-zinc-400 font-bold">Click to upload or take a photo</span>
-            <span className="text-zinc-600 text-xs mt-2">Supports JPG, PNG</span>
-            <input type="file" accept="image/*" className="hidden" onChange={handleImageChange} />
-          </label>
-        ) : (
-          <div className="space-y-6">
-            <div className="relative aspect-video rounded-2xl overflow-hidden border border-zinc-800">
-              <img src={image} alt="Meal" className="w-full h-full object-cover" />
-              <button 
-                onClick={() => { setImage(null); setResult(null); }}
-                className="absolute top-4 right-4 p-2 bg-black/50 backdrop-blur-md rounded-full text-white hover:bg-black transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            
-            {!result && (
-              <button 
-                onClick={handleAnalyze}
-                disabled={analyzing}
-                className="w-full py-4 bg-orange-500 text-white font-bold rounded-2xl hover:bg-orange-600 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
-              >
-                {analyzing ? <Clock className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
-                {analyzing ? 'Analyzing Meal...' : 'Analyze Nutrition'}
-              </button>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <div className="space-y-6">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 space-y-6">
+            <h3 className="text-xl font-bold flex items-center gap-2">
+              <Camera className="w-5 h-5 text-orange-500" />
+              Add via Photo
+            </h3>
+            {!image ? (
+              <label className="flex flex-col items-center justify-center border-2 border-dashed border-zinc-800 rounded-3xl p-12 cursor-pointer hover:border-orange-500/50 transition-all group">
+                <div className="p-4 bg-zinc-950 rounded-2xl text-zinc-500 group-hover:text-orange-500 transition-colors mb-4">
+                  <Upload className="w-8 h-8" />
+                </div>
+                <span className="text-zinc-400 font-bold">Upload Meal Photo</span>
+                <input type="file" accept="image/*" className="hidden" onChange={handleImageChange} />
+              </label>
+            ) : (
+              <div className="space-y-4">
+                <div className="relative aspect-video rounded-2xl overflow-hidden border border-zinc-800">
+                  <img src={image} alt="Meal" className="w-full h-full object-cover" />
+                  <button 
+                    onClick={() => { setImage(null); setResult(null); }}
+                    className="absolute top-4 right-4 p-2 bg-black/50 backdrop-blur-md rounded-full text-white hover:bg-black transition-colors"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+                {!result && (
+                  <button 
+                    onClick={handleAnalyze}
+                    disabled={analyzing}
+                    className="w-full py-4 bg-orange-500 text-white font-bold rounded-2xl hover:bg-orange-600 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
+                  >
+                    {analyzing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
+                    {analyzing ? 'Analyzing...' : 'Analyze with AI'}
+                  </button>
+                )}
+              </div>
             )}
           </div>
-        )}
 
-        {result && (
-          <motion.div 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="space-y-6 pt-6 border-t border-zinc-800"
-          >
+          <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 space-y-6">
+            <h3 className="text-xl font-bold flex items-center gap-2">
+              <Plus className="w-5 h-5 text-orange-500" />
+              Manual Entry
+            </h3>
+            <div className="space-y-4">
+              <input 
+                type="text" 
+                placeholder="Food Item Name"
+                value={newItem.name}
+                onChange={(e) => setNewItem({ ...newItem, name: e.target.value })}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm outline-none focus:ring-1 focus:ring-orange-500"
+              />
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Calories</label>
+                  <input 
+                    type="number" 
+                    placeholder="Cal"
+                    value={newItem.calories || ''}
+                    onChange={(e) => setNewItem({ ...newItem, calories: Number(e.target.value) })}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm outline-none focus:ring-1 focus:ring-orange-500"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Protein (g)</label>
+                  <input 
+                    type="number" 
+                    placeholder="P"
+                    value={newItem.protein || ''}
+                    onChange={(e) => setNewItem({ ...newItem, protein: Number(e.target.value) })}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm outline-none focus:ring-1 focus:ring-orange-500"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Carbs (g)</label>
+                  <input 
+                    type="number" 
+                    placeholder="C"
+                    value={newItem.carbs || ''}
+                    onChange={(e) => setNewItem({ ...newItem, carbs: Number(e.target.value) })}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm outline-none focus:ring-1 focus:ring-orange-500"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Fats (g)</label>
+                  <input 
+                    type="number" 
+                    placeholder="F"
+                    value={newItem.fats || ''}
+                    onChange={(e) => setNewItem({ ...newItem, fats: Number(e.target.value) })}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm outline-none focus:ring-1 focus:ring-orange-500"
+                  />
+                </div>
+              </div>
+              <button 
+                onClick={addManualItem}
+                className="w-full py-3 bg-zinc-800 text-white font-bold rounded-xl hover:bg-zinc-700 transition-all flex items-center justify-center gap-2"
+              >
+                <Plus className="w-4 h-4" />
+                Add Item
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-6">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 space-y-6 h-full flex flex-col">
             <div className="flex items-center justify-between">
-              <h3 className="text-2xl font-bold text-orange-500">{result.mealName}</h3>
+              <h3 className="text-xl font-bold">Current Meal</h3>
               <div className="px-3 py-1 bg-orange-500/10 rounded-full text-[10px] font-bold text-orange-500 uppercase tracking-widest">
-                AI ESTIMATE
+                {manualItems.length} Items
               </div>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              <div className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800 text-center">
-                <div className="text-xl font-bold">{result.calories}</div>
+            <div className="flex-1 space-y-3 overflow-y-auto max-h-[400px] custom-scrollbar pr-2">
+              {manualItems.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full py-12 text-zinc-600 space-y-2">
+                  <Utensils className="w-12 h-12 opacity-20" />
+                  <p className="text-sm font-medium">No items added yet.</p>
+                </div>
+              ) : (
+                manualItems.map((item, i) => (
+                  <div key={i} className="bg-zinc-950 border border-zinc-800 rounded-2xl p-4 flex items-center justify-between group">
+                    <div>
+                      <h4 className="font-bold text-sm">{item.name}</h4>
+                      <p className="text-[10px] text-zinc-500 font-medium">
+                        {item.calories} kcal • P: {item.protein}g • C: {item.carbs}g • F: {item.fats}g
+                      </p>
+                    </div>
+                    <button 
+                      onClick={() => removeManualItem(i)}
+                      className="p-2 text-zinc-600 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {manualItems.length > 0 && (
+              <div className="pt-6 border-t border-zinc-800 space-y-6">
+                <div className="grid grid-cols-4 gap-2">
+                  <div className="text-center">
+                    <div className="text-lg font-bold">{totalMealMacros.calories}</div>
+                    <div className="text-[8px] text-zinc-500 font-bold uppercase tracking-widest">Cal</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-lg font-bold text-blue-500">{totalMealMacros.protein}g</div>
+                    <div className="text-[8px] text-zinc-500 font-bold uppercase tracking-widest">Prot</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-lg font-bold text-green-500">{totalMealMacros.carbs}g</div>
+                    <div className="text-[8px] text-zinc-500 font-bold uppercase tracking-widest">Carb</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-lg font-bold text-yellow-500">{totalMealMacros.fats}g</div>
+                    <div className="text-[8px] text-zinc-500 font-bold uppercase tracking-widest">Fat</div>
+                  </div>
+                </div>
+
+                <button 
+                  onClick={handleLogMeal}
+                  disabled={logging}
+                  className="w-full py-4 bg-orange-500 text-white font-bold rounded-2xl hover:bg-orange-600 disabled:opacity-50 transition-all flex items-center justify-center gap-2 shadow-lg shadow-orange-500/20"
+                >
+                  {logging ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
+                  {logging ? 'Logging...' : 'Log to Daily Total'}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Daily Progress Summary */}
+          <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 space-y-6">
+            <h3 className="text-xl font-bold flex items-center gap-2">
+              <Activity className="w-5 h-5 text-green-500" />
+              Today's Total
+            </h3>
+            <div className="grid grid-cols-4 gap-4">
+              <div className="text-center">
+                <div className="text-2xl font-black">{todayMetrics?.calories || 0}</div>
                 <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Calories</div>
               </div>
-              <div className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800 text-center">
-                <div className="text-xl font-bold text-blue-500">{result.protein}g</div>
+              <div className="text-center">
+                <div className="text-2xl font-black text-blue-500">{todayMetrics?.protein || 0}g</div>
                 <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Protein</div>
               </div>
-              <div className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800 text-center">
-                <div className="text-xl font-bold text-green-500">{result.carbs}g</div>
+              <div className="text-center">
+                <div className="text-2xl font-black text-green-500">{todayMetrics?.carbs || 0}g</div>
                 <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Carbs</div>
               </div>
-              <div className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800 text-center">
-                <div className="text-xl font-bold text-yellow-500">{result.fats}g</div>
+              <div className="text-center">
+                <div className="text-2xl font-black text-yellow-500">{todayMetrics?.fats || 0}g</div>
                 <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Fats</div>
               </div>
             </div>
-
-            <div className="space-y-2">
-              <h4 className="text-sm font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2">
-                <Info className="w-4 h-4" /> Ingredients Identified
-              </h4>
-              <div className="flex flex-wrap gap-2">
-                {result.ingredients.map((ing: string, i: number) => (
-                  <span key={i} className="px-3 py-1 bg-zinc-800 rounded-lg text-xs font-medium text-zinc-300">
-                    {ing}
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            <div className="bg-orange-500/5 border border-orange-500/10 p-4 rounded-2xl">
-              <p className="text-sm text-zinc-300 italic">" {result.advice} "</p>
-            </div>
-
-            <button 
-              onClick={handleLogMeal}
-              disabled={logging}
-              className="w-full py-4 bg-white text-black font-bold rounded-2xl hover:bg-zinc-200 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
-            >
-              {logging ? <Clock className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />}
-              {logging ? 'Logging Meal...' : 'Log this meal to Daily Total'}
-            </button>
-          </motion.div>
-        )}
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
-function ProfileSection({ user, profile }: { user: User, profile: UserProfile }) {
+function ProfileSection({ user, profile, setShowChat }: { user: User, profile: UserProfile, setShowChat: (s: boolean) => void }) {
   const [formData, setFormData] = useState({
     displayName: profile.displayName || '',
     photoURL: profile.photoURL || '',
@@ -1366,14 +1673,23 @@ function ProfileSection({ user, profile }: { user: User, profile: UserProfile })
           </div>
         )}
 
-        <button 
-          onClick={handleSave}
-          disabled={isSaving}
-          className="w-full py-4 bg-white text-black font-bold rounded-2xl hover:bg-zinc-200 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
-        >
-          {isSaving ? <Clock className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
-          {isSaving ? 'Saving Changes...' : 'Update Profile'}
-        </button>
+        <div className="flex gap-3">
+          <button 
+            onClick={handleSave}
+            disabled={isSaving}
+            className="flex-[2] py-4 bg-white text-black font-bold rounded-2xl hover:bg-zinc-200 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
+          >
+            {isSaving ? <Clock className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
+            {isSaving ? 'Saving Changes...' : 'Update Profile'}
+          </button>
+          <button 
+            onClick={() => setShowChat(true)}
+            className="flex-1 py-4 bg-orange-500 text-white font-bold rounded-2xl hover:bg-orange-600 transition-all flex items-center justify-center gap-2 shadow-lg shadow-orange-500/20"
+          >
+            <MessageCircle className="w-5 h-5" />
+            Message Nik
+          </button>
+        </div>
       </div>
     </div>
   );

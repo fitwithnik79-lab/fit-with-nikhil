@@ -5,10 +5,13 @@ import { db } from '../lib/firebase';
 import { UserProfile, Workout, Exercise, Feedback, WorkoutTemplate, BodyMetrics } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { searchExerciseVideos } from '../lib/gemini';
-import { Plus, Users, Calendar, CheckCircle, ExternalLink, ChevronRight, Search, Activity, Clock, MessageSquare, Trash2, Edit2, ChevronDown, ChevronUp, Save, Download, Layout, Copy, ChevronLeft, Play, Sparkles, Loader2, Droplets, Footprints, Flame, Scale } from 'lucide-react';
+import { SAMPLE_PROGRAMS, WEEKLY_PROGRAMS, WORKOUT_TEMPLATES } from '../constants/workoutTemplates';
+import { Plus, Users, Calendar, CheckCircle, ExternalLink, ChevronRight, Search, Activity, Clock, MessageSquare, Trash2, Edit2, ChevronDown, ChevronUp, Save, Download, Layout, Copy, ChevronLeft, Play, Sparkles, Loader2, Droplets, Footprints, Flame, Scale, LayoutDashboard, X, Bell, Send, BookOpen, Layers } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import Chat from './Chat';
+import { ProgramTemplate } from '../types';
+import { addDays, startOfToday } from 'date-fns';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
 import { 
   format, 
@@ -22,7 +25,8 @@ import {
   addMonths, 
   subMonths,
   isToday,
-  parseISO
+  parseISO,
+  differenceInDays
 } from 'date-fns';
 
 interface AdminDashboardProps {
@@ -35,7 +39,7 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
   const [selectedClient, setSelectedClient] = useState<UserProfile | null>(null);
   const [feedbacks, setFeedbacks] = useState<Feedback[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'clients' | 'tracker' | 'calendar'>('clients');
+  const [activeTab, setActiveTab] = useState<'dash' | 'clients' | 'tracker' | 'calendar' | 'reminders' | 'templates'>('dash');
   const [showChat, setShowChat] = useState(false);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [confirmModal, setConfirmModal] = useState<{ title: string, message: string, onConfirm: () => void } | null>(null);
@@ -84,6 +88,16 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
         
         <div className="flex bg-zinc-900 p-1 rounded-xl border border-zinc-800">
           <button
+            onClick={() => setActiveTab('dash')}
+            className={cn(
+              "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all",
+              activeTab === 'dash' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-zinc-400 hover:text-white"
+            )}
+          >
+            <LayoutDashboard className="w-4 h-4" />
+            Action Center
+          </button>
+          <button
             onClick={() => setActiveTab('clients')}
             className={cn(
               "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all",
@@ -113,10 +127,177 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
             <Calendar className="w-4 h-4" />
             Calendar
           </button>
+          <button
+            onClick={() => setActiveTab('reminders')}
+            className={cn(
+              "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all",
+              activeTab === 'reminders' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-zinc-400 hover:text-white"
+            )}
+          >
+            <Bell className="w-4 h-4" />
+            Reminders
+          </button>
+          <button
+            onClick={() => setActiveTab('templates')}
+            className={cn(
+              "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all",
+              activeTab === 'templates' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-zinc-400 hover:text-white"
+            )}
+          >
+            <BookOpen className="w-4 h-4" />
+            Templates
+          </button>
         </div>
       </div>
 
       <AnimatePresence mode="wait">
+        {activeTab === 'dash' && (
+          <motion.div
+            key="dash"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="space-y-8"
+          >
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              {/* Priority Feed */}
+              <div className="lg:col-span-2 space-y-6">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xl font-bold flex items-center gap-2">
+                    <Sparkles className="w-5 h-5 text-orange-500" />
+                    Priority Feed
+                  </h3>
+                  <span className="text-xs font-bold text-zinc-500 uppercase tracking-widest bg-zinc-900 px-3 py-1 rounded-full border border-zinc-800">
+                    {feedbacks.length} New Updates
+                  </span>
+                </div>
+
+                <div className="space-y-4">
+                  {feedbacks.slice(0, 10).map((feedback) => {
+                    const client = clients.find(c => c.uid === feedback.clientId);
+                    return (
+                      <div 
+                        key={feedback.id} 
+                        className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 hover:border-orange-500/30 transition-all group"
+                      >
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 rounded-full overflow-hidden border-2 border-zinc-800">
+                              <img 
+                                src={client?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${client?.email}`} 
+                                alt={client?.displayName} 
+                                className="w-full h-full object-cover"
+                                referrerPolicy="no-referrer"
+                              />
+                            </div>
+                            <div>
+                              <h4 className="font-bold text-white group-hover:text-orange-500 transition-colors">
+                                {client?.displayName || 'Unknown Client'}
+                              </h4>
+                              <p className="text-zinc-500 text-xs">
+                                Completed Week {feedback.weekNumber} • Day {feedback.dayNumber}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-zinc-500 text-[10px] uppercase font-bold tracking-widest">
+                              {feedback.createdAt ? format(feedback.createdAt.toDate(), 'h:mm a') : 'Just now'}
+                            </p>
+                            <div className={cn(
+                              "mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-tighter",
+                              feedback.completionStatus ? "bg-green-500/10 text-green-500" : "bg-red-500/10 text-red-500"
+                            )}>
+                              {feedback.completionStatus ? <CheckCircle className="w-3 h-3" /> : <X className="w-3 h-3" />}
+                              {feedback.completionStatus ? 'Success' : 'Struggled'}
+                            </div>
+                          </div>
+                        </div>
+                        
+                        {feedback.clientNote && (
+                          <div className="mt-4 p-4 bg-zinc-950 rounded-2xl border border-zinc-800 italic text-zinc-400 text-sm">
+                            "{feedback.clientNote}"
+                          </div>
+                        )}
+
+                        <div className="mt-6 flex items-center gap-3">
+                          <button 
+                            onClick={() => {
+                              setSelectedClient(client || null);
+                              setActiveTab('clients');
+                              setClientViewTab('chat');
+                            }}
+                            className="flex-1 bg-white text-black py-2 rounded-xl font-bold text-xs hover:bg-zinc-200 transition-colors flex items-center justify-center gap-2"
+                          >
+                            <MessageSquare className="w-3 h-3" />
+                            Send Motivation
+                          </button>
+                          <button 
+                            onClick={() => {
+                              setSelectedClient(client || null);
+                              setActiveTab('clients');
+                              setClientViewTab('dashboard');
+                            }}
+                            className="px-4 py-2 bg-zinc-800 text-white rounded-xl font-bold text-xs hover:bg-zinc-700 transition-colors"
+                          >
+                            View Stats
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Sidebar Stats */}
+              <div className="space-y-6">
+                <div className="bg-orange-500 rounded-[32px] p-8 text-black shadow-2xl shadow-orange-500/20">
+                  <h3 className="text-2xl font-black uppercase tracking-tight leading-none mb-2">Daily Goal</h3>
+                  <p className="text-black/70 font-medium mb-6">Help 5 clients hit their targets today.</p>
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-end">
+                      <span className="text-xs font-bold uppercase tracking-widest">Progress</span>
+                      <span className="text-2xl font-black">3/5</span>
+                    </div>
+                    <div className="w-full h-3 bg-black/10 rounded-full overflow-hidden">
+                      <motion.div 
+                        initial={{ width: 0 }}
+                        animate={{ width: '60%' }}
+                        className="h-full bg-black" 
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 space-y-4">
+                  <h4 className="font-bold text-sm uppercase tracking-widest text-zinc-500">Inactive Clients</h4>
+                  <div className="space-y-3">
+                    {clients.filter(c => {
+                      if (!c.lastLogin) return true;
+                      const lastLoginDate = c.lastLogin.toDate();
+                      return differenceInDays(new Date(), lastLoginDate) > 3;
+                    }).slice(0, 5).map(c => (
+                      <div key={c.uid} className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full overflow-hidden border border-zinc-800">
+                            <img 
+                              src={c.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${c.email}`} 
+                              alt={c.displayName} 
+                              className="w-full h-full object-cover"
+                              referrerPolicy="no-referrer"
+                            />
+                          </div>
+                          <span className="text-sm font-medium text-zinc-300">{c.displayName}</span>
+                        </div>
+                        <span className="text-[10px] font-bold text-red-500 uppercase">3+ Days</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
         {activeTab === 'clients' ? (
           <motion.div
             key="clients"
@@ -270,6 +451,25 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
           >
             <CalendarView clients={clients} showToast={showToast} confirmAction={confirmAction} />
           </motion.div>
+        ) : activeTab === 'reminders' ? (
+          <motion.div
+            key="reminders"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="max-w-4xl mx-auto"
+          >
+            <RemindersView clients={clients} showToast={showToast} currentUser={user} />
+          </motion.div>
+        ) : activeTab === 'templates' ? (
+          <motion.div
+            key="templates"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+          >
+            <TemplatesView clients={clients} showToast={showToast} />
+          </motion.div>
         ) : (
           <motion.div
             key="tracker"
@@ -393,6 +593,692 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
   );
 }
 
+function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToast: (m: string, t?: 'success' | 'error') => void }) {
+  const [selectedTemplate, setSelectedTemplate] = useState<WorkoutTemplate | null>(null);
+  const [selectedProgram, setSelectedProgram] = useState<ProgramTemplate | null>(null);
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [showProgramModal, setShowProgramModal] = useState(false);
+  const [selectedClient, setSelectedClient] = useState<UserProfile | null>(null);
+  const [assignDate, setAssignDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [assigning, setAssigning] = useState(false);
+  
+  // Program scheduling state: map of day index to specific date string
+  const [programDates, setProgramDates] = useState<Record<number, string>>({});
+  const [programWorkoutsDraft, setProgramWorkoutsDraft] = useState<Record<number, Exercise[]>>({});
+  const [activeEditingDay, setActiveEditingDay] = useState<number | null>(null);
+
+  // Initialize dates and exercises when program is selected
+  useEffect(() => {
+    if (selectedProgram) {
+      const initialDates: Record<number, string> = {};
+      const initialExercises: Record<number, Exercise[]> = {};
+      selectedProgram.weeks[0].days.forEach((day, i) => {
+        initialDates[i] = format(addDays(new Date(), i), 'yyyy-MM-dd');
+        const template = WORKOUT_TEMPLATES.find(t => t.id === day.workoutTemplateId);
+        initialExercises[i] = template ? JSON.parse(JSON.stringify(template.exercises)) : [];
+      });
+      setProgramDates(initialDates);
+      setProgramWorkoutsDraft(initialExercises);
+      setActiveEditingDay(null);
+    }
+  }, [selectedProgram]);
+
+  const updateDraftExercise = (dayIdx: number, exIdx: number, field: keyof Exercise, value: any) => {
+    setProgramWorkoutsDraft(prev => {
+      const newDraft = { ...prev };
+      const newDayExercises = [...newDraft[dayIdx]];
+      newDayExercises[exIdx] = { ...newDayExercises[exIdx], [field]: value };
+      newDraft[dayIdx] = newDayExercises;
+      return newDraft;
+    });
+  };
+
+  const addDraftExercise = (dayIdx: number) => {
+    setProgramWorkoutsDraft(prev => {
+      const newDraft = { ...prev };
+      newDraft[dayIdx] = [...newDraft[dayIdx], { name: '', youtubeLink: '', sets: 3, reps: '12', weight: '', rest: '60s', coachNote: '' }];
+      return newDraft;
+    });
+  };
+
+  const removeDraftExercise = (dayIdx: number, exIdx: number) => {
+    setProgramWorkoutsDraft(prev => {
+      const newDraft = { ...prev };
+      newDraft[dayIdx] = newDraft[dayIdx].filter((_, i) => i !== exIdx);
+      return newDraft;
+    });
+  };
+
+  const handleAssignSingle = async () => {
+    if (!selectedTemplate || !selectedClient || !assignDate) return;
+    setAssigning(true);
+    try {
+      await addDoc(collection(db, 'workouts'), {
+        clientId: selectedClient.uid,
+        weekNumber: 1,
+        dayNumber: 1,
+        exercises: selectedTemplate.exercises,
+        scheduledDate: assignDate,
+        createdAt: serverTimestamp()
+      });
+      showToast(`Template "${selectedTemplate.name}" assigned to ${selectedClient.displayName}`);
+      setShowAssignModal(false);
+      setSelectedTemplate(null);
+      setSelectedClient(null);
+    } catch (error) {
+      console.error('Error assigning template:', error);
+      showToast('Failed to assign template', 'error');
+    } finally {
+      setAssigning(false);
+    }
+  };
+
+  const handleAssignProgram = async () => {
+    if (!selectedProgram || !selectedClient) return;
+    
+    // Check if all dates are selected
+    const workoutsToCreate = selectedProgram.weeks[0].days;
+    if (Object.keys(programDates).length < workoutsToCreate.length) {
+      showToast('Please select dates for all workouts', 'error');
+      return;
+    }
+
+    setAssigning(true);
+    try {
+      const batch = [];
+      
+      for (let i = 0; i < workoutsToCreate.length; i++) {
+        const scheduledDate = programDates[i];
+        const exercises = programWorkoutsDraft[i] || [];
+
+        batch.push(addDoc(collection(db, 'workouts'), {
+          clientId: selectedClient.uid,
+          weekNumber: 1,
+          dayNumber: i + 1,
+          exercises: exercises.filter(e => e.name.trim() !== ''),
+          scheduledDate: scheduledDate,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          status: 'pending'
+        }));
+      }
+
+      await Promise.all(batch);
+      showToast(`Program "${selectedProgram.name}" assigned to ${selectedClient.displayName}`);
+      setShowProgramModal(false);
+      setSelectedProgram(null);
+      setSelectedClient(null);
+      setProgramDates({});
+      setProgramWorkoutsDraft({});
+    } catch (error) {
+      console.error('Error assigning program:', error);
+      showToast('Failed to assign program', 'error');
+    } finally {
+      setAssigning(false);
+    }
+  };
+
+  return (
+    <div className="space-y-12">
+      {/* Weekly Programs Section */}
+      <section className="space-y-6">
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-orange-500/10 rounded-lg text-orange-500">
+            <Layers className="w-5 h-5" />
+          </div>
+          <h2 className="text-2xl font-bold">Weekly Programs</h2>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {WEEKLY_PROGRAMS.map((program) => (
+            <div 
+              key={program.id} 
+              className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 flex flex-col hover:border-orange-500/30 transition-all group relative overflow-hidden"
+            >
+              <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 transition-opacity">
+                <Layers className="w-24 h-24 text-orange-500" />
+              </div>
+              <div className="flex items-start justify-between mb-6">
+                <span className="text-[10px] font-bold text-orange-500 uppercase tracking-widest bg-orange-500/10 px-3 py-1 rounded-full border border-orange-500/20">
+                  {program.category}
+                </span>
+                <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
+                  {program.weeks[0].days.length} Workouts
+                </span>
+              </div>
+              <h3 className="text-xl font-bold mb-3">{program.name}</h3>
+              <p className="text-zinc-500 text-sm mb-8 flex-1 leading-relaxed">{program.description}</p>
+              
+              <button 
+                onClick={() => {
+                  setSelectedProgram(program);
+                  setShowProgramModal(true);
+                }}
+                className="w-full py-4 bg-orange-500 text-white font-bold rounded-2xl hover:bg-orange-600 transition-all flex items-center justify-center gap-2 shadow-lg shadow-orange-500/20"
+              >
+                <Calendar className="w-5 h-5" />
+                Schedule Program
+              </button>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Single Workout Templates Section */}
+      <section className="space-y-6">
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-zinc-800 rounded-lg text-zinc-400">
+            <BookOpen className="w-5 h-5" />
+          </div>
+          <h2 className="text-2xl font-bold">Single Workouts</h2>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {WORKOUT_TEMPLATES.map((template) => (
+            <div 
+              key={template.id} 
+              className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 flex flex-col hover:border-orange-500/30 transition-all group"
+            >
+              <div className="flex items-start justify-between mb-4">
+                <div className="p-3 bg-zinc-950 rounded-2xl text-zinc-500 group-hover:text-orange-500 transition-colors">
+                  <BookOpen className="w-6 h-6" />
+                </div>
+                <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest bg-zinc-950 px-3 py-1 rounded-full border border-zinc-800">
+                  {template.category}
+                </span>
+              </div>
+              <h3 className="text-lg font-bold mb-2">{template.name}</h3>
+              <div className="flex-1" />
+              <div className="space-y-3 mt-4">
+                <div className="flex items-center justify-between text-xs text-zinc-400">
+                  <span>Exercises</span>
+                  <span className="font-bold">{template.exercises.length}</span>
+                </div>
+                <button 
+                  onClick={() => {
+                    setSelectedTemplate(template);
+                    setShowAssignModal(true);
+                  }}
+                  className="w-full py-3 bg-zinc-800 text-white font-bold rounded-xl hover:bg-zinc-700 transition-all flex items-center justify-center gap-2"
+                >
+                  <Plus className="w-4 h-4" />
+                  Assign Single
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Program Assignment Modal */}
+      <AnimatePresence>
+        {showProgramModal && selectedProgram && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowProgramModal(false)}
+              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="relative w-full max-w-5xl bg-zinc-900 border border-zinc-800 rounded-[40px] shadow-2xl p-10 space-y-8 overflow-y-auto max-h-[90vh] custom-scrollbar"
+            >
+              <div className="flex items-center justify-between">
+                <div className="space-y-2">
+                  <h3 className="text-3xl font-black uppercase tracking-tight">Schedule Program</h3>
+                  <p className="text-zinc-400 font-medium">Assigning "{selectedProgram.name}" to client calendar.</p>
+                </div>
+                <button 
+                  onClick={() => setShowProgramModal(false)}
+                  className="p-2 hover:bg-zinc-800 rounded-full transition-colors"
+                >
+                  <X className="w-6 h-6 text-zinc-500" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                <div className="lg:col-span-4 space-y-6">
+                  <div className="space-y-3">
+                    <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest ml-1">1. Select Client</label>
+                    <select 
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-5 py-4 text-sm outline-none focus:ring-2 focus:ring-orange-500 transition-all"
+                      onChange={(e) => setSelectedClient(clients.find(c => c.uid === e.target.value) || null)}
+                      value={selectedClient?.uid || ''}
+                    >
+                      <option value="">Select a client...</option>
+                      {clients.map(c => (
+                        <option key={c.uid} value={c.uid}>{c.displayName || c.email}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-3">
+                    <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest ml-1">2. Schedule & Days</label>
+                    <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                      {selectedProgram.weeks[0].days.map((day, i) => (
+                        <button 
+                          key={i} 
+                          onClick={() => setActiveEditingDay(i)}
+                          className={cn(
+                            "w-full text-left bg-zinc-950 border rounded-2xl p-4 transition-all group",
+                            activeEditingDay === i ? "border-orange-500 ring-1 ring-orange-500" : "border-zinc-800 hover:border-zinc-700"
+                          )}
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <span className={cn(
+                              "text-[10px] font-bold uppercase tracking-widest",
+                              activeEditingDay === i ? "text-orange-500" : "text-zinc-500"
+                            )}>{day.label}</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] text-zinc-600 font-bold">Day {i + 1}</span>
+                              {activeEditingDay === i && <div className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-pulse" />}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Calendar className="w-3 h-3 text-zinc-600" />
+                            <input 
+                              type="date"
+                              className="bg-transparent text-xs font-bold text-zinc-300 outline-none w-full"
+                              value={programDates[i] || ''}
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={(e) => setProgramDates(prev => ({ ...prev, [i]: e.target.value }))}
+                            />
+                          </div>
+                          <div className="mt-2 flex items-center gap-2 text-[10px] text-zinc-500 font-bold">
+                            <BookOpen className="w-3 h-3" />
+                            {programWorkoutsDraft[i]?.length || 0} Exercises
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="lg:col-span-8 bg-zinc-950 border border-zinc-800 rounded-[32px] overflow-hidden flex flex-col min-h-[500px]">
+                  {activeEditingDay !== null ? (
+                    <div className="flex flex-col h-full">
+                      <div className="p-6 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/30">
+                        <div>
+                          <h4 className="font-bold text-lg text-white">
+                            Customize: {selectedProgram.weeks[0].days[activeEditingDay].label}
+                          </h4>
+                          <p className="text-xs text-zinc-500 font-bold uppercase tracking-widest">Workout Day {activeEditingDay + 1}</p>
+                        </div>
+                        <button 
+                          onClick={() => setActiveEditingDay(null)}
+                          className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all"
+                        >
+                          Back to Summary
+                        </button>
+                      </div>
+                      
+                      <div className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar">
+                        {programWorkoutsDraft[activeEditingDay]?.map((ex, exIdx) => (
+                          <div key={exIdx} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 space-y-4">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3 flex-1">
+                                <div className="w-6 h-6 rounded-full bg-zinc-800 flex items-center justify-center text-[10px] font-bold text-zinc-500">
+                                  {exIdx + 1}
+                                </div>
+                                <input 
+                                  className="bg-transparent border-b border-zinc-800 focus:border-orange-500 outline-none font-bold text-sm w-full py-1"
+                                  value={ex.name}
+                                  placeholder="Exercise name..."
+                                  onChange={(e) => updateDraftExercise(activeEditingDay, exIdx, 'name', e.target.value)}
+                                />
+                              </div>
+                              <button 
+                                onClick={() => removeDraftExercise(activeEditingDay, exIdx)}
+                                className="p-2 text-zinc-600 hover:text-red-500 transition-colors"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                            
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                              <div className="space-y-1">
+                                <label className="text-[9px] text-zinc-600 uppercase font-bold">Sets</label>
+                                <input 
+                                  type="number"
+                                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-orange-500"
+                                  value={ex.sets}
+                                  onChange={(e) => updateDraftExercise(activeEditingDay, exIdx, 'sets', parseInt(e.target.value))}
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-[9px] text-zinc-600 uppercase font-bold">Reps</label>
+                                <input 
+                                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-orange-500"
+                                  value={ex.reps}
+                                  onChange={(e) => updateDraftExercise(activeEditingDay, exIdx, 'reps', e.target.value)}
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-[9px] text-zinc-600 uppercase font-bold">Weight</label>
+                                <input 
+                                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-orange-500"
+                                  value={ex.weight}
+                                  placeholder="kg/lb"
+                                  onChange={(e) => updateDraftExercise(activeEditingDay, exIdx, 'weight', e.target.value)}
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-[9px] text-zinc-600 uppercase font-bold">Rest</label>
+                                <input 
+                                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-orange-500"
+                                  value={ex.rest}
+                                  placeholder="60s"
+                                  onChange={(e) => updateDraftExercise(activeEditingDay, exIdx, 'rest', e.target.value)}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                        
+                        <button 
+                          onClick={() => addDraftExercise(activeEditingDay)}
+                          className="w-full py-3 border border-dashed border-zinc-800 rounded-2xl text-zinc-500 hover:text-white hover:border-zinc-700 transition-all flex items-center justify-center gap-2 text-xs font-bold"
+                        >
+                          <Plus className="w-4 h-4" />
+                          Add Exercise to Day {activeEditingDay + 1}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center h-full p-12 text-center space-y-6">
+                      <div className="p-6 bg-zinc-900 rounded-full border border-zinc-800">
+                        <Edit2 className="w-12 h-12 text-zinc-700" />
+                      </div>
+                      <div className="max-w-xs">
+                        <h4 className="font-bold text-xl mb-2">Customize Exercises</h4>
+                        <p className="text-sm text-zinc-500 leading-relaxed">
+                          Select a day from the left to review and customize the exercises before assigning them to the client's calendar.
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap justify-center gap-2">
+                        {selectedProgram.weeks[0].days.map((_, i) => (
+                          <button 
+                            key={i}
+                            onClick={() => setActiveEditingDay(i)}
+                            className="px-4 py-2 bg-zinc-900 border border-zinc-800 rounded-xl text-[10px] font-bold uppercase hover:border-orange-500/50 transition-all"
+                          >
+                            Day {i + 1}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex gap-4 pt-4 border-t border-zinc-800">
+                <button
+                  onClick={() => setShowProgramModal(false)}
+                  className="flex-1 py-4 border border-zinc-800 rounded-2xl font-bold text-zinc-400 hover:bg-zinc-800 transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleAssignProgram}
+                  disabled={assigning || !selectedClient}
+                  className="flex-[2] bg-orange-500 text-white font-bold py-4 rounded-2xl hover:bg-orange-600 disabled:opacity-50 transition-all shadow-xl shadow-orange-500/20 flex items-center justify-center gap-2"
+                >
+                  {assigning ? <Loader2 className="w-5 h-5 animate-spin" /> : <Calendar className="w-5 h-5" />}
+                  {assigning ? 'Scheduling...' : 'Confirm & Assign Program'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Single Assign Modal (Existing) */}
+      <AnimatePresence>
+        {showAssignModal && selectedTemplate && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowAssignModal(false)}
+              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="relative w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl shadow-2xl p-8 space-y-6"
+            >
+              <div className="space-y-2">
+                <h3 className="text-2xl font-bold">Assign Single Workout</h3>
+                <p className="text-zinc-400">Assigning "{selectedTemplate.name}"</p>
+              </div>
+
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Select Client</label>
+                  <select 
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm outline-none focus:ring-1 focus:ring-orange-500"
+                    onChange={(e) => setSelectedClient(clients.find(c => c.uid === e.target.value) || null)}
+                    value={selectedClient?.uid || ''}
+                  >
+                    <option value="">Select a client...</option>
+                    {clients.map(c => (
+                      <option key={c.uid} value={c.uid}>{c.displayName || c.email}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Schedule Date</label>
+                  <input 
+                    type="date"
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm outline-none focus:ring-1 focus:ring-orange-500"
+                    value={assignDate}
+                    onChange={(e) => setAssignDate(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button
+                  onClick={() => setShowAssignModal(false)}
+                  className="flex-1 py-4 border border-zinc-800 rounded-2xl font-bold text-zinc-400 hover:bg-zinc-800 transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleAssignSingle}
+                  disabled={assigning || !selectedClient}
+                  className="flex-1 bg-orange-500 text-white font-bold py-4 rounded-2xl hover:bg-orange-600 disabled:opacity-50 transition-all shadow-lg shadow-orange-500/20 flex items-center justify-center gap-2"
+                >
+                  {assigning ? <Loader2 className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />}
+                  Assign
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function RemindersView({ clients, showToast, currentUser }: { clients: UserProfile[], showToast: (m: string) => void, currentUser: User }) {
+  const [selectedClients, setSelectedClients] = useState<string[]>([]);
+  const [messageType, setMessageType] = useState<'motivation' | 'reminder'>('motivation');
+  const [messageText, setMessageText] = useState('');
+  const [sending, setSending] = useState(false);
+
+  const toggleClient = (uid: string) => {
+    setSelectedClients(prev => 
+      prev.includes(uid) ? prev.filter(id => id !== uid) : [...prev, uid]
+    );
+  };
+
+  const sendBroadcast = async () => {
+    if (selectedClients.length === 0 || !messageText.trim()) return;
+    setSending(true);
+    try {
+      const promises = selectedClients.map(clientId => 
+        addDoc(collection(db, 'messages'), {
+          senderId: currentUser.uid,
+          receiverId: clientId,
+          text: messageText,
+          type: messageType,
+          isRead: false,
+          createdAt: serverTimestamp()
+        })
+      );
+      await Promise.all(promises);
+      showToast(`Successfully sent ${messageType} to ${selectedClients.length} clients!`);
+      setMessageText('');
+      setSelectedClients([]);
+    } catch (error) {
+      console.error('Error sending reminders:', error);
+      showToast('Failed to send messages.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const motivationTemplates = [
+    "Keep pushing! You're doing amazing work this week. 🔥",
+    "Consistency is key. I see you logging those workouts, keep it up! 👏",
+    "Don't stop now. You're closer to your goals than you were yesterday.",
+    "Nik's tip: Focus on your form today. Quality over quantity! 💪"
+  ];
+
+  const reminderTemplates = [
+    "Don't forget to log your water intake today! 💧",
+    "Time to hit those steps! A quick walk makes a big difference. 🚶‍♂️",
+    "Reminder: Your scheduled workout is waiting for you. Let's get it done!",
+    "Nik's reminder: Make sure you're hitting your protein targets today. 🥩"
+  ];
+
+  return (
+    <div className="space-y-8">
+      <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 space-y-8">
+        <div className="flex items-center gap-4">
+          <div className={cn(
+            "p-4 rounded-2xl text-white shadow-lg",
+            messageType === 'motivation' ? "bg-purple-500 shadow-purple-500/20" : "bg-blue-500 shadow-blue-500/20"
+          )}>
+            {messageType === 'motivation' ? <Sparkles className="w-6 h-6" /> : <Bell className="w-6 h-6" />}
+          </div>
+          <div>
+            <h3 className="text-2xl font-bold">Quick Broadcast</h3>
+            <p className="text-zinc-500">Send motivational messages or reminders to multiple clients at once.</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+          <div className="space-y-6">
+            <div className="space-y-3">
+              <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest">1. Select Message Type</label>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setMessageType('motivation')}
+                  className={cn(
+                    "flex-1 py-3 rounded-xl font-bold text-sm transition-all border",
+                    messageType === 'motivation' 
+                      ? "bg-purple-500/10 border-purple-500/50 text-purple-400" 
+                      : "bg-zinc-950 border-zinc-800 text-zinc-500 hover:border-zinc-700"
+                  )}
+                >
+                  Motivation
+                </button>
+                <button
+                  onClick={() => setMessageType('reminder')}
+                  className={cn(
+                    "flex-1 py-3 rounded-xl font-bold text-sm transition-all border",
+                    messageType === 'reminder' 
+                      ? "bg-blue-500/10 border-blue-500/50 text-blue-400" 
+                      : "bg-zinc-950 border-zinc-800 text-zinc-500 hover:border-zinc-700"
+                  )}
+                >
+                  Reminder
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest">2. Choose Template or Write</label>
+              <div className="flex flex-wrap gap-2">
+                {(messageType === 'motivation' ? motivationTemplates : reminderTemplates).map((t, i) => (
+                  <button
+                    key={i}
+                    onClick={() => setMessageText(t)}
+                    className="text-[10px] bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-1.5 text-zinc-400 hover:border-zinc-600 transition-all text-left max-w-xs"
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+              <textarea
+                value={messageText}
+                onChange={(e) => setMessageText(e.target.value)}
+                placeholder="Type your message here..."
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl p-4 text-sm focus:ring-1 focus:ring-orange-500 outline-none min-h-[120px]"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest">3. Select Clients ({selectedClients.length})</label>
+              <button 
+                onClick={() => setSelectedClients(selectedClients.length === clients.length ? [] : clients.map(c => c.uid))}
+                className="text-[10px] font-bold text-orange-500 uppercase hover:underline"
+              >
+                {selectedClients.length === clients.length ? 'Deselect All' : 'Select All'}
+              </button>
+            </div>
+            <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-4 max-h-[300px] overflow-y-auto custom-scrollbar space-y-2">
+              {clients.map(client => (
+                <button
+                  key={client.uid}
+                  onClick={() => toggleClient(client.uid)}
+                  className={cn(
+                    "w-full flex items-center justify-between p-3 rounded-xl border transition-all",
+                    selectedClients.includes(client.uid)
+                      ? "bg-orange-500/10 border-orange-500/50 text-white"
+                      : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700"
+                  )}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full overflow-hidden border border-zinc-800">
+                      <img 
+                        src={client.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${client.email}`} 
+                        alt={client.displayName} 
+                        className="w-full h-full object-cover"
+                        referrerPolicy="no-referrer"
+                      />
+                    </div>
+                    <span className="text-sm font-medium">{client.displayName}</span>
+                  </div>
+                  {selectedClients.includes(client.uid) && <CheckCircle className="w-4 h-4 text-orange-500" />}
+                </button>
+              ))}
+            </div>
+
+            <button
+              onClick={sendBroadcast}
+              disabled={sending || selectedClients.length === 0 || !messageText.trim()}
+              className="w-full py-4 bg-orange-500 text-white font-bold rounded-2xl hover:bg-orange-600 disabled:opacity-50 transition-all shadow-xl shadow-orange-500/20 flex items-center justify-center gap-2"
+            >
+              {sending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
+              {sending ? 'Sending...' : `Send to ${selectedClients.length} Clients`}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CalendarView({ clients, showToast, confirmAction }: { clients: UserProfile[], showToast: (m: string, t?: 'success' | 'error') => void, confirmAction: (t: string, m: string, c: () => void) => void }) {
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [workouts, setWorkouts] = useState<Workout[]>([]);
@@ -420,6 +1306,14 @@ function CalendarView({ clients, showToast, confirmAction }: { clients: UserProf
   const getWorkoutsForDay = (day: Date) => {
     const dateStr = format(day, 'yyyy-MM-dd');
     return workouts.filter(w => w.scheduledDate === dateStr);
+  };
+
+  const handleEditWorkout = (workout: Workout) => {
+    const client = clients.find(c => c.uid === workout.clientId);
+    setEditingWorkout(workout);
+    setSelectedClientForSchedule(client || null);
+    setSelectedDate(parseISO(workout.scheduledDate!));
+    setShowScheduleModal(true);
   };
 
   return (
@@ -505,10 +1399,7 @@ function CalendarView({ clients, showToast, confirmAction }: { clients: UserProf
                       key={w.id} 
                       onClick={(e) => {
                         e.stopPropagation();
-                        setEditingWorkout(w);
-                        setSelectedClientForSchedule(client || null);
-                        setSelectedDate(parseISO(w.scheduledDate!));
-                        setShowScheduleModal(true);
+                        handleEditWorkout(w);
                       }}
                       className="group/item relative px-2 py-1 bg-zinc-800 border border-zinc-700 rounded-md text-[9px] font-bold text-zinc-300 truncate hover:border-orange-500/50 transition-colors cursor-pointer"
                       title={`${client?.displayName || 'Client'}: Week ${w.weekNumber} Day ${w.dayNumber}`}
