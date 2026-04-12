@@ -84,10 +84,12 @@ export interface ProgramTemplate {
     weekNumber: number;
     days: {
       dayNumber: number;
-      workoutTemplateId: string; // Reference to a WorkoutTemplate
+      workoutTemplateId?: string; // Reference to a WorkoutTemplate
       label: string; // e.g., "Upper Body", "Legs", "Cardio"
+      exercises?: Exercise[]; // Inline exercises for custom/AI templates
     }[];
   }[];
+  isCustom?: boolean;
   createdAt?: any;
 }
 

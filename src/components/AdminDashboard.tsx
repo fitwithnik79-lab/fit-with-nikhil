@@ -4,9 +4,9 @@ import { collection, query, where, onSnapshot, addDoc, serverTimestamp, doc, upd
 import { db } from '../lib/firebase';
 import { UserProfile, Workout, Exercise, Feedback, WorkoutTemplate, BodyMetrics } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
-import { searchExerciseVideos } from '../lib/gemini';
+import { searchExerciseVideos, parseWorkoutFile } from '../lib/gemini';
 import { SAMPLE_PROGRAMS, WEEKLY_PROGRAMS, WORKOUT_TEMPLATES } from '../constants/workoutTemplates';
-import { Plus, Users, Calendar, CheckCircle, ExternalLink, ChevronRight, Search, Activity, Clock, MessageSquare, Trash2, Edit2, ChevronDown, ChevronUp, Save, Download, Layout, Copy, ChevronLeft, Play, Sparkles, Loader2, Droplets, Footprints, Flame, Scale, LayoutDashboard, X, Bell, Send, BookOpen, Layers } from 'lucide-react';
+import { Plus, Users, Calendar, CheckCircle, ExternalLink, ChevronRight, Search, Activity, Clock, MessageSquare, Trash2, Edit2, ChevronDown, ChevronUp, Save, Download, Layout, Copy, ChevronLeft, Play, Sparkles, Loader2, Droplets, Footprints, Flame, Scale, LayoutDashboard, X, Bell, Send, BookOpen, Layers, Upload, Youtube } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import Chat from './Chat';
@@ -601,6 +601,25 @@ function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToa
   const [selectedClient, setSelectedClient] = useState<UserProfile | null>(null);
   const [assignDate, setAssignDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [assigning, setAssigning] = useState(false);
+  const [parsingFile, setParsingFile] = useState(false);
+  const [customPrograms, setCustomPrograms] = useState<ProgramTemplate[]>([]);
+  const [isEditingTemplate, setIsEditingTemplate] = useState(false);
+  const [editingTemplateName, setEditingTemplateName] = useState('');
+  const [editingTemplateCategory, setEditingTemplateCategory] = useState('');
+  const [editingTemplateDescription, setEditingTemplateDescription] = useState('');
+  const [savingTemplate, setSavingTemplate] = useState(false);
+
+  // Fetch custom templates from Firestore
+  useEffect(() => {
+    const q = query(collection(db, 'templates'), orderBy('createdAt', 'desc'));
+    const unsubscribe = onSnapshot(q, (snap) => {
+      const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProgramTemplate));
+      setCustomPrograms(data);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'templates');
+    });
+    return () => unsubscribe();
+  }, []);
   
   // Program scheduling state: map of day index to specific date string
   const [programDates, setProgramDates] = useState<Record<number, string>>({});
@@ -609,13 +628,13 @@ function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToa
 
   // Initialize dates and exercises when program is selected
   useEffect(() => {
-    if (selectedProgram) {
+    if (selectedProgram && selectedProgram.weeks && selectedProgram.weeks.length > 0) {
       const initialDates: Record<number, string> = {};
       const initialExercises: Record<number, Exercise[]> = {};
       selectedProgram.weeks[0].days.forEach((day, i) => {
         initialDates[i] = format(addDays(new Date(), i), 'yyyy-MM-dd');
         const template = WORKOUT_TEMPLATES.find(t => t.id === day.workoutTemplateId);
-        initialExercises[i] = template ? JSON.parse(JSON.stringify(template.exercises)) : [];
+        initialExercises[i] = template ? JSON.parse(JSON.stringify(template.exercises)) : (day.exercises || []);
       });
       setProgramDates(initialDates);
       setProgramWorkoutsDraft(initialExercises);
@@ -674,7 +693,7 @@ function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToa
   };
 
   const handleAssignProgram = async () => {
-    if (!selectedProgram || !selectedClient) return;
+    if (!selectedProgram || !selectedClient || !selectedProgram.weeks || selectedProgram.weeks.length === 0) return;
     
     // Check if all dates are selected
     const workoutsToCreate = selectedProgram.weeks[0].days;
@@ -718,46 +737,202 @@ function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToa
     }
   };
 
+  const handleSaveTemplateChanges = async () => {
+    if (!selectedProgram) return;
+    setSavingTemplate(true);
+    try {
+      const updatedWeeks = [{
+        weekNumber: 1,
+        days: selectedProgram.weeks[0].days.map((day, i) => ({
+          ...day,
+          exercises: programWorkoutsDraft[i] || []
+        }))
+      }];
+
+      const templateData = {
+        name: editingTemplateName,
+        category: editingTemplateCategory,
+        description: editingTemplateDescription,
+        weeks: updatedWeeks,
+        updatedAt: serverTimestamp(),
+        isCustom: true
+      };
+
+      if (selectedProgram.isCustom && selectedProgram.id) {
+        await updateDoc(doc(db, 'templates', selectedProgram.id), templateData);
+        showToast('Template updated successfully');
+      } else {
+        await addDoc(collection(db, 'templates'), {
+          ...templateData,
+          createdAt: serverTimestamp()
+        });
+        showToast('New template saved successfully');
+      }
+
+      setShowProgramModal(false);
+      setIsEditingTemplate(false);
+      setSelectedProgram(null);
+    } catch (error) {
+      console.error('Error saving template:', error);
+      showToast('Failed to save template', 'error');
+    } finally {
+      setSavingTemplate(false);
+    }
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setParsingFile(true);
+    try {
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        const content = event.target?.result as string;
+        const parsedProgram = await parseWorkoutFile(content, file.name);
+        
+        if (parsedProgram) {
+          // Save to Firestore
+          await addDoc(collection(db, 'templates'), {
+            ...parsedProgram,
+            createdAt: serverTimestamp(),
+            isCustom: true
+          });
+          showToast(`Custom program "${parsedProgram.name}" generated and saved!`);
+        } else {
+          showToast('Failed to parse workout file. Please try a different format.', 'error');
+        }
+        setParsingFile(false);
+      };
+      reader.readAsText(file);
+    } catch (error) {
+      console.error('Error uploading workout file:', error);
+      showToast('Error processing file', 'error');
+      setParsingFile(false);
+    }
+  };
+
+  const allPrograms = [...WEEKLY_PROGRAMS, ...customPrograms];
+
   return (
     <div className="space-y-12">
+      {/* Upload Section */}
+      <section className="bg-zinc-900 border border-zinc-800 rounded-[40px] p-10 relative overflow-hidden group">
+        <div className="absolute top-0 right-0 p-10 opacity-5 group-hover:opacity-10 transition-opacity">
+          <Upload className="w-32 h-32 text-orange-500" />
+        </div>
+        <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-8">
+          <div className="space-y-4 text-center md:text-left">
+            <div className="inline-flex p-3 bg-orange-500/10 rounded-2xl text-orange-500">
+              <Sparkles className="w-6 h-6" />
+            </div>
+            <h2 className="text-3xl font-black uppercase tracking-tight">AI Template Generator</h2>
+            <p className="text-zinc-400 max-w-md leading-relaxed">
+              Upload your workout splits in document or spreadsheet format. Nik's AI will analyze the content and generate a fully structured template for you.
+            </p>
+          </div>
+          
+          <label className={cn(
+            "flex flex-col items-center justify-center border-2 border-dashed border-zinc-800 rounded-[32px] p-10 cursor-pointer hover:border-orange-500/50 transition-all bg-zinc-950 min-w-[300px]",
+            parsingFile && "opacity-50 cursor-not-allowed"
+          )}>
+            {parsingFile ? (
+              <div className="flex flex-col items-center gap-4">
+                <Loader2 className="w-10 h-10 text-orange-500 animate-spin" />
+                <span className="text-sm font-bold text-zinc-500 uppercase tracking-widest">Nik is analyzing...</span>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center gap-4">
+                <div className="p-4 bg-orange-500/10 rounded-2xl text-orange-500">
+                  <Upload className="w-8 h-8" />
+                </div>
+                <div className="text-center">
+                  <span className="block text-white font-bold">Upload Split File</span>
+                  <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mt-1">DOC, TXT, CSV, XLS</span>
+                </div>
+              </div>
+            )}
+            <input type="file" className="hidden" onChange={handleFileUpload} disabled={parsingFile} accept=".txt,.doc,.docx,.csv,.xls,.xlsx" />
+          </label>
+        </div>
+      </section>
+
       {/* Weekly Programs Section */}
       <section className="space-y-6">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-orange-500/10 rounded-lg text-orange-500">
             <Layers className="w-5 h-5" />
           </div>
-          <h2 className="text-2xl font-bold">Weekly Programs</h2>
+          <h2 className="text-2xl font-bold">Program Library</h2>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {WEEKLY_PROGRAMS.map((program) => (
+          {allPrograms.map((program) => (
             <div 
-              key={program.id} 
+              key={program.id || program.name} 
               className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 flex flex-col hover:border-orange-500/30 transition-all group relative overflow-hidden"
             >
               <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 transition-opacity">
                 <Layers className="w-24 h-24 text-orange-500" />
               </div>
               <div className="flex items-start justify-between mb-6">
-                <span className="text-[10px] font-bold text-orange-500 uppercase tracking-widest bg-orange-500/10 px-3 py-1 rounded-full border border-orange-500/20">
-                  {program.category}
-                </span>
+                <div className="flex gap-2">
+                  <span className="text-[10px] font-bold text-orange-500 uppercase tracking-widest bg-orange-500/10 px-3 py-1 rounded-full border border-orange-500/20">
+                    {program.category}
+                  </span>
+                  {program.isCustom && (
+                    <span className="text-[10px] font-bold text-purple-500 uppercase tracking-widest bg-purple-500/10 px-3 py-1 rounded-full border border-purple-500/20 flex items-center gap-1">
+                      <Sparkles className="w-3 h-3" />
+                      AI Generated
+                    </span>
+                  )}
+                </div>
                 <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
-                  {program.weeks[0].days.length} Workouts
+                  {program.weeks?.[0]?.days?.length || 0} Workouts
                 </span>
               </div>
               <h3 className="text-xl font-bold mb-3">{program.name}</h3>
-              <p className="text-zinc-500 text-sm mb-8 flex-1 leading-relaxed">{program.description}</p>
+              <p className="text-zinc-500 text-sm mb-8 flex-1 leading-relaxed line-clamp-3">{program.description}</p>
               
-              <button 
-                onClick={() => {
-                  setSelectedProgram(program);
-                  setShowProgramModal(true);
-                }}
-                className="w-full py-4 bg-orange-500 text-white font-bold rounded-2xl hover:bg-orange-600 transition-all flex items-center justify-center gap-2 shadow-lg shadow-orange-500/20"
-              >
-                <Calendar className="w-5 h-5" />
-                Schedule Program
-              </button>
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => {
+                    setSelectedProgram(program);
+                    setIsEditingTemplate(false);
+                    setShowProgramModal(true);
+                  }}
+                  className="flex-1 py-4 bg-orange-500 text-white font-bold rounded-2xl hover:bg-orange-600 transition-all flex items-center justify-center gap-2 shadow-lg shadow-orange-500/20"
+                >
+                  <Calendar className="w-5 h-5" />
+                  Schedule
+                </button>
+                <button 
+                  onClick={() => {
+                    setSelectedProgram(program);
+                    setIsEditingTemplate(true);
+                    setEditingTemplateName(program.name);
+                    setEditingTemplateCategory(program.category);
+                    setEditingTemplateDescription(program.description);
+                    setShowProgramModal(true);
+                  }}
+                  className="p-4 bg-zinc-800 text-zinc-400 hover:text-white rounded-2xl transition-all"
+                  title="Edit Template"
+                >
+                  <Edit2 className="w-5 h-5" />
+                </button>
+                {program.isCustom && (
+                  <button 
+                    onClick={async () => {
+                      if (confirm('Are you sure you want to delete this custom template?')) {
+                        await deleteDoc(doc(db, 'templates', program.id!));
+                        showToast('Template deleted');
+                      }
+                    }}
+                    className="p-4 bg-zinc-800 text-zinc-500 hover:text-red-500 rounded-2xl transition-all"
+                  >
+                    <Trash2 className="w-5 h-5" />
+                  </button>
+                )}
+              </div>
             </div>
           ))}
         </div>
@@ -792,16 +967,42 @@ function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToa
                   <span>Exercises</span>
                   <span className="font-bold">{template.exercises.length}</span>
                 </div>
-                <button 
-                  onClick={() => {
-                    setSelectedTemplate(template);
-                    setShowAssignModal(true);
-                  }}
-                  className="w-full py-3 bg-zinc-800 text-white font-bold rounded-xl hover:bg-zinc-700 transition-all flex items-center justify-center gap-2"
-                >
-                  <Plus className="w-4 h-4" />
-                  Assign Single
-                </button>
+                <div className="flex gap-2">
+                  <button 
+                    onClick={() => {
+                      setSelectedTemplate(template);
+                      setShowAssignModal(true);
+                    }}
+                    className="flex-1 py-3 bg-zinc-800 text-white font-bold rounded-xl hover:bg-zinc-700 transition-all flex items-center justify-center gap-2"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Assign
+                  </button>
+                  <button 
+                    onClick={() => {
+                      const tempProgram: ProgramTemplate = {
+                        name: template.name,
+                        category: template.category || 'General',
+                        description: template.description || '',
+                        weeks: [{
+                          weekNumber: 1,
+                          days: [{ dayNumber: 1, label: 'Workout', exercises: template.exercises }]
+                        }],
+                        isCustom: false
+                      };
+                      setSelectedProgram(tempProgram);
+                      setIsEditingTemplate(true);
+                      setEditingTemplateName(tempProgram.name);
+                      setEditingTemplateCategory(tempProgram.category);
+                      setEditingTemplateDescription(tempProgram.description);
+                      setShowProgramModal(true);
+                    }}
+                    className="p-3 bg-zinc-950 text-zinc-500 hover:text-white rounded-xl transition-all"
+                    title="Edit & Save to Library"
+                  >
+                    <Edit2 className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
             </div>
           ))}
@@ -826,72 +1027,158 @@ function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToa
               className="relative w-full max-w-5xl bg-zinc-900 border border-zinc-800 rounded-[40px] shadow-2xl p-10 space-y-8 overflow-y-auto max-h-[90vh] custom-scrollbar"
             >
               <div className="flex items-center justify-between">
-                <div className="space-y-2">
-                  <h3 className="text-3xl font-black uppercase tracking-tight">Schedule Program</h3>
-                  <p className="text-zinc-400 font-medium">Assigning "{selectedProgram.name}" to client calendar.</p>
+                <div className="space-y-2 flex-1">
+                  {isEditingTemplate ? (
+                    <div className="space-y-4">
+                      <input 
+                        className="text-3xl font-black uppercase tracking-tight bg-transparent border-b border-zinc-800 focus:border-orange-500 outline-none w-full"
+                        value={editingTemplateName}
+                        onChange={(e) => setEditingTemplateName(e.target.value)}
+                        placeholder="Template Name"
+                      />
+                      <div className="flex gap-4">
+                        <input 
+                          className="text-xs font-bold text-orange-500 uppercase tracking-widest bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-1 outline-none focus:ring-1 focus:ring-orange-500"
+                          value={editingTemplateCategory}
+                          onChange={(e) => setEditingTemplateCategory(e.target.value)}
+                          placeholder="Category"
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <h3 className="text-3xl font-black uppercase tracking-tight">Schedule Program</h3>
+                      <p className="text-zinc-400 font-medium">Assigning "{selectedProgram.name}" to client calendar.</p>
+                    </>
+                  )}
                 </div>
                 <button 
-                  onClick={() => setShowProgramModal(false)}
-                  className="p-2 hover:bg-zinc-800 rounded-full transition-colors"
+                  onClick={() => {
+                    setShowProgramModal(false);
+                    setIsEditingTemplate(false);
+                  }}
+                  className="p-2 hover:bg-zinc-800 rounded-full transition-colors ml-4"
                 >
                   <X className="w-6 h-6 text-zinc-500" />
                 </button>
               </div>
 
+              {isEditingTemplate && (
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest ml-1">Description</label>
+                  <textarea 
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-5 py-4 text-sm outline-none focus:ring-2 focus:ring-orange-500 transition-all min-h-[80px] resize-none"
+                    value={editingTemplateDescription}
+                    onChange={(e) => setEditingTemplateDescription(e.target.value)}
+                    placeholder="Describe the goals and structure of this program..."
+                  />
+                </div>
+              )}
+
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
                 <div className="lg:col-span-4 space-y-6">
-                  <div className="space-y-3">
-                    <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest ml-1">1. Select Client</label>
-                    <select 
-                      className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-5 py-4 text-sm outline-none focus:ring-2 focus:ring-orange-500 transition-all"
-                      onChange={(e) => setSelectedClient(clients.find(c => c.uid === e.target.value) || null)}
-                      value={selectedClient?.uid || ''}
-                    >
-                      <option value="">Select a client...</option>
-                      {clients.map(c => (
-                        <option key={c.uid} value={c.uid}>{c.displayName || c.email}</option>
-                      ))}
-                    </select>
-                  </div>
+                  {!isEditingTemplate && (
+                    <div className="space-y-3">
+                      <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest ml-1">1. Select Client</label>
+                      <select 
+                        className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-5 py-4 text-sm outline-none focus:ring-2 focus:ring-orange-500 transition-all"
+                        onChange={(e) => setSelectedClient(clients.find(c => c.uid === e.target.value) || null)}
+                        value={selectedClient?.uid || ''}
+                      >
+                        <option value="">Select a client...</option>
+                        {clients.map(c => (
+                          <option key={c.uid} value={c.uid}>{c.displayName || c.email}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
 
                   <div className="space-y-3">
-                    <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest ml-1">2. Schedule & Days</label>
+                    <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest ml-1">
+                      {isEditingTemplate ? 'Program Structure' : '2. Schedule & Days'}
+                    </label>
                     <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
-                      {selectedProgram.weeks[0].days.map((day, i) => (
-                        <button 
+                      {selectedProgram.weeks?.[0]?.days?.map((day, i) => (
+                        <div 
                           key={i} 
                           onClick={() => setActiveEditingDay(i)}
                           className={cn(
-                            "w-full text-left bg-zinc-950 border rounded-2xl p-4 transition-all group",
+                            "w-full text-left bg-zinc-950 border rounded-2xl p-4 transition-all group cursor-pointer",
                             activeEditingDay === i ? "border-orange-500 ring-1 ring-orange-500" : "border-zinc-800 hover:border-zinc-700"
                           )}
                         >
                           <div className="flex items-center justify-between mb-2">
-                            <span className={cn(
-                              "text-[10px] font-bold uppercase tracking-widest",
-                              activeEditingDay === i ? "text-orange-500" : "text-zinc-500"
-                            )}>{day.label}</span>
+                            {isEditingTemplate ? (
+                              <input 
+                                className="text-[10px] font-bold uppercase tracking-widest bg-transparent border-b border-zinc-800 focus:border-orange-500 outline-none flex-1 mr-4"
+                                value={day.label}
+                                onChange={(e) => {
+                                  const newWeeks = [...selectedProgram.weeks];
+                                  newWeeks[0].days[i].label = e.target.value;
+                                  setSelectedProgram({...selectedProgram, weeks: newWeeks});
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                            ) : (
+                              <span className={cn(
+                                "text-[10px] font-bold uppercase tracking-widest",
+                                activeEditingDay === i ? "text-orange-500" : "text-zinc-500"
+                              )}>{day.label}</span>
+                            )}
                             <div className="flex items-center gap-2">
                               <span className="text-[10px] text-zinc-600 font-bold">Day {i + 1}</span>
                               {activeEditingDay === i && <div className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-pulse" />}
+                              {isEditingTemplate && (
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const newWeeks = [...selectedProgram.weeks];
+                                    newWeeks[0].days.splice(i, 1);
+                                    // Re-index days
+                                    newWeeks[0].days.forEach((d, idx) => d.dayNumber = idx + 1);
+                                    setSelectedProgram({...selectedProgram, weeks: newWeeks});
+                                    if (activeEditingDay === i) setActiveEditingDay(null);
+                                  }}
+                                  className="p-1 text-zinc-600 hover:text-red-500 transition-colors"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              )}
                             </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <Calendar className="w-3 h-3 text-zinc-600" />
-                            <input 
-                              type="date"
-                              className="bg-transparent text-xs font-bold text-zinc-300 outline-none w-full"
-                              value={programDates[i] || ''}
-                              onClick={(e) => e.stopPropagation()}
-                              onChange={(e) => setProgramDates(prev => ({ ...prev, [i]: e.target.value }))}
-                            />
-                          </div>
+                          {!isEditingTemplate && (
+                            <div className="flex items-center gap-2">
+                              <Calendar className="w-3 h-3 text-zinc-600" />
+                              <input 
+                                type="date"
+                                className="bg-transparent text-xs font-bold text-zinc-300 outline-none w-full"
+                                value={programDates[i] || ''}
+                                onClick={(e) => e.stopPropagation()}
+                                onChange={(e) => setProgramDates(prev => ({ ...prev, [i]: e.target.value }))}
+                              />
+                            </div>
+                          )}
                           <div className="mt-2 flex items-center gap-2 text-[10px] text-zinc-500 font-bold">
                             <BookOpen className="w-3 h-3" />
                             {programWorkoutsDraft[i]?.length || 0} Exercises
                           </div>
-                        </button>
+                        </div>
                       ))}
+                      {isEditingTemplate && (
+                        <button 
+                          onClick={() => {
+                            const newWeeks = [...selectedProgram.weeks];
+                            const newDayNum = newWeeks[0].days.length + 1;
+                            newWeeks[0].days.push({ dayNumber: newDayNum, label: `Day ${newDayNum}`, exercises: [] });
+                            setSelectedProgram({...selectedProgram, weeks: newWeeks});
+                            setProgramWorkoutsDraft(prev => ({ ...prev, [newDayNum - 1]: [] }));
+                          }}
+                          className="w-full py-4 border border-dashed border-zinc-800 rounded-2xl text-zinc-500 hover:text-white hover:border-zinc-700 transition-all flex items-center justify-center gap-2 text-xs font-bold"
+                        >
+                          <Plus className="w-4 h-4" />
+                          Add Day to Program
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -902,7 +1189,7 @@ function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToa
                       <div className="p-6 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/30">
                         <div>
                           <h4 className="font-bold text-lg text-white">
-                            Customize: {selectedProgram.weeks[0].days[activeEditingDay].label}
+                            Customize: {selectedProgram.weeks?.[0]?.days?.[activeEditingDay]?.label}
                           </h4>
                           <p className="text-xs text-zinc-500 font-bold uppercase tracking-widest">Workout Day {activeEditingDay + 1}</p>
                         </div>
@@ -974,6 +1261,36 @@ function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToa
                                 />
                               </div>
                             </div>
+
+                            <div className="space-y-3">
+                              <div className="space-y-1">
+                                <label className="text-[9px] text-zinc-600 uppercase font-bold">YouTube Video Link</label>
+                                <div className="flex gap-2">
+                                  <div className="relative flex-1">
+                                    <Youtube className="absolute left-3 top-1/2 -translate-y-1/2 w-3 h-3 text-zinc-500" />
+                                    <input 
+                                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-8 pr-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-orange-500"
+                                      value={ex.youtubeLink}
+                                      placeholder="https://youtube.com/watch?v=..."
+                                      onChange={(e) => updateDraftExercise(activeEditingDay, exIdx, 'youtubeLink', e.target.value)}
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                              
+                              {ex.youtubeLink && getYouTubeId(ex.youtubeLink) && (
+                                <div className="relative aspect-video rounded-xl overflow-hidden border border-zinc-800 bg-zinc-950">
+                                  <iframe
+                                    className="absolute inset-0 w-full h-full"
+                                    src={`https://www.youtube.com/embed/${getYouTubeId(ex.youtubeLink)}`}
+                                    title="YouTube video player"
+                                    frameBorder="0"
+                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                    allowFullScreen
+                                  />
+                                </div>
+                              )}
+                            </div>
                           </div>
                         ))}
                         
@@ -998,7 +1315,7 @@ function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToa
                         </p>
                       </div>
                       <div className="flex flex-wrap justify-center gap-2">
-                        {selectedProgram.weeks[0].days.map((_, i) => (
+                        {selectedProgram.weeks?.[0]?.days?.map((_, i) => (
                           <button 
                             key={i}
                             onClick={() => setActiveEditingDay(i)}
@@ -1015,19 +1332,33 @@ function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToa
 
               <div className="flex gap-4 pt-4 border-t border-zinc-800">
                 <button
-                  onClick={() => setShowProgramModal(false)}
+                  onClick={() => {
+                    setShowProgramModal(false);
+                    setIsEditingTemplate(false);
+                  }}
                   className="flex-1 py-4 border border-zinc-800 rounded-2xl font-bold text-zinc-400 hover:bg-zinc-800 transition-all"
                 >
                   Cancel
                 </button>
-                <button
-                  onClick={handleAssignProgram}
-                  disabled={assigning || !selectedClient}
-                  className="flex-[2] bg-orange-500 text-white font-bold py-4 rounded-2xl hover:bg-orange-600 disabled:opacity-50 transition-all shadow-xl shadow-orange-500/20 flex items-center justify-center gap-2"
-                >
-                  {assigning ? <Loader2 className="w-5 h-5 animate-spin" /> : <Calendar className="w-5 h-5" />}
-                  {assigning ? 'Scheduling...' : 'Confirm & Assign Program'}
-                </button>
+                {isEditingTemplate ? (
+                  <button
+                    onClick={handleSaveTemplateChanges}
+                    disabled={savingTemplate || !editingTemplateName}
+                    className="flex-[2] bg-purple-600 text-white font-bold py-4 rounded-2xl hover:bg-purple-700 disabled:opacity-50 transition-all shadow-xl shadow-purple-500/20 flex items-center justify-center gap-2"
+                  >
+                    {savingTemplate ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
+                    {savingTemplate ? 'Saving...' : 'Save Template Changes'}
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleAssignProgram}
+                    disabled={assigning || !selectedClient}
+                    className="flex-[2] bg-orange-500 text-white font-bold py-4 rounded-2xl hover:bg-orange-600 disabled:opacity-50 transition-all shadow-xl shadow-orange-500/20 flex items-center justify-center gap-2"
+                  >
+                    {assigning ? <Loader2 className="w-5 h-5 animate-spin" /> : <Calendar className="w-5 h-5" />}
+                    {assigning ? 'Scheduling...' : 'Confirm & Assign Program'}
+                  </button>
+                )}
               </div>
             </motion.div>
           </div>

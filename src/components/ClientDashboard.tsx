@@ -45,7 +45,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import Chat from './Chat';
-import { generateMotivationalMessage, analyzeMealImage } from '../lib/gemini';
+import { generateMotivationalMessage, analyzeMealImage, analyzeMealText } from '../lib/gemini';
 import { 
   format, 
   startOfMonth, 
@@ -1343,6 +1343,7 @@ function WorkoutCard({
 
 function MealAI({ user, todayMetrics }: { user: User, todayMetrics: BodyMetrics | null }) {
   const [image, setImage] = useState<string | null>(null);
+  const [mealDescription, setMealDescription] = useState('');
   const [analyzing, setAnalyzing] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [logging, setLogging] = useState(false);
@@ -1361,12 +1362,18 @@ function MealAI({ user, todayMetrics }: { user: User, todayMetrics: BodyMetrics 
   };
 
   const handleAnalyze = async () => {
-    if (!image) return;
+    if (!image && !mealDescription.trim()) return;
     setAnalyzing(true);
     try {
-      const base64 = image.split(',')[1];
-      const mimeType = image.split(';')[0].split(':')[1];
-      const analysis = await analyzeMealImage(base64, mimeType);
+      let analysis;
+      if (image) {
+        const base64 = image.split(',')[1];
+        const mimeType = image.split(';')[0].split(':')[1];
+        analysis = await analyzeMealImage(base64, mimeType);
+      } else {
+        analysis = await analyzeMealText(mealDescription);
+      }
+
       if (analysis) {
         setResult(analysis);
         // Add analyzed meal as a single item for now, or we could split it if AI returned items
@@ -1377,6 +1384,7 @@ function MealAI({ user, todayMetrics }: { user: User, todayMetrics: BodyMetrics 
           carbs: analysis.carbs,
           fats: analysis.fats
         }]);
+        setMealDescription('');
       }
     } catch (error) {
       console.error('Error analyzing meal:', error);
@@ -1452,40 +1460,55 @@ function MealAI({ user, todayMetrics }: { user: User, todayMetrics: BodyMetrics 
         <div className="space-y-6">
           <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 space-y-6">
             <h3 className="text-xl font-bold flex items-center gap-2">
-              <Camera className="w-5 h-5 text-orange-500" />
-              Add via Photo
+              <Sparkles className="w-5 h-5 text-orange-500" />
+              AI Meal Analysis
             </h3>
-            {!image ? (
-              <label className="flex flex-col items-center justify-center border-2 border-dashed border-zinc-800 rounded-3xl p-12 cursor-pointer hover:border-orange-500/50 transition-all group">
-                <div className="p-4 bg-zinc-950 rounded-2xl text-zinc-500 group-hover:text-orange-500 transition-colors mb-4">
-                  <Upload className="w-8 h-8" />
+            
+            <div className="space-y-4">
+              {!image ? (
+                <div className="space-y-4">
+                  <textarea
+                    value={mealDescription}
+                    onChange={(e) => setMealDescription(e.target.value)}
+                    placeholder="Describe your meal (e.g. 2 eggs, 1 slice of whole wheat toast, and half an avocado)..."
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl p-4 text-sm outline-none focus:ring-1 focus:ring-orange-500 min-h-[100px] resize-none"
+                  />
+                  <div className="flex items-center gap-4">
+                    <div className="flex-1 h-px bg-zinc-800" />
+                    <span className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest">OR</span>
+                    <div className="flex-1 h-px bg-zinc-800" />
+                  </div>
+                  <label className="flex flex-col items-center justify-center border-2 border-dashed border-zinc-800 rounded-3xl p-8 cursor-pointer hover:border-orange-500/50 transition-all group">
+                    <div className="p-3 bg-zinc-950 rounded-2xl text-zinc-500 group-hover:text-orange-500 transition-colors mb-2">
+                      <Upload className="w-6 h-6" />
+                    </div>
+                    <span className="text-zinc-400 text-xs font-bold">Upload Photo</span>
+                    <input type="file" accept="image/*" className="hidden" onChange={handleImageChange} />
+                  </label>
                 </div>
-                <span className="text-zinc-400 font-bold">Upload Meal Photo</span>
-                <input type="file" accept="image/*" className="hidden" onChange={handleImageChange} />
-              </label>
-            ) : (
-              <div className="space-y-4">
-                <div className="relative aspect-video rounded-2xl overflow-hidden border border-zinc-800">
-                  <img src={image} alt="Meal" className="w-full h-full object-cover" />
-                  <button 
-                    onClick={() => { setImage(null); setResult(null); }}
-                    className="absolute top-4 right-4 p-2 bg-black/50 backdrop-blur-md rounded-full text-white hover:bg-black transition-colors"
-                  >
-                    <X className="w-5 h-5" />
-                  </button>
+              ) : (
+                <div className="space-y-4">
+                  <div className="relative aspect-video rounded-2xl overflow-hidden border border-zinc-800">
+                    <img src={image} alt="Meal" className="w-full h-full object-cover" />
+                    <button 
+                      onClick={() => { setImage(null); setResult(null); }}
+                      className="absolute top-4 right-4 p-2 bg-black/50 backdrop-blur-md rounded-full text-white hover:bg-black transition-colors"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
                 </div>
-                {!result && (
-                  <button 
-                    onClick={handleAnalyze}
-                    disabled={analyzing}
-                    className="w-full py-4 bg-orange-500 text-white font-bold rounded-2xl hover:bg-orange-600 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
-                  >
-                    {analyzing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
-                    {analyzing ? 'Analyzing...' : 'Analyze with AI'}
-                  </button>
-                )}
-              </div>
-            )}
+              )}
+
+              <button 
+                onClick={handleAnalyze}
+                disabled={analyzing || (!image && !mealDescription.trim())}
+                className="w-full py-4 bg-orange-500 text-white font-bold rounded-2xl hover:bg-orange-600 disabled:opacity-50 transition-all flex items-center justify-center gap-2 shadow-lg shadow-orange-500/20"
+              >
+                {analyzing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
+                {analyzing ? 'Analyzing...' : 'Analyze with AI'}
+              </button>
+            </div>
           </div>
 
           <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 space-y-6">

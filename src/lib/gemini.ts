@@ -87,3 +87,124 @@ export async function analyzeMealImage(base64Image: string, mimeType: string) {
     return null;
   }
 }
+
+export async function analyzeMealText(mealDescription: string) {
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: `Analyze the following meal description: "${mealDescription}". 
+      Identify the food items and estimate the total calories, protein, carbs, and fats. 
+      Return the result as a JSON object.`,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            mealName: { type: Type.STRING },
+            calories: { type: Type.NUMBER },
+            protein: { type: Type.NUMBER },
+            carbs: { type: Type.NUMBER },
+            fats: { type: Type.NUMBER },
+            ingredients: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING }
+            },
+            advice: { type: Type.STRING, description: "Short nutritional advice for this meal" }
+          },
+          required: ["mealName", "calories", "protein", "carbs", "fats", "ingredients", "advice"]
+        }
+      }
+    });
+    return JSON.parse(response.text || "{}");
+  } catch (error) {
+    console.error("Error analyzing meal text:", error);
+    return null;
+  }
+}
+
+export async function parseWorkoutFile(fileContent: string, fileName: string) {
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: `You are an expert fitness coach. Parse the following workout routine content from a file named "${fileName}". 
+      The content might be a list of exercises, a spreadsheet-like structure, or a document.
+      Convert it into a structured Program Template.
+      
+      Content:
+      ${fileContent}
+      
+      Return a JSON object representing a ProgramTemplate.
+      A ProgramTemplate has:
+      - name: string
+      - category: string (e.g., 'Strength', 'Fat Loss', 'Hypertrophy')
+      - description: string
+      - weeks: array of Week objects
+        - weekNumber: number
+        - days: array of Day objects
+          - dayNumber: number
+          - label: string (e.g., 'Upper Body', 'Rest Day')
+          - exercises: array of Exercise objects
+            - name: string
+            - sets: number
+            - reps: string
+            - weight: string (optional)
+            - rest: string
+            - coachNote: string (optional)
+            - youtubeLink: string (optional, leave empty if not known)
+      `,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            name: { type: Type.STRING },
+            category: { type: Type.STRING },
+            description: { type: Type.STRING },
+            weeks: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  weekNumber: { type: Type.NUMBER },
+                  days: {
+                    type: Type.ARRAY,
+                    items: {
+                      type: Type.OBJECT,
+                      properties: {
+                        dayNumber: { type: Type.NUMBER },
+                        label: { type: Type.STRING },
+                        exercises: {
+                          type: Type.ARRAY,
+                          items: {
+                            type: Type.OBJECT,
+                            properties: {
+                              name: { type: Type.STRING },
+                              sets: { type: Type.NUMBER },
+                              reps: { type: Type.STRING },
+                              weight: { type: Type.STRING },
+                              rest: { type: Type.STRING },
+                              coachNote: { type: Type.STRING },
+                              youtubeLink: { type: Type.STRING }
+                            },
+                            required: ["name", "sets", "reps", "rest"]
+                          }
+                        }
+                      },
+                      required: ["dayNumber", "label", "exercises"]
+                    }
+                  }
+                },
+                required: ["weekNumber", "days"]
+              }
+            }
+          },
+          required: ["name", "category", "description", "weeks"]
+        }
+      }
+    });
+    return JSON.parse(response.text || "{}");
+  } catch (error) {
+    console.error("Error parsing workout file:", error);
+    return null;
+  }
+}
