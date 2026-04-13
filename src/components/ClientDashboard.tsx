@@ -297,11 +297,24 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     return () => unsubscribe();
   }, [user.uid]);
 
-  const handleComplete = async (workout: Workout) => {
+  const handleComplete = async (workout: Workout, exerciseFeedback?: Record<number, { completedWeight: string, clientNote: string }>) => {
     setSubmitting(true);
     try {
       const motivationalMessage = await generateMotivationalMessage(profile.displayName || 'Champ', workout.weekNumber);
       
+      // Update the workout document with the client's actual performance
+      if (workout.id && exerciseFeedback) {
+        const updatedExercises = workout.exercises.map((ex, idx) => ({
+          ...ex,
+          completedWeight: exerciseFeedback[idx]?.completedWeight || '',
+          clientNote: exerciseFeedback[idx]?.clientNote || ''
+        }));
+        
+        await updateDoc(doc(db, 'workouts', workout.id), {
+          exercises: updatedExercises
+        }).catch(err => handleFirestoreError(err, OperationType.UPDATE, `workouts/${workout.id}`));
+      }
+
       await addDoc(collection(db, 'feedback'), {
         clientId: user.uid,
         workoutId: workout.id,
@@ -568,7 +581,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                     clientNote={clientNote}
                     setClientNote={setClientNote}
                     submitting={submitting}
-                    handleComplete={() => handleComplete(currentWorkout)}
+                    handleComplete={(feedback) => handleComplete(currentWorkout, feedback)}
                   />
                 ) : (
                   <div className="py-20 text-center space-y-6">
@@ -892,7 +905,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                   clientNote={clientNote}
                   setClientNote={setClientNote}
                   submitting={submitting}
-                  handleComplete={() => handleComplete(selectedWorkout)}
+                  handleComplete={(feedback) => handleComplete(selectedWorkout, feedback)}
                 />
               </div>
             </motion.div>
@@ -1151,9 +1164,20 @@ function WorkoutCard({
   clientNote: string,
   setClientNote: (s: string) => void,
   submitting: boolean,
-  handleComplete: () => void
+  handleComplete: (feedback?: Record<number, { completedWeight: string, clientNote: string }>) => void
 }) {
   const [showConfirm, setShowConfirm] = useState(false);
+  const [exerciseFeedback, setExerciseFeedback] = useState<Record<number, { completedWeight: string, clientNote: string }>>({});
+
+  const updateExerciseFeedback = (idx: number, field: 'completedWeight' | 'clientNote', value: string) => {
+    setExerciseFeedback(prev => ({
+      ...prev,
+      [idx]: {
+        ...prev[idx],
+        [field]: value
+      }
+    }));
+  };
 
   const handleCompleteClick = () => {
     setShowConfirm(true);
@@ -1235,7 +1259,7 @@ function WorkoutCard({
                 href={ex.youtubeLink}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="block relative aspect-video rounded-xl overflow-hidden border border-zinc-800 bg-zinc-950 group/vid"
+                className="block relative aspect-video rounded-xl overflow-hidden border border-zinc-800 bg-zinc-950 group/vid mb-4"
               >
                 <img 
                   src={`https://img.youtube.com/vi/${getYouTubeId(ex.youtubeLink)}/mqdefault.jpg`}
@@ -1253,6 +1277,29 @@ function WorkoutCard({
                 </div>
               </a>
             )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4 pt-4 border-t border-zinc-800/50">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Weight Used</label>
+                <input 
+                  type="text"
+                  placeholder="e.g. 65kg"
+                  value={exerciseFeedback[idx]?.completedWeight || ''}
+                  onChange={(e) => updateExerciseFeedback(idx, 'completedWeight', e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-sm focus:ring-1 focus:ring-orange-500 outline-none transition-all"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Exercise Note</label>
+                <input 
+                  type="text"
+                  placeholder="How did it feel?"
+                  value={exerciseFeedback[idx]?.clientNote || ''}
+                  onChange={(e) => updateExerciseFeedback(idx, 'clientNote', e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-sm focus:ring-1 focus:ring-orange-500 outline-none transition-all"
+                />
+              </div>
+            </div>
           </motion.div>
         ))}
       </div>
@@ -1289,7 +1336,7 @@ function WorkoutCard({
                 Cancel
               </button>
               <button
-                onClick={handleComplete}
+                onClick={() => handleComplete(exerciseFeedback)}
                 disabled={submitting}
                 className="flex-[2] bg-orange-500 text-white font-bold py-4 px-6 rounded-xl hover:bg-orange-600 disabled:opacity-50 transition-all shadow-lg shadow-orange-500/20"
               >

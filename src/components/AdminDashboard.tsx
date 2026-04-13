@@ -642,6 +642,18 @@ function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToa
     }
   }, [selectedProgram]);
 
+  const moveDraftExercise = (dayIdx: number, exIdx: number, direction: 'up' | 'down') => {
+    const newWorkouts = { ...programWorkoutsDraft };
+    const exercises = [...(newWorkouts[dayIdx] || [])];
+    const targetIndex = direction === 'up' ? exIdx - 1 : exIdx + 1;
+    
+    if (targetIndex < 0 || targetIndex >= exercises.length) return;
+    
+    [exercises[exIdx], exercises[targetIndex]] = [exercises[targetIndex], exercises[exIdx]];
+    newWorkouts[dayIdx] = exercises;
+    setProgramWorkoutsDraft(newWorkouts);
+  };
+
   const updateDraftExercise = (dayIdx: number, exIdx: number, field: keyof Exercise, value: any) => {
     setProgramWorkoutsDraft(prev => {
       const newDraft = { ...prev };
@@ -1215,6 +1227,22 @@ function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToa
                                   placeholder="Exercise name..."
                                   onChange={(e) => updateDraftExercise(activeEditingDay, exIdx, 'name', e.target.value)}
                                 />
+                              </div>
+                              <div className="flex items-center gap-1 mr-2">
+                                <button
+                                  onClick={() => moveDraftExercise(activeEditingDay, exIdx, 'up')}
+                                  disabled={exIdx === 0}
+                                  className="p-1.5 text-zinc-600 hover:text-orange-500 disabled:opacity-20 transition-colors"
+                                >
+                                  <ChevronUp className="w-4 h-4" />
+                                </button>
+                                <button
+                                  onClick={() => moveDraftExercise(activeEditingDay, exIdx, 'down')}
+                                  disabled={exIdx === (programWorkoutsDraft[activeEditingDay]?.length || 0) - 1}
+                                  className="p-1.5 text-zinc-600 hover:text-orange-500 disabled:opacity-20 transition-colors"
+                                >
+                                  <ChevronDown className="w-4 h-4" />
+                                </button>
                               </div>
                               <button 
                                 onClick={() => removeDraftExercise(activeEditingDay, exIdx)}
@@ -2050,6 +2078,17 @@ function WorkoutManager({ client, initialDate, initialWorkout, onSave, showToast
     }
   };
 
+  const moveExercise = (index: number, direction: 'up' | 'down') => {
+    const newExercises = [...exercises];
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= newExercises.length) return;
+    
+    [newExercises[index], newExercises[targetIndex]] = [newExercises[targetIndex], newExercises[index]];
+    setExercises(newExercises);
+    if (expandedIndex === index) setExpandedIndex(targetIndex);
+    else if (expandedIndex === targetIndex) setExpandedIndex(index);
+  };
+
   const handleSaveWorkout = async () => {
     setSaving(true);
     try {
@@ -2332,6 +2371,22 @@ function WorkoutManager({ client, initialDate, initialWorkout, onSave, showToast
                       <span>{ex.reps} Reps</span>
                     </div>
                   )}
+                  <div className="flex items-center gap-1 border-r border-zinc-800 pr-4 mr-2">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); moveExercise(idx, 'up'); }}
+                      disabled={idx === 0}
+                      className="p-1 hover:text-orange-500 disabled:opacity-20 transition-colors"
+                    >
+                      <ChevronUp className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); moveExercise(idx, 'down'); }}
+                      disabled={idx === exercises.length - 1}
+                      className="p-1 hover:text-orange-500 disabled:opacity-20 transition-colors"
+                    >
+                      <ChevronDown className="w-4 h-4" />
+                    </button>
+                  </div>
                   {expandedIndex === idx ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                 </div>
               </button>

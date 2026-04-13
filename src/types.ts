@@ -42,6 +42,8 @@ export interface Exercise {
   weight: string;
   rest: string;
   coachNote: string;
+  completedWeight?: string;
+  clientNote?: string;
 }
 
 export interface Workout {
