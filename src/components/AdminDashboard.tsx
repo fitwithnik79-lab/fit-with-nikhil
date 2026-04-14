@@ -642,6 +642,42 @@ function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToa
     }
   }, [selectedProgram]);
 
+  const moveDay = (index: number, direction: 'up' | 'down') => {
+    if (!selectedProgram || !selectedProgram.weeks || selectedProgram.weeks.length === 0) return;
+    const newWeeks = [...selectedProgram.weeks];
+    const days = [...newWeeks[0].days];
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    
+    if (targetIndex < 0 || targetIndex >= days.length) return;
+    
+    // Swap days in the template structure
+    [days[index], days[targetIndex]] = [days[targetIndex], days[index]];
+    
+    // Re-index day numbers
+    days.forEach((d, idx) => d.dayNumber = idx + 1);
+    
+    newWeeks[0].days = days;
+    setSelectedProgram({...selectedProgram, weeks: newWeeks});
+
+    // Also swap the draft data (dates and exercises) which are indexed by position
+    const newDates = { ...programDates };
+    const newWorkouts = { ...programWorkoutsDraft };
+    
+    const tempDate = newDates[index];
+    newDates[index] = newDates[targetIndex];
+    newDates[targetIndex] = tempDate;
+
+    const tempWorkout = newWorkouts[index];
+    newWorkouts[index] = newWorkouts[targetIndex];
+    newWorkouts[targetIndex] = tempWorkout;
+    
+    setProgramDates(newDates);
+    setProgramWorkoutsDraft(newWorkouts);
+    
+    if (activeEditingDay === index) setActiveEditingDay(targetIndex);
+    else if (activeEditingDay === targetIndex) setActiveEditingDay(index);
+  };
+
   const moveDraftExercise = (dayIdx: number, exIdx: number, direction: 'up' | 'down') => {
     const newWorkouts = { ...programWorkoutsDraft };
     const exercises = [...(newWorkouts[dayIdx] || [])];
@@ -1138,6 +1174,24 @@ function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToa
                               )}>{day.label}</span>
                             )}
                             <div className="flex items-center gap-2">
+                              <div className="flex flex-col gap-1 mr-1">
+                                <button 
+                                  onClick={(e) => { e.stopPropagation(); moveDay(i, 'up'); }}
+                                  disabled={i === 0}
+                                  className="p-1 text-zinc-600 hover:text-orange-500 disabled:opacity-20 transition-colors"
+                                  title="Move Day Up"
+                                >
+                                  <ChevronUp className="w-3 h-3" />
+                                </button>
+                                <button 
+                                  onClick={(e) => { e.stopPropagation(); moveDay(i, 'down'); }}
+                                  disabled={i === selectedProgram.weeks[0].days.length - 1}
+                                  className="p-1 text-zinc-600 hover:text-orange-500 disabled:opacity-20 transition-colors"
+                                  title="Move Day Down"
+                                >
+                                  <ChevronDown className="w-3 h-3" />
+                                </button>
+                              </div>
                               <span className="text-[10px] text-zinc-600 font-bold">Day {i + 1}</span>
                               {activeEditingDay === i && <div className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-pulse" />}
                               {isEditingTemplate && (

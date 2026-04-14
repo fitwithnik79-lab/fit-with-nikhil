@@ -20,6 +20,12 @@ export async function searchExerciseVideos(exerciseName: string) {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: `Find 3 high-quality YouTube demonstration video links for the exercise: "${exerciseName}". 
+      
+      CRITICAL VIDEO SELECTION CRITERIA:
+      1. RELEVANCE: The video must be exactly about "${exerciseName}".
+      2. CONCISE: Prioritize "YouTube Shorts" or very short, direct explanatory videos (under 2 minutes) that show proper form without long intros.
+      3. QUALITY: Select videos from reputable fitness channels.
+      
       Return the result as a JSON array of objects, each with 'title' and 'url' properties.`,
       config: {
         tools: [{ googleSearch: {} }],
@@ -130,29 +136,18 @@ export async function parseWorkoutFile(fileContent: string, fileName: string) {
       The content might be a list of exercises, a spreadsheet-like structure, or a document.
       Convert it into a structured Program Template.
       
+      CRITICAL INSTRUCTIONS:
+      1. Be extremely accurate to the original plan. If it says "Day 1: Legs", ensure Day 1 is Legs.
+      2. For EVERY exercise identified, find a high-quality YouTube demonstration video link.
+      3. VIDEO SELECTION: Prioritize "YouTube Shorts" or very short, direct explanatory videos (under 2 minutes) that show proper form immediately. Ensure the video is highly relevant to the specific exercise.
+      4. Populate the 'youtubeLink' field for every exercise.
+      
       Content:
       ${fileContent}
       
-      Return a JSON object representing a ProgramTemplate.
-      A ProgramTemplate has:
-      - name: string
-      - category: string (e.g., 'Strength', 'Fat Loss', 'Hypertrophy')
-      - description: string
-      - weeks: array of Week objects
-        - weekNumber: number
-        - days: array of Day objects
-          - dayNumber: number
-          - label: string (e.g., 'Upper Body', 'Rest Day')
-          - exercises: array of Exercise objects
-            - name: string
-            - sets: number
-            - reps: string
-            - weight: string (optional)
-            - rest: string
-            - coachNote: string (optional)
-            - youtubeLink: string (optional, leave empty if not known)
-      `,
+      Return a JSON object representing a ProgramTemplate.`,
       config: {
+        tools: [{ googleSearch: {} }],
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -186,7 +181,7 @@ export async function parseWorkoutFile(fileContent: string, fileName: string) {
                               coachNote: { type: Type.STRING },
                               youtubeLink: { type: Type.STRING }
                             },
-                            required: ["name", "sets", "reps", "rest"]
+                            required: ["name", "sets", "reps", "rest", "youtubeLink"]
                           }
                         }
                       },
