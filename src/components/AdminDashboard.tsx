@@ -6,13 +6,13 @@ import { UserProfile, Workout, Exercise, Feedback, WorkoutTemplate, BodyMetrics 
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { searchExerciseVideos, parseWorkoutFile } from '../lib/gemini';
 import { SAMPLE_PROGRAMS, WEEKLY_PROGRAMS, WORKOUT_TEMPLATES } from '../constants/workoutTemplates';
-import { Plus, Users, Calendar, CheckCircle, ExternalLink, ChevronRight, Search, Activity, Clock, MessageSquare, Trash2, Edit2, ChevronDown, ChevronUp, Save, Download, Layout, Copy, ChevronLeft, Play, Sparkles, Loader2, Droplets, Footprints, Flame, Scale, LayoutDashboard, X, Bell, Send, BookOpen, Layers, Upload, Youtube } from 'lucide-react';
+import { Plus, Users, Calendar, CheckCircle, ExternalLink, ChevronRight, Search, Activity, Clock, MessageSquare, Trash2, Edit2, ChevronDown, ChevronUp, Save, Download, Layout, Copy, ChevronLeft, Play, Sparkles, Loader2, Droplets, Footprints, Flame, Scale, LayoutDashboard, X, Bell, Send, BookOpen, Layers, Upload, Youtube, Utensils } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import Chat from './Chat';
 import { ProgramTemplate } from '../types';
 import { addDays, startOfToday } from 'date-fns';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, BarChart, Bar, Cell } from 'recharts';
 import { 
   format, 
   startOfMonth, 
@@ -26,7 +26,9 @@ import {
   subMonths,
   isToday,
   parseISO,
-  differenceInDays
+  differenceInDays,
+  subDays,
+  startOfDay
 } from 'date-fns';
 
 interface AdminDashboardProps {
@@ -2163,6 +2165,20 @@ function WorkoutManager({ client, initialDate, initialWorkout, onSave, showToast
           ...workoutData,
           createdAt: serverTimestamp()
         }).catch(err => handleFirestoreError(err, OperationType.CREATE, 'workouts'));
+
+        // Automated Milestone: New activity assigned
+        const q = query(collection(db, 'users'), where('role', '==', 'admin'), limit(1));
+        const snap = await getDocs(q);
+        const adminUid = snap.empty ? 'admin' : snap.docs[0].id;
+
+        await addDoc(collection(db, 'messages'), {
+          senderId: adminUid,
+          receiverId: client.uid,
+          text: `Hey! I've just assigned a new activity for you: Week ${week}, Day ${day}. Let's get to work! 🚀`,
+          isRead: false,
+          type: 'motivation',
+          createdAt: serverTimestamp()
+        });
       }
       onSave?.();
     } catch (error) {
@@ -2402,9 +2418,9 @@ function WorkoutManager({ client, initialDate, initialWorkout, onSave, showToast
                 expandedIndex === idx ? "border-orange-500/50" : "border-zinc-800"
               )}
             >
-              <button
+              <div
                 onClick={() => setExpandedIndex(expandedIndex === idx ? null : idx)}
-                className="w-full flex items-center justify-between p-4 hover:bg-zinc-900/50 transition-colors"
+                className="w-full flex items-center justify-between p-4 hover:bg-zinc-900/50 transition-colors cursor-pointer"
               >
                 <div className="flex items-center gap-4">
                   <div className="w-6 h-6 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-xs font-bold text-zinc-500">
@@ -2443,7 +2459,7 @@ function WorkoutManager({ client, initialDate, initialWorkout, onSave, showToast
                   </div>
                   {expandedIndex === idx ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                 </div>
-              </button>
+              </div>
 
               <AnimatePresence>
                 {expandedIndex === idx && (
@@ -2818,25 +2834,96 @@ function WorkoutManager({ client, initialDate, initialWorkout, onSave, showToast
 
 function ClientDashboardView({ client }: { client: UserProfile }) {
   const [metrics, setMetrics] = useState<BodyMetrics[]>([]);
+  const [meals, setMeals] = useState<any[]>([]);
+  const [workouts, setWorkouts] = useState<Workout[]>([]);
+  const [feedback, setFeedback] = useState<Feedback[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const consistencyData = useMemo(() => {
+    const data = [];
+    for (let i = 29; i >= 0; i--) {
+      const date = subDays(new Date(), i);
+      const dateStr = format(date, 'yyyy-MM-dd');
+      
+      const wasScheduled = workouts.find(w => w.scheduledDate === dateStr);
+      const wasCompleted = feedback.find(f => {
+        if (!f.createdAt) return false;
+        const fDate = (f.createdAt as any).toDate ? (f.createdAt as any).toDate() : new Date(f.createdAt as any);
+        return isSameDay(fDate, date);
+      });
+
+      let status = 'none';
+      if (wasScheduled && wasCompleted) status = 'completed';
+      else if (wasScheduled && !wasCompleted && date < startOfDay(new Date())) status = 'missed';
+      else if (wasScheduled) status = 'scheduled';
+
+      data.push({
+        dateStr,
+        displayDate: format(date, 'MMM d'),
+        value: 1,
+        status
+      });
+    }
+    return data;
+  }, [workouts, feedback]);
+
   useEffect(() => {
-    const q = query(
+    // Fetch metrics
+    const qMetrics = query(
       collection(db, 'metrics'),
       where('clientId', '==', client.uid),
       orderBy('date', 'desc'),
       limit(30)
     );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    const qMeals = query(
+      collection(db, 'meals'),
+      where('clientId', '==', client.uid),
+      orderBy('date', 'desc'),
+      limit(50)
+    );
+
+    const qWorkouts = query(
+      collection(db, 'workouts'),
+      where('clientId', '==', client.uid),
+      orderBy('scheduledDate', 'desc'),
+      limit(100)
+    );
+
+    const qFeedback = query(
+      collection(db, 'feedback'),
+      where('clientId', '==', client.uid),
+      orderBy('createdAt', 'desc'),
+      limit(100)
+    );
+
+    const unsubscribeMetrics = onSnapshot(qMetrics, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as BodyMetrics);
       setMetrics(data.reverse());
-      setLoading(false);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'metrics');
     });
 
-    return () => unsubscribe();
+    const unsubscribeMeals = onSnapshot(qMeals, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setMeals(data);
+    });
+
+    const unsubscribeWorkouts = onSnapshot(qWorkouts, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as Workout);
+      setWorkouts(data);
+    });
+
+    const unsubscribeFeedback = onSnapshot(qFeedback, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as Feedback);
+      setFeedback(data);
+      setLoading(false);
+    });
+
+    return () => {
+      unsubscribeMetrics();
+      unsubscribeMeals();
+      unsubscribeWorkouts();
+      unsubscribeFeedback();
+    };
   }, [client.uid]);
 
   const latestMetrics = metrics[metrics.length - 1];
@@ -2958,6 +3045,136 @@ function ClientDashboardView({ client }: { client: UserProfile }) {
               />
             </AreaChart>
           </ResponsiveContainer>
+        </div>
+      </div>
+
+      {/* Workout Consistency Chart */}
+      <div className="bg-zinc-900 p-6 rounded-2xl border border-zinc-800 space-y-6">
+        <h4 className="font-bold flex items-center gap-2">
+          <Calendar className="w-4 h-4 text-orange-500" />
+          Workout Consistency (Last 30 Days)
+        </h4>
+        <div className="h-[200px] w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={consistencyData}>
+              <XAxis dataKey="displayDate" hide />
+              <YAxis hide domain={[0, 1]} />
+              <Tooltip 
+                cursor={{ fill: 'transparent' }}
+                content={({ active, payload }) => {
+                  if (active && payload && payload.length) {
+                    const data = payload[0].payload;
+                    return (
+                      <div className="bg-zinc-950 border border-zinc-800 p-2 rounded-lg text-[10px] font-bold shadow-xl">
+                        <p className="text-zinc-500 mb-1">{data.displayDate}</p>
+                        <p className={cn(
+                          "uppercase tracking-widest",
+                          data.status === 'completed' ? "text-green-500" :
+                          data.status === 'missed' ? "text-red-500" :
+                          data.status === 'scheduled' ? "text-orange-500" : "text-zinc-700"
+                        )}>
+                          {data.status}
+                        </p>
+                      </div>
+                    );
+                  }
+                  return null;
+                }}
+              />
+              <Bar dataKey="value" radius={[4, 4, 4, 4]}>
+                {consistencyData.map((entry, index) => (
+                  <Cell 
+                    key={`cell-${index}`} 
+                    fill={
+                      entry.status === 'completed' ? '#22c55e' : 
+                      entry.status === 'missed' ? '#ef4444' : 
+                      entry.status === 'scheduled' ? '#f97316' : '#27272a'
+                    } 
+                  />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="flex items-center gap-6 justify-center pt-4 border-t border-zinc-800/50">
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full bg-green-500" />
+            <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Completed</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full bg-red-500" />
+            <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Missed</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full bg-orange-500" />
+            <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Scheduled</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Meal Logs Section for Coach */}
+      <div className="space-y-4">
+        <h4 className="font-bold flex items-center gap-2">
+          <Utensils className="w-4 h-4 text-orange-500" />
+          Client Meal History
+        </h4>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {meals.length > 0 ? (
+            meals.map((meal) => (
+              <div 
+                key={meal.id} 
+                className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 hover:border-zinc-700 transition-all group"
+              >
+                <div className="flex items-start gap-4">
+                  {meal.imageURL && (
+                    <div className="w-20 h-20 rounded-2xl overflow-hidden border border-zinc-800 flex-shrink-0">
+                      <img src={meal.imageURL} alt={meal.name} className="w-full h-full object-cover" />
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className={cn(
+                        "text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full border",
+                        meal.type === 'Breakfast' ? "bg-orange-500/10 text-orange-500 border-orange-500/20" :
+                        meal.type === 'Lunch' ? "bg-green-500/10 text-green-500 border-green-500/20" :
+                        meal.type === 'Dinner' ? "bg-purple-500/10 text-purple-500 border-purple-500/20" :
+                        "bg-blue-500/10 text-blue-500 border-blue-500/20"
+                      )}>
+                        {meal.type}
+                      </span>
+                      <span className="text-[10px] text-zinc-500 font-bold">
+                        {format(parseISO(meal.date), 'MMM d')}
+                      </span>
+                    </div>
+                    <h4 className="font-bold text-white truncate">{meal.name}</h4>
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      <div className="bg-zinc-950 px-2 py-0.5 rounded-lg border border-zinc-800 text-[10px] font-bold">
+                        <span className="text-orange-500 text-xs">{meal.totalCalories}</span> CAL
+                      </div>
+                      <div className="bg-zinc-950 px-2 py-0.5 rounded-lg border border-zinc-800 text-[10px] font-bold">
+                        <span className="text-blue-500 text-xs">{meal.totalProtein}g</span> P
+                      </div>
+                      <div className="bg-zinc-950 px-2 py-0.5 rounded-lg border border-zinc-800 text-[10px] font-bold">
+                        <span className="text-green-500 text-xs">{meal.totalCarbs}g</span> C
+                      </div>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-1">
+                      {meal.items?.map((item: any, i: number) => (
+                        <span key={i} className="text-[10px] text-zinc-500 bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800/50 line-clamp-1">
+                          {item.name}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="col-span-full py-12 text-center bg-zinc-900/50 rounded-3xl border border-zinc-800 p-8">
+              <Utensils className="w-8 h-8 text-zinc-800 mx-auto mb-4" />
+              <p className="text-zinc-500 text-sm">No meals logged by this client yet.</p>
+            </div>
+          )}
         </div>
       </div>
     </div>

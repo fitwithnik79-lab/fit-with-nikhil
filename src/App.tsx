@@ -20,28 +20,35 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [signingIn, setSigningIn] = useState(false);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setUser(user);
       if (user) {
+        setUser(user);
         try {
           const userDocRef = doc(db, 'users', user.uid);
-          const userDoc = await getDoc(userDocRef).catch(err => handleFirestoreError(err, OperationType.GET, `users/${user.uid}`));
+          const userDoc = await getDoc(userDocRef).catch(err => {
+            handleFirestoreError(err, OperationType.GET, `users/${user.uid}`);
+            return null;
+          });
           
-          if (!userDoc) return; // Error handled
+          if (!userDoc) {
+            setLoading(false);
+            return;
+          }
 
           const isAdminEmail = user.email === 'fitwithnik79@gmail.com';
           
           if (userDoc.exists()) {
             const userData = userDoc.data() as UserProfile;
-            // Update lastLogin
-            await updateDoc(userDocRef, { lastLogin: serverTimestamp() }).catch(err => handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}`));
+            // Update lastLogin in background
+            updateDoc(userDocRef, { lastLogin: serverTimestamp() }).catch(err => console.error("Error updating last login:", err));
             
-            // Sync admin role if email matches but role is not admin
+            // Sync admin role if needed
             if (isAdminEmail && userData.role !== 'admin') {
               const updatedProfile = { ...userData, role: 'admin' as UserRole };
-              await updateDoc(userDocRef, { role: 'admin' }).catch(err => handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}`));
+              updateDoc(userDocRef, { role: 'admin' }).catch(err => console.error("Error syncing admin role:", err));
               setProfile(updatedProfile);
             } else {
               setProfile(userData);
@@ -62,6 +69,7 @@ export default function App() {
           console.error('Error in auth state change:', error);
         }
       } else {
+        setUser(null);
         setProfile(null);
       }
       setLoading(false);
@@ -70,11 +78,14 @@ export default function App() {
   }, []);
 
   const handleLogin = async () => {
+    setSigningIn(true);
     const provider = new GoogleAuthProvider();
     try {
       await signInWithPopup(auth, provider);
     } catch (error) {
       console.error('Login error:', error);
+    } finally {
+      setSigningIn(false);
     }
   };
 
@@ -113,10 +124,20 @@ export default function App() {
           
           <button
             onClick={handleLogin}
-            className="w-full flex items-center justify-center gap-3 bg-white text-black font-semibold py-4 px-6 rounded-xl hover:bg-zinc-200 transition-colors"
+            disabled={signingIn}
+            className="w-full flex items-center justify-center gap-3 bg-white text-black font-semibold py-4 px-6 rounded-xl hover:bg-zinc-200 transition-colors disabled:opacity-50"
           >
-            <LogIn className="w-5 h-5" />
-            Sign in with Google
+            {signingIn ? (
+              <motion.div
+                animate={{ rotate: 360 }}
+                transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}
+              >
+                <Dumbbell className="w-5 h-5 text-zinc-400" />
+              </motion.div>
+            ) : (
+              <LogIn className="w-5 h-5" />
+            )}
+            {signingIn ? 'Signing in...' : 'Sign in with Google'}
           </button>
         </motion.div>
       </div>

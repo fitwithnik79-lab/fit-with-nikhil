@@ -104,3 +104,24 @@ export interface Message {
   type: 'chat' | 'motivation' | 'reminder';
   createdAt: any;
 }
+
+export interface Meal {
+  id?: string;
+  clientId: string;
+  date: string; // YYYY-MM-DD
+  type: 'Breakfast' | 'Lunch' | 'Dinner' | 'Snack';
+  name: string;
+  items: { 
+    name: string; 
+    calories: number; 
+    protein: number; 
+    carbs: number; 
+    fats: number; 
+  }[];
+  totalCalories: number;
+  totalProtein: number;
+  totalCarbs: number;
+  totalFats: number;
+  imageURL?: string;
+  createdAt: any;
+}

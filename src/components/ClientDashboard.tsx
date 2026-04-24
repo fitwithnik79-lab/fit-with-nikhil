@@ -57,6 +57,7 @@ import {
   isSameDay, 
   addMonths, 
   subMonths,
+  subDays,
   isToday,
   parseISO,
   startOfDay,
@@ -161,7 +162,7 @@ const QuickLog = ({ todayMetrics, onLog }: { todayMetrics: BodyMetrics | null, o
     </motion.div>
   );
 };
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, BarChart, Bar, Cell } from 'recharts';
 
 function getYouTubeId(url: string) {
   const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
@@ -177,6 +178,7 @@ interface ClientDashboardProps {
 export default function ClientDashboard({ user, profile }: ClientDashboardProps) {
   const [currentWorkout, setCurrentWorkout] = useState<Workout | null>(null);
   const [allWorkouts, setAllWorkouts] = useState<Workout[]>([]);
+  const [allFeedback, setAllFeedback] = useState<Feedback[]>([]);
   const [lastFeedback, setLastFeedback] = useState<Feedback | null>(null);
   const [loading, setLoading] = useState(true);
   const [showFeedbackForm, setShowFeedbackForm] = useState(false);
@@ -189,6 +191,28 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [metrics, setMetrics] = useState<BodyMetrics[]>([]);
   const [todayMetrics, setTodayMetrics] = useState<BodyMetrics | null>(null);
+  const [meals, setMeals] = useState<any[]>([]);
+
+  // Helper to send automated coach messages
+  const sendAutomatedCoachMessage = async (text: string, type: 'motivation' | 'reminder' = 'motivation') => {
+    try {
+      const q = query(collection(db, 'users'), where('role', '==', 'admin'), limit(1));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        const adminUid = snap.docs[0].id;
+        await addDoc(collection(db, 'messages'), {
+          senderId: adminUid,
+          receiverId: user.uid,
+          text,
+          isRead: false,
+          type,
+          createdAt: serverTimestamp()
+        });
+      }
+    } catch (error) {
+      console.error("Error sending automated message:", error);
+    }
+  };
 
   useEffect(() => {
     // Fetch admin profile for chat
@@ -246,6 +270,25 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   }, [user.uid]);
 
   useEffect(() => {
+    // Fetch meals
+    const q = query(
+      collection(db, 'meals'),
+      where('clientId', '==', user.uid),
+      orderBy('date', 'desc'),
+      limit(50)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const mealsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setMeals(mealsData);
+    }, (error) => {
+      console.error("Error fetching meals:", error);
+    });
+
+    return () => unsubscribe();
+  }, [user.uid]);
+
+  useEffect(() => {
     // Fetch all workouts for calendar and program
     const qAll = query(
       collection(db, 'workouts'),
@@ -278,17 +321,20 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   }, [user.uid]);
 
   useEffect(() => {
-    // Get the latest feedback to show motivational message
+    // Get feedback for the last 30 days
+    const thirtyDaysAgo = subDays(new Date(), 30);
     const q = query(
       collection(db, 'feedback'),
       where('clientId', '==', user.uid),
-      orderBy('createdAt', 'desc'),
-      limit(1)
+      where('createdAt', '>=', thirtyDaysAgo),
+      orderBy('createdAt', 'desc')
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      if (!snapshot.empty) {
-        setLastFeedback({ id: snapshot.docs[0].id, ...snapshot.docs[0].data() } as Feedback);
+      const feedbacks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as Feedback);
+      setAllFeedback(feedbacks);
+      if (feedbacks.length > 0) {
+        setLastFeedback(feedbacks[0]);
       }
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, 'feedback');
@@ -296,6 +342,41 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
 
     return () => unsubscribe();
   }, [user.uid]);
+
+  // Automated reminders for missed workouts/meals
+  useEffect(() => {
+    const checkMissedCheckins = async () => {
+      const lastCheckKey = `last_checkin_reminder_${user.uid}_${format(new Date(), 'yyyy-MM-dd')}`;
+      if (localStorage.getItem(lastCheckKey)) return;
+
+      const yesterday = subDays(new Date(), 1);
+      const yesterdayStr = format(yesterday, 'yyyy-MM-dd');
+      
+      // Check for missed workout
+      const wasWorkoutScheduled = allWorkouts.find(w => w.scheduledDate === yesterdayStr);
+      const wasWorkoutCompleted = allFeedback.some(f => {
+        if (!f.createdAt) return false;
+        const fDate = (f.createdAt as any).toDate ? (f.createdAt as any).toDate() : new Date(f.createdAt as any);
+        return isSameDay(fDate, yesterday);
+      });
+
+      if (wasWorkoutScheduled && !wasWorkoutCompleted) {
+        await sendAutomatedCoachMessage("Hey champ! I noticed you missed your scheduled workout yesterday. Life happens, but let's get back on track today! You've got this. 💪", 'reminder');
+      }
+
+      // Check for missed meals
+      const mealsYesterday = meals.filter(m => m.date === yesterdayStr);
+      if (mealsYesterday.length === 0) {
+        await sendAutomatedCoachMessage("Consistency is key in the kitchen too! Don't forget to log your meals so we can track your progress accurately. 🥗", 'reminder');
+      }
+
+      localStorage.setItem(lastCheckKey, 'true');
+    };
+
+    if (!loading && allWorkouts.length > 0 && allFeedback.length > 0) {
+      checkMissedCheckins();
+    }
+  }, [loading, allWorkouts, allFeedback, meals, user.uid]);
 
   const handleComplete = async (workout: Workout, exerciseFeedback?: Record<number, { completedWeight: string, clientNote: string }>) => {
     setSubmitting(true);
@@ -325,6 +406,16 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
         motivationalMessage,
         createdAt: serverTimestamp()
       }).catch(err => handleFirestoreError(err, OperationType.CREATE, 'feedback'));
+
+      // AI Milestone Messages
+      const workoutCount = allWorkouts.filter(w => w.id && w.exercises.some(e => e.completedWeight)).length + 1;
+      if (workoutCount === 1) {
+        await sendAutomatedCoachMessage("Boom! First workout in the books. This is where the transformation begins! 🚀");
+      } else if (workoutCount % 5 === 0) {
+        await sendAutomatedCoachMessage(`Incredible consistency! You've crushed ${workoutCount} workouts. You're becoming unstoppable! 🔥`);
+      } else {
+        await sendAutomatedCoachMessage("Workout crushed! Proud of your effort today. Now refuel and recover well! 💪");
+      }
 
       // Automatically send a message to the coach
       if (adminProfile) {
@@ -617,7 +708,13 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -20 }}
               >
-                <MealAI user={user} todayMetrics={todayMetrics} />
+                <MealAI 
+                  user={user} 
+                  todayMetrics={todayMetrics} 
+                  metrics={metrics}
+                  meals={meals}
+                  sendAutomatedCoachMessage={sendAutomatedCoachMessage} 
+                />
               </motion.div>
             )}
 
@@ -698,6 +795,9 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                   user={user} 
                   todayMetrics={todayMetrics} 
                   history={metrics} 
+                  meals={meals}
+                  allWorkouts={allWorkouts}
+                  allFeedback={allFeedback}
                 />
 
                 {/* Nutrition Breakdown */}
@@ -972,7 +1072,21 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   );
 }
 
-function MetricsTracker({ user, todayMetrics, history }: { user: User, todayMetrics: BodyMetrics | null, history: BodyMetrics[] }) {
+function MetricsTracker({ 
+  user, 
+  todayMetrics, 
+  history,
+  meals,
+  allWorkouts,
+  allFeedback
+}: { 
+  user: User, 
+  todayMetrics: BodyMetrics | null, 
+  history: BodyMetrics[],
+  meals: any[],
+  allWorkouts: Workout[],
+  allFeedback: Feedback[]
+}) {
   const [water, setWater] = useState(todayMetrics?.waterIntake || 0);
   const [steps, setSteps] = useState(todayMetrics?.stepCount || 0);
   const [calories, setCalories] = useState(todayMetrics?.calories || 0);
@@ -981,6 +1095,34 @@ function MetricsTracker({ user, todayMetrics, history }: { user: User, todayMetr
   const [fats, setFats] = useState(todayMetrics?.fats || 0);
   const [weight, setWeight] = useState(todayMetrics?.weight || 0);
   const [isSaving, setIsSaving] = useState(false);
+
+  const consistencyData = useMemo(() => {
+    const data = [];
+    for (let i = 29; i >= 0; i--) {
+      const date = subDays(new Date(), i);
+      const dateStr = format(date, 'yyyy-MM-dd');
+      
+      const wasScheduled = allWorkouts.find(w => w.scheduledDate === dateStr);
+      const wasCompleted = allFeedback.find(f => {
+        if (!f.createdAt) return false;
+        const fDate = (f.createdAt as any).toDate ? (f.createdAt as any).toDate() : new Date(f.createdAt as any);
+        return isSameDay(fDate, date);
+      });
+
+      let status = 'none';
+      if (wasScheduled && wasCompleted) status = 'completed';
+      else if (wasScheduled && !wasCompleted && date < startOfDay(new Date())) status = 'missed';
+      else if (wasScheduled) status = 'scheduled';
+
+      data.push({
+        dateStr,
+        displayDate: format(date, 'MMM d'),
+        value: 1,
+        status
+      });
+    }
+    return data;
+  }, [allWorkouts, allFeedback]);
 
   useEffect(() => {
     if (todayMetrics) {
@@ -1140,9 +1282,150 @@ function MetricsTracker({ user, todayMetrics, history }: { user: User, todayMetr
         disabled={isSaving}
         className="w-full py-4 bg-white text-black font-bold rounded-2xl hover:bg-zinc-200 transition-all flex items-center justify-center gap-2 disabled:opacity-50 shadow-xl shadow-white/5"
       >
-        {isSaving ? <Clock className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
+        {isSaving ? <Clock className="w-5 h-5 animate-spin" /> : <Save className="w-4 h-4" />}
         {isSaving ? 'Saving Progress...' : 'Save Today\'s Metrics'}
       </button>
+
+      {/* Workout Consistency Chart */}
+      <div className="bg-zinc-900 p-8 rounded-[32px] border border-zinc-800 space-y-6">
+        <h3 className="text-xl font-bold flex items-center gap-2">
+          <CalendarIcon className="w-5 h-5 text-orange-500" />
+          Workout Consistency (Last 30 Days)
+        </h3>
+        <div className="h-[200px] w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={consistencyData}>
+              <XAxis 
+                dataKey="displayDate" 
+                hide 
+              />
+              <YAxis hide domain={[0, 1]} />
+              <Tooltip 
+                cursor={{ fill: 'transparent' }}
+                content={({ active, payload }) => {
+                  if (active && payload && payload.length) {
+                    const data = payload[0].payload;
+                    return (
+                      <div className="bg-zinc-950 border border-zinc-800 p-2 rounded-lg text-[10px] font-bold">
+                        <p className="text-zinc-500 mb-1">{data.displayDate}</p>
+                        <p className={cn(
+                          "uppercase tracking-widest",
+                          data.status === 'completed' ? "text-green-500" :
+                          data.status === 'missed' ? "text-red-500" :
+                          data.status === 'scheduled' ? "text-orange-500" : "text-zinc-700"
+                        )}>
+                          {data.status}
+                        </p>
+                      </div>
+                    );
+                  }
+                  return null;
+                }}
+              />
+              <Bar dataKey="value" radius={[4, 4, 4, 4]}>
+                {consistencyData.map((entry, index) => (
+                  <Cell 
+                    key={`cell-${index}`} 
+                    fill={
+                      entry.status === 'completed' ? '#22c55e' : 
+                      entry.status === 'missed' ? '#ef4444' : 
+                      entry.status === 'scheduled' ? '#f97316' : '#27272a'
+                    } 
+                  />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="flex items-center gap-6 justify-center pt-4 border-t border-zinc-800/50">
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full bg-green-500" />
+            <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Completed</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full bg-red-500" />
+            <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Missed</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full bg-orange-500" />
+            <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Scheduled</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Meal History List */}
+      <div className="space-y-6 pt-8 border-t border-zinc-800/50">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xl font-bold flex items-center gap-2">
+            <Utensils className="w-5 h-5 text-orange-500" />
+            Daily Meal Logs
+          </h3>
+          <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest bg-zinc-900 px-3 py-1 rounded-full border border-zinc-800">
+            {meals.length} Logs
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {meals.length > 0 ? (
+            meals.map((meal) => (
+              <div 
+                key={meal.id} 
+                className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 hover:border-zinc-700 transition-all group"
+              >
+                <div className="flex items-start gap-4">
+                  {meal.imageURL && (
+                    <div className="w-20 h-20 rounded-2xl overflow-hidden border border-zinc-800 flex-shrink-0">
+                      <img src={meal.imageURL} alt={meal.name} className="w-full h-full object-cover" />
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className={cn(
+                        "text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full border",
+                        meal.type === 'Breakfast' ? "bg-orange-500/10 text-orange-500 border-orange-500/20" :
+                        meal.type === 'Lunch' ? "bg-green-500/10 text-green-500 border-green-500/20" :
+                        meal.type === 'Dinner' ? "bg-purple-500/10 text-purple-500 border-purple-500/20" :
+                        "bg-blue-500/10 text-blue-500 border-blue-500/20"
+                      )}>
+                        {meal.type}
+                      </span>
+                      <span className="text-[10px] text-zinc-500 font-bold">
+                        {format(parseISO(meal.date), 'MMM d')}
+                      </span>
+                    </div>
+                    <h4 className="font-bold text-white truncate">{meal.name}</h4>
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      <div className="bg-zinc-950 px-2 py-0.5 rounded-lg border border-zinc-800 text-[10px] font-bold">
+                        <span className="text-orange-500 text-xs">{meal.totalCalories}</span> CAL
+                      </div>
+                      <div className="bg-zinc-950 px-2 py-0.5 rounded-lg border border-zinc-800 text-[10px] font-bold">
+                        <span className="text-blue-500 text-xs">{meal.totalProtein}g</span> P
+                      </div>
+                      <div className="bg-zinc-950 px-2 py-0.5 rounded-lg border border-zinc-800 text-[10px] font-bold">
+                        <span className="text-green-500 text-xs">{meal.totalCarbs}g</span> C
+                      </div>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-1">
+                      {meal.items?.map((item: any, i: number) => (
+                        <span key={i} className="text-[10px] text-zinc-500 bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800/50">
+                          {item.name}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="col-span-full py-12 text-center bg-zinc-900/50 rounded-3xl border border-zinc-800 p-8 space-y-4">
+              <div className="inline-flex p-4 bg-zinc-950 rounded-full text-zinc-800">
+                <Utensils className="w-8 h-8" />
+              </div>
+              <p className="text-zinc-500 text-sm">No meals logged yet. Start tracking to see your history!</p>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -1388,7 +1671,19 @@ function WorkoutCard({
   );
 }
 
-function MealAI({ user, todayMetrics }: { user: User, todayMetrics: BodyMetrics | null }) {
+function MealAI({ 
+  user, 
+  todayMetrics, 
+  metrics,
+  meals,
+  sendAutomatedCoachMessage 
+}: { 
+  user: User, 
+  todayMetrics: BodyMetrics | null, 
+  metrics: BodyMetrics[],
+  meals: any[],
+  sendAutomatedCoachMessage: (text: string, type?: 'motivation' | 'reminder') => Promise<void>
+}) {
   const [image, setImage] = useState<string | null>(null);
   const [mealDescription, setMealDescription] = useState('');
   const [analyzing, setAnalyzing] = useState(false);
@@ -1396,6 +1691,8 @@ function MealAI({ user, todayMetrics }: { user: User, todayMetrics: BodyMetrics 
   const [logging, setLogging] = useState(false);
   const [manualItems, setManualItems] = useState<{ name: string, calories: number, protein: number, carbs: number, fats: number }[]>([]);
   const [newItem, setNewItem] = useState({ name: '', calories: 0, protein: 0, carbs: 0, fats: 0 });
+
+  const [mealType, setMealType] = useState<'Breakfast' | 'Lunch' | 'Dinner' | 'Snack'>('Lunch');
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1462,6 +1759,27 @@ function MealAI({ user, todayMetrics }: { user: User, todayMetrics: BodyMetrics 
     setLogging(true);
     try {
       const todayStr = format(new Date(), 'yyyy-MM-dd');
+      
+      const mealCounts = meals.filter(m => m.date === todayStr).length;
+      
+      // Save full meal details
+      const mealData = {
+        clientId: user.uid,
+        date: todayStr,
+        type: mealType,
+        name: result?.mealName || (manualItems.length === 1 ? manualItems[0].name : `${mealType} Log`),
+        items: manualItems,
+        totalCalories: totalMealMacros.calories,
+        totalProtein: totalMealMacros.protein,
+        totalCarbs: totalMealMacros.carbs,
+        totalFats: totalMealMacros.fats,
+        imageURL: image || null,
+        createdAt: serverTimestamp()
+      };
+
+      await addDoc(collection(db, 'meals'), mealData)
+        .catch(err => handleFirestoreError(err, OperationType.CREATE, 'meals'));
+
       const metricsData = {
         clientId: user.uid,
         date: todayStr,
@@ -1482,6 +1800,14 @@ function MealAI({ user, todayMetrics }: { user: User, todayMetrics: BodyMetrics 
         await addDoc(collection(db, 'metrics'), metricsData)
           .catch(err => handleFirestoreError(err, OperationType.CREATE, 'metrics'));
       }
+
+      // Automated Milestone: First meal tracked today
+      if (mealCounts === 0) {
+        await sendAutomatedCoachMessage("Great start to the day! Tracking your first meal is 80% of the battle. Keep it up! 🥗");
+      } else if (mealCounts === 2) {
+        await sendAutomatedCoachMessage("Consistency is key! You've tracked 3 meals today. Your body will thank you! 🌟");
+      }
+
       setImage(null);
       setResult(null);
       setManualItems([]);
@@ -1512,6 +1838,23 @@ function MealAI({ user, todayMetrics }: { user: User, todayMetrics: BodyMetrics 
             </h3>
             
             <div className="space-y-4">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {(['Breakfast', 'Lunch', 'Dinner', 'Snack'] as const).map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => setMealType(t)}
+                    className={cn(
+                      "px-4 py-2 rounded-xl text-xs font-bold transition-all border",
+                      mealType === t 
+                        ? "bg-orange-500 border-orange-500 text-white shadow-lg shadow-orange-500/20" 
+                        : "bg-zinc-950 border-zinc-800 text-zinc-500 hover:border-zinc-700"
+                    )}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+
               {!image ? (
                 <div className="space-y-4">
                   <textarea
