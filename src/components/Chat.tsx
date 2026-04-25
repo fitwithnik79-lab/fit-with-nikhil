@@ -6,7 +6,7 @@ import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { Send, MessageSquare, Bell, Sparkles, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
-import { cn } from '../lib/utils';
+import { cn, getAvatarUrl } from '../lib/utils';
 
 interface ChatProps {
   currentUser: { uid: string; role: string };
@@ -95,8 +95,12 @@ export default function Chat({ currentUser, otherUser, onClose }: ChatProps) {
       {/* Header */}
       <div className="p-4 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/50">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-orange-500 flex items-center justify-center font-bold text-white shadow-lg shadow-orange-500/20">
-            {otherUser.displayName?.charAt(0) || otherUser.email.charAt(0)}
+          <div className="w-10 h-10 rounded-full bg-zinc-900 border border-zinc-800 overflow-hidden flex items-center justify-center font-bold text-white shadow-lg shadow-zinc-800/20">
+            <img 
+              src={getAvatarUrl(otherUser.email, otherUser.gender, otherUser.photoURL)} 
+              alt={otherUser.displayName}
+              className="w-full h-full object-cover"
+            />
           </div>
           <div>
             <h3 className="font-bold text-sm">{otherUser.displayName || 'Chat'}</h3>

@@ -10,7 +10,7 @@ import { NUTRITION_TEMPLATES } from '../constants/nutritionTemplates';
 import { NutritionPlan, NutritionTemplate } from '../types';
 import { Plus, Users, Calendar, CheckCircle, ExternalLink, ChevronRight, Search, Activity, Clock, MessageSquare, Trash2, Edit2, ChevronDown, ChevronUp, Save, Download, Layout, Copy, ChevronLeft, Play, Sparkles, Loader2, Droplets, Footprints, Flame, Scale, LayoutDashboard, X, Bell, Send, BookOpen, Layers, Upload, Youtube, Utensils } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { cn } from '../lib/utils';
+import { cn, playNotificationSound, getAvatarUrl } from '../lib/utils';
 import Chat from './Chat';
 import { ProgramTemplate } from '../types';
 import { addDays, startOfToday } from 'date-fns';
@@ -84,21 +84,50 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
   }, []);
 
   useEffect(() => {
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }, []);
+
+  useEffect(() => {
     // Fetch all messages for the coach to see unread or recent ones
     const q = query(
       collection(db, 'messages'), 
       where('receiverId', '==', user.uid),
       orderBy('createdAt', 'desc'),
-      limit(50)
+      limit(20)
     );
+    
+    // Track initial load to avoid notifying for old messages
+    let isInitialLoad = true;
+
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const messageData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as Message);
       setMessages(messageData);
+      
+      if (!isInitialLoad) {
+        snapshot.docChanges().forEach((change) => {
+          if (change.type === "added") {
+            const msg = change.doc.data() as Message;
+            if (msg.senderId !== user.uid) {
+              const client = clients.find(c => c.uid === msg.senderId);
+              if ("Notification" in window && Notification.permission === "granted") {
+                new Notification(`New Message from ${client?.displayName || 'Client'}`, {
+                  body: msg.text,
+                  icon: client?.photoURL || '/favicon.ico'
+                });
+                playNotificationSound();
+              }
+            }
+          }
+        });
+      }
+      isInitialLoad = false;
     }, (error) => {
       console.error("Error fetching messages:", error);
     });
     return () => unsubscribe();
-  }, [user.uid]);
+  }, [user.uid, clients]);
 
   const unreadMessagesCount = useMemo(() => {
     return messages.filter(m => !m.isRead).length;
@@ -227,7 +256,7 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
                               <div className="flex items-center gap-3">
                                 <div className="w-8 h-8 rounded-full bg-zinc-900 overflow-hidden border border-zinc-800">
                                   <img 
-                                    src={client?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${client?.email}`} 
+                                    src={getAvatarUrl(client?.email || undefined, client?.gender, client?.photoURL)} 
                                     alt={client?.displayName} 
                                     className="w-full h-full object-cover"
                                   />
@@ -256,7 +285,7 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
                           <div className="flex items-center gap-4">
                             <div className="w-12 h-12 rounded-full overflow-hidden border-2 border-zinc-800">
                               <img 
-                                src={client?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${client?.email}`} 
+                                src={getAvatarUrl(client?.email || undefined, client?.gender, client?.photoURL)} 
                                 alt={client?.displayName} 
                                 className="w-full h-full object-cover"
                                 referrerPolicy="no-referrer"
@@ -352,7 +381,7 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
                         <div className="flex items-center gap-3">
                           <div className="w-8 h-8 rounded-full overflow-hidden border border-zinc-800">
                             <img 
-                              src={c.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${c.email}`} 
+                              src={getAvatarUrl(c.email || undefined, c.gender, c.photoURL)} 
                               alt={c.displayName} 
                               className="w-full h-full object-cover"
                               referrerPolicy="no-referrer"
@@ -1756,7 +1785,7 @@ function RemindersView({ clients, showToast, currentUser }: { clients: UserProfi
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-full overflow-hidden border border-zinc-800">
                       <img 
-                        src={client.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${client.email}`} 
+                        src={getAvatarUrl(client.email || undefined, client.gender, client.photoURL)} 
                         alt={client.displayName} 
                         className="w-full h-full object-cover"
                         referrerPolicy="no-referrer"

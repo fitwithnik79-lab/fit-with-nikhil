@@ -48,7 +48,7 @@ import {
   Crown
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { cn } from '../lib/utils';
+import { cn, playNotificationSound, getAvatarUrl } from '../lib/utils';
 import Chat from './Chat';
 import { generateMotivationalMessage, analyzeMealImage, analyzeMealText, analyzeDailyNutrition, getMacrosForItemsWithQuantities } from '../lib/gemini';
 import { 
@@ -202,16 +202,43 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   const [activeNutritionPlan, setActiveNutritionPlan] = useState<NutritionPlan | null>(null);
 
   useEffect(() => {
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }, []);
+
+  useEffect(() => {
     if (!user.uid) return;
     const q = query(
       collection(db, 'messages'),
       where('receiverId', '==', user.uid),
       orderBy('createdAt', 'desc'),
-      limit(50)
+      limit(20)
     );
+    
+    let isInitialLoad = true;
+
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const msgs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as Message);
       setMessages(msgs);
+
+      if (!isInitialLoad) {
+        snapshot.docChanges().forEach((change) => {
+          if (change.type === "added") {
+            const msg = change.doc.data() as Message;
+            if (msg.senderId !== user.uid) {
+              if ("Notification" in window && Notification.permission === "granted") {
+                new Notification("New Message from Coach Nik", {
+                  body: msg.text,
+                  icon: '/favicon.ico'
+                });
+                playNotificationSound();
+              }
+            }
+          }
+        });
+      }
+      isInitialLoad = false;
     }, (error) => {
       console.error("Error fetching messages for notifications:", error);
     });
@@ -591,7 +618,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-full overflow-hidden border border-zinc-800">
             <img 
-              src={profile.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.email}`} 
+              src={getAvatarUrl(user.email || undefined, profile.gender, profile.photoURL)} 
               alt={profile.displayName || 'User'} 
               className="w-full h-full object-cover"
               referrerPolicy="no-referrer"
@@ -617,7 +644,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
           <div className="relative">
             <div className="w-24 h-24 rounded-full overflow-hidden border-2 border-zinc-800">
               <img 
-                src={profile.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.email}`} 
+                src={getAvatarUrl(user.email || undefined, profile.gender, profile.photoURL)} 
                 alt={profile.displayName || 'User'} 
                 className="w-full h-full object-cover"
                 referrerPolicy="no-referrer"
@@ -2986,6 +3013,7 @@ function ProfileSection({ user, profile, setShowChat }: { user: User, profile: U
     photoURL: profile.photoURL || '',
     height: profile.height || '',
     weight: profile.weight || '',
+    gender: profile.gender || '',
     programGoals: profile.programGoals || '',
   });
   const [isSaving, setIsSaving] = useState(false);
@@ -3015,7 +3043,7 @@ function ProfileSection({ user, profile, setShowChat }: { user: User, profile: U
         </div>
         <div className="w-16 h-16 rounded-full overflow-hidden border-2 border-orange-500/20">
           <img 
-            src={formData.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.email}`} 
+            src={getAvatarUrl(user.email || undefined, formData.gender as any, formData.photoURL)} 
             alt="Profile" 
             className="w-full h-full object-cover"
             referrerPolicy="no-referrer"
@@ -3043,6 +3071,18 @@ function ProfileSection({ user, profile, setShowChat }: { user: User, profile: U
               placeholder="https://example.com/photo.jpg"
               className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:ring-1 focus:ring-orange-500 outline-none"
             />
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest"> gender </label>
+            <select 
+              value={formData.gender}
+              onChange={(e) => setFormData({ ...formData, gender: e.target.value as any })}
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:ring-1 focus:ring-orange-500 outline-none"
+            >
+              <option value="">Select Gender</option>
+              <option value="male">Male</option>
+              <option value="female">Female</option>
+            </select>
           </div>
           <div className="space-y-2">
             <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Height (cm)</label>

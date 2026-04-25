@@ -20,6 +20,7 @@ export interface UserProfile {
   height?: string;
   weight?: string;
   chosenProgram?: string;
+  gender?: 'male' | 'female' | 'other';
   onboardingComplete?: boolean;
   lastLogin?: any;
   streak?: number;

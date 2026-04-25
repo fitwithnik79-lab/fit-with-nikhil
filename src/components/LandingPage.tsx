@@ -5,7 +5,7 @@ import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { UserProfile } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
-import { Dumbbell, Target, Ruler, Scale, ChevronRight, Sparkles, Award, Users, Clock } from 'lucide-react';
+import { Dumbbell, Target, Ruler, Scale, ChevronRight, Sparkles, Award, Users, Clock, Activity } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 interface LandingPageProps {
@@ -19,6 +19,7 @@ export default function LandingPage({ user, profile, onComplete }: LandingPagePr
   const [formData, setFormData] = useState({
     height: '',
     weight: '',
+    gender: '',
     chosenProgram: 'Weight Loss'
   });
   const [submitting, setSubmitting] = useState(false);
@@ -157,6 +158,21 @@ export default function LandingPage({ user, profile, onComplete }: LandingPagePr
             <div className="space-y-6">
               <div className="space-y-2">
                 <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider flex items-center gap-2">
+                  <Activity className="w-3 h-3" /> Gender
+                </label>
+                <select
+                  value={formData.gender}
+                  onChange={(e) => setFormData({ ...formData, gender: e.target.value })}
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl px-5 py-4 text-white focus:ring-1 focus:ring-orange-500 outline-none transition-all"
+                >
+                  <option value="">Select Gender</option>
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                </select>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider flex items-center gap-2">
                   <Ruler className="w-3 h-3" /> Height (cm)
                 </label>
                 <input
@@ -183,7 +199,7 @@ export default function LandingPage({ user, profile, onComplete }: LandingPagePr
 
               <button
                 onClick={handleNext}
-                disabled={!formData.height || !formData.weight}
+                disabled={!formData.height || !formData.weight || !formData.gender}
                 className="w-full bg-white text-black font-bold py-4 rounded-2xl hover:bg-zinc-200 disabled:opacity-50 transition-all"
               >
                 Next Step
