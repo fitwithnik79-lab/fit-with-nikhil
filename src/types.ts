@@ -1,5 +1,14 @@
 export type UserRole = 'admin' | 'client';
 
+export interface Badge {
+  id: string;
+  name: string;
+  icon: string;
+  description: string;
+  unlockedAt?: string;
+  category: 'workout' | 'nutrition' | 'consistency' | 'milestone';
+}
+
 export interface UserProfile {
   uid: string;
   email: string;
@@ -14,6 +23,7 @@ export interface UserProfile {
   onboardingComplete?: boolean;
   lastLogin?: any;
   streak?: number;
+  badges?: Badge[];
   createdAt?: any;
 }
 

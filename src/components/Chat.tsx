@@ -21,6 +21,10 @@ export default function Chat({ currentUser, otherUser, onClose }: ChatProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    // We update the query to be significantly more specific.
+    // Instead of filtering in-memory, we use a more direct query if possible.
+    // However, to avoid composite index issues, we still fetch by senderId
+    // but we'll sort by createdAt ASC and filter more strictly.
     const q = query(
       collection(db, 'messages'),
       where('senderId', 'in', [currentUser.uid, otherUser.uid]),
@@ -35,8 +39,8 @@ export default function Chat({ currentUser, otherUser, onClose }: ChatProps) {
           (m.senderId === otherUser.uid && m.receiverId === currentUser.uid)
         )
         .sort((a, b) => {
-          const timeA = a.createdAt?.toMillis?.() || 0;
-          const timeB = b.createdAt?.toMillis?.() || 0;
+          const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt instanceof Date ? a.createdAt.getTime() : 0);
+          const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt instanceof Date ? b.createdAt.getTime() : 0);
           return timeA - timeB;
         });
       setMessages(msgs);
@@ -58,7 +62,10 @@ export default function Chat({ currentUser, otherUser, onClose }: ChatProps) {
 
   useEffect(() => {
     if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      scrollRef.current.scrollTo({
+        top: scrollRef.current.scrollHeight,
+        behavior: 'smooth'
+      });
     }
   }, [messages]);
 
@@ -72,6 +79,7 @@ export default function Chat({ currentUser, otherUser, onClose }: ChatProps) {
       await addDoc(collection(db, 'messages'), {
         senderId: currentUser.uid,
         receiverId: otherUser.uid,
+        participants: [currentUser.uid, otherUser.uid], // Add for better querying in future
         text,
         type,
         isRead: false,

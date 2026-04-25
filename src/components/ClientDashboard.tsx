@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { User } from 'firebase/auth';
 import { collection, query, where, onSnapshot, addDoc, serverTimestamp, orderBy, limit, getDocs, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { BodyMetrics, Workout, Feedback, UserProfile, NutritionPlan } from '../types';
+import { BodyMetrics, Workout, Feedback, UserProfile, NutritionPlan, Message } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { 
   CheckCircle, 
@@ -41,7 +41,11 @@ import {
   Settings,
   User as UserIcon2,
   LogOut,
-  Info
+  Info,
+  Shield,
+  Sun,
+  Zap,
+  Crown
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
@@ -194,7 +198,27 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   const [metrics, setMetrics] = useState<BodyMetrics[]>([]);
   const [todayMetrics, setTodayMetrics] = useState<BodyMetrics | null>(null);
   const [meals, setMeals] = useState<any[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [activeNutritionPlan, setActiveNutritionPlan] = useState<NutritionPlan | null>(null);
+
+  useEffect(() => {
+    if (!user.uid) return;
+    const q = query(
+      collection(db, 'messages'),
+      where('receiverId', '==', user.uid),
+      orderBy('createdAt', 'desc'),
+      limit(50)
+    );
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const msgs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as Message);
+      setMessages(msgs);
+    }, (error) => {
+      console.error("Error fetching messages for notifications:", error);
+    });
+    return () => unsubscribe();
+  }, [user.uid]);
+
+  const unreadCount = useMemo(() => messages.filter(m => !m.isRead).length, [messages]);
 
   useEffect(() => {
     if (!user.uid) return;
@@ -210,6 +234,48 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     });
     return () => unsubscribe();
   }, [user.uid]);
+
+  // Achievement Badge Logic
+  useEffect(() => {
+    if (!user.uid || !profile) return;
+    
+    const checkBadges = async () => {
+      const currentBadges = profile.badges || [];
+      const newBadges = [...currentBadges];
+      let updated = false;
+
+      // 1. Consistency King (Streak)
+      if (profile.streak && profile.streak >= 7 && !currentBadges.find(b => b.id === 'consistency_1')) {
+        newBadges.push({ id: 'consistency_1', name: '7-Day Streak', icon: 'Flame', description: 'Maintain a 7-day activity streak', unlockedAt: new Date().toISOString(), category: 'consistency' });
+        updated = true;
+      }
+
+      // 2. Decathlon (Workout Count)
+      const completedWorkouts = allFeedback.filter(f => f.completionStatus).length;
+      if (completedWorkouts >= 10 && !currentBadges.find(b => b.id === 'workout_10')) {
+        newBadges.push({ id: 'workout_10', name: 'Decathlon', icon: 'Shield', description: 'Complete 10 full workouts', unlockedAt: new Date().toISOString(), category: 'workout' });
+        updated = true;
+      }
+
+      // 3. Meal Master (Meal Count)
+      if (meals.length >= 50 && !currentBadges.find(b => b.id === 'nutrition_log')) {
+        newBadges.push({ id: 'nutrition_log', name: 'Meal Master', icon: 'Utensils', description: 'Log 50 meals with AI', unlockedAt: new Date().toISOString(), category: 'nutrition' });
+        updated = true;
+      }
+
+      if (updated) {
+        try {
+          await updateDoc(doc(db, 'users', user.uid), { badges: newBadges });
+        } catch (error) {
+          console.error("Error updating badges:", error);
+        }
+      }
+    };
+
+    if (!loading) {
+      checkBadges();
+    }
+  }, [profile?.streak, allFeedback.length, meals.length, user.uid, loading]);
 
   const handleTogglePlannedMeal = async (mealId: string) => {
     if (!activeNutritionPlan?.id || !activeNutritionPlan.plannedMeals) return;
@@ -566,10 +632,13 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                   setShowChat(true);
                   setIsMobileMenuOpen(false);
                 }}
-                className="flex items-center gap-2 text-zinc-500 hover:text-orange-500 transition-colors text-sm font-medium"
+                className="flex items-center gap-2 text-zinc-500 hover:text-orange-500 transition-colors text-sm font-medium relative"
               >
                 <MessageCircle className="w-4 h-4" />
                 Message
+                {unreadCount > 0 && (
+                  <span className="absolute -top-1 -left-1 w-2.5 h-2.5 bg-red-500 border-2 border-zinc-950 rounded-full animate-pulse" />
+                )}
               </button>
               <button 
                 onClick={() => {
@@ -1030,7 +1099,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -20 }}
-                className="max-w-4xl mx-auto space-y-8"
+                className="max-w-4xl mx-auto space-y-8 pb-20"
               >
                 <div className="flex items-center gap-4 mb-8">
                   <div className="p-3 bg-orange-500 rounded-2xl text-white shadow-lg shadow-orange-500/20">
@@ -1039,6 +1108,67 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                   <div>
                     <h2 className="text-3xl font-bold">Your Progress</h2>
                     <p className="text-zinc-500">Track your consistency and body metrics.</p>
+                  </div>
+                </div>
+
+                {/* Achievements & Badges */}
+                <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 space-y-8">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xl font-bold flex items-center gap-2">
+                       <Award className="w-5 h-5 text-orange-500" />
+                       Achievements & Badges
+                    </h3>
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest bg-zinc-950 px-3 py-1 rounded-full border border-zinc-800">
+                      {profile.badges?.filter(b => b.unlockedAt).length || 0} / 8 UNLOCKED
+                    </span>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    {[
+                      { id: 'consistency_1', name: '7-Day Streak', icon: 'Flame', desc: 'Maintain a 7-day activity streak', cat: 'consistency' },
+                      { id: 'workout_10', name: 'Decathlon', icon: 'Shield', desc: 'Complete 10 full workouts', cat: 'workout' },
+                      { id: 'nutrition_log', name: 'Meal Master', icon: 'Utensils', desc: 'Log 50 meals with AI', cat: 'nutrition' },
+                      { id: 'early_bird', name: 'Early Bird', icon: 'Sun', desc: 'Finish 5 workouts before 9 AM', cat: 'milestone' },
+                      { id: 'heavy_hitter', name: 'Heavy Hitter', icon: 'Zap', desc: 'Log a PR weight on any lift', cat: 'workout' },
+                      { id: 'water_pro', name: 'Hydration Pro', icon: 'Droplets', desc: 'Hit water goals 5 days in a row', cat: 'milestone' },
+                      { id: 'elite_tier', name: 'Elite Status', icon: 'Crown', desc: 'Coach Nik marked you as Elite', cat: 'milestone' },
+                      { id: 'macro_perfect', name: 'Macro Perfect', icon: 'Target', desc: 'Hit targets within 5% error', cat: 'nutrition' },
+                    ].map((b) => {
+                      const isUnlocked = profile.badges?.find(pb => pb.id === b.id)?.unlockedAt;
+                      const IconComp = {
+                         Flame, Shield, Utensils, Sun, Zap, Droplets, Crown, Target
+                      }[b.icon] || Award;
+
+                      return (
+                        <div key={b.id} className={cn(
+                          "relative group aspect-square rounded-[32px] border flex flex-col items-center justify-center p-4 text-center transition-all duration-500",
+                          isUnlocked 
+                            ? "bg-zinc-950 border-orange-500/50 shadow-lg shadow-orange-500/10" 
+                            : "bg-zinc-950/50 border-zinc-800 opacity-40 grayscale"
+                        )}>
+                          <div className={cn(
+                            "mb-3 p-3 rounded-2xl transition-all duration-500",
+                            isUnlocked ? "bg-orange-500 text-white" : "bg-zinc-900 text-zinc-700"
+                          )}>
+                            <IconComp className="w-6 h-6" />
+                          </div>
+                          <p className="text-[10px] font-black uppercase tracking-tighter text-white mb-1">{b.name}</p>
+                          <p className="text-[8px] text-zinc-600 leading-tight group-hover:text-zinc-400 transition-colors">{b.desc}</p>
+                          
+                          {isUnlocked && (
+                            <motion.div 
+                              initial={{ scale: 0 }}
+                              animate={{ scale: 1 }}
+                              className="absolute top-2 right-2"
+                            >
+                              <div className="w-4 h-4 bg-orange-500 rounded-full flex items-center justify-center border-2 border-zinc-950">
+                                <Check className="w-2.5 h-2.5 text-white" />
+                              </div>
+                            </motion.div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -1269,11 +1399,16 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
         <button
           onClick={() => setShowChat(!showChat)}
           className={cn(
-            "w-14 h-14 rounded-full flex items-center justify-center shadow-2xl transition-all hover:scale-110 active:scale-95",
+            "w-14 h-14 rounded-full flex items-center justify-center shadow-2xl transition-all hover:scale-110 active:scale-95 relative",
             showChat ? "bg-zinc-800 text-white" : "bg-orange-500 text-white shadow-orange-500/20"
           )}
         >
           {showChat ? <X className="w-6 h-6" /> : <MessageSquare className="w-6 h-6" />}
+          {!showChat && unreadCount > 0 && (
+            <span className="absolute -top-1 -right-1 w-6 h-6 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center border-4 border-zinc-950 animate-bounce">
+              {unreadCount}
+            </span>
+          )}
         </button>
       </div>
 

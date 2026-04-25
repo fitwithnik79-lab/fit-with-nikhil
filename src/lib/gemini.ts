@@ -104,8 +104,14 @@ export async function analyzeMealText(mealDescription: string) {
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: `Analyze the following meal description: "${mealDescription}". 
-      Identify the food items and estimate calories, protein, carbs, and fats FOR EACH ITEM separately.
+      contents: `You are an elite performance nutritionist. Analyze the following meal description: "${mealDescription}". 
+      
+      CRITICAL INSTRUCTION: Be extremely detailed. If a user enters a simple item like "Tea", "Coffee", "Pasta", or "Cereal", do NOT just analyze the dry ingredient. 
+      - "Tea" usually means milk tea (assume 100ml milk + 2 tsp sugar unless they say black).
+      - "Coffee" usually means with milk/cream + sugar.
+      - "Pasta" implies sauce, oil, and cheese.
+      Break down the implicit ingredients that make up the real-world version of this meal.
+      
       Return the result as a JSON object with a 'mealName' and an 'items' array. 
       Each item should have 'name', 'calories', 'protein', 'carbs', and 'fats'. 
       Also include a general 'advice' string.`,

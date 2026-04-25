@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { User } from 'firebase/auth';
 import { collection, query, where, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, getDocs, orderBy, deleteDoc, limit } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { UserProfile, Workout, Exercise, Feedback, WorkoutTemplate, BodyMetrics } from '../types';
+import { UserProfile, Workout, Exercise, Feedback, WorkoutTemplate, BodyMetrics, Message } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { searchExerciseVideos, parseWorkoutFile, analyzeNutritionFile } from '../lib/gemini';
 import { SAMPLE_PROGRAMS, WEEKLY_PROGRAMS, WORKOUT_TEMPLATES } from '../constants/workoutTemplates';
@@ -42,6 +42,7 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
   const [clients, setClients] = useState<UserProfile[]>([]);
   const [selectedClient, setSelectedClient] = useState<UserProfile | null>(null);
   const [feedbacks, setFeedbacks] = useState<Feedback[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'dash' | 'clients' | 'tracker' | 'calendar' | 'reminders' | 'templates'>('dash');
   const [showChat, setShowChat] = useState(false);
@@ -82,6 +83,27 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
     return () => unsubscribe();
   }, []);
 
+  useEffect(() => {
+    // Fetch all messages for the coach to see unread or recent ones
+    const q = query(
+      collection(db, 'messages'), 
+      where('receiverId', '==', user.uid),
+      orderBy('createdAt', 'desc'),
+      limit(50)
+    );
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const messageData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as Message);
+      setMessages(messageData);
+    }, (error) => {
+      console.error("Error fetching messages:", error);
+    });
+    return () => unsubscribe();
+  }, [user.uid]);
+
+  const unreadMessagesCount = useMemo(() => {
+    return messages.filter(m => !m.isRead).length;
+  }, [messages]);
+
   return (
     <div className="space-y-8">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -104,12 +126,17 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
           <button
             onClick={() => setActiveTab('clients')}
             className={cn(
-              "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all",
+              "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all relative",
               activeTab === 'clients' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-zinc-400 hover:text-white"
             )}
           >
             <Users className="w-4 h-4" />
             Clients
+            {unreadMessagesCount > 0 && (
+              <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center border-2 border-zinc-900 animate-pulse">
+                {unreadMessagesCount}
+              </span>
+            )}
           </button>
           <button
             onClick={() => setActiveTab('tracker')}
@@ -177,6 +204,47 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
                 </div>
 
                 <div className="space-y-4">
+                  {/* Recent Messages Section */}
+                  {messages.some(m => !m.isRead) && (
+                    <div className="bg-orange-500/10 border border-orange-500/30 rounded-3xl p-4 mb-4">
+                      <h4 className="text-sm font-bold text-orange-500 flex items-center gap-2 mb-3 px-2">
+                        <MessageSquare className="w-4 h-4" />
+                        Unread Messages
+                      </h4>
+                      <div className="space-y-2">
+                        {messages.filter(m => !m.isRead).slice(0, 3).map(m => {
+                          const client = clients.find(c => c.uid === m.senderId);
+                          return (
+                            <button 
+                              key={m.id}
+                              onClick={() => {
+                                setSelectedClient(client || null);
+                                setActiveTab('clients');
+                                setClientViewTab('chat');
+                              }}
+                              className="w-full bg-zinc-950 p-3 rounded-2xl border border-zinc-800 flex items-center justify-between hover:border-orange-500/50 transition-all group"
+                            >
+                              <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 rounded-full bg-zinc-900 overflow-hidden border border-zinc-800">
+                                  <img 
+                                    src={client?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${client?.email}`} 
+                                    alt={client?.displayName} 
+                                    className="w-full h-full object-cover"
+                                  />
+                                </div>
+                                <div className="text-left">
+                                  <p className="text-xs font-bold text-white group-hover:text-orange-500">{client?.displayName}</p>
+                                  <p className="text-[10px] text-zinc-500 truncate max-w-[200px]">{m.text}</p>
+                                </div>
+                              </div>
+                              <span className="text-[9px] font-bold text-orange-500 uppercase">Reply</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
                   {feedbacks.slice(0, 10).map((feedback) => {
                     const client = clients.find(c => c.uid === feedback.clientId);
                     return (
@@ -2132,25 +2200,31 @@ function NutritionManager({ client, showToast }: { client: UserProfile, showToas
 
     setAnalyzingFile(true);
     try {
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        const content = e.target?.result as string;
-        const analysis = await analyzeNutritionFile(content, file.name);
-        if (analysis) {
-          setPlanDraft({
-            ...planDraft,
-            ...analysis,
-            isActive: true
-          });
-          showToast('Nutrition plan extracted successfully!');
-        }
-      };
-      reader.readAsText(file);
+      const content = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target?.result as string);
+        reader.onerror = (e) => reject(new Error('Failed to read file'));
+        reader.readAsText(file);
+      });
+
+      const analysis = await analyzeNutritionFile(content, file.name);
+      if (analysis) {
+        setPlanDraft({
+          ...planDraft,
+          ...analysis,
+          isActive: true
+        });
+        showToast('Nutrition plan extracted successfully!');
+      } else {
+        showToast('Failed to extract and analyze plan', 'error');
+      }
     } catch (error) {
       console.error("Error analyzing nutrition file:", error);
-      showToast('Failed to analyze file', 'error');
+      showToast('Error uploading/analyzing file', 'error');
     } finally {
       setAnalyzingFile(false);
+      // Reset input
+      event.target.value = '';
     }
   };
 
@@ -2237,8 +2311,25 @@ function NutritionManager({ client, showToast }: { client: UserProfile, showToas
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
-            className="space-y-8 bg-zinc-900 border border-zinc-800 rounded-[32px] p-8"
+            className="space-y-8 bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 relative overflow-hidden"
           >
+            {analyzingFile && (
+              <div className="absolute inset-0 z-50 bg-zinc-900/80 backdrop-blur-sm flex flex-col items-center justify-center space-y-4">
+                <div className="p-4 bg-orange-500 rounded-full shadow-lg shadow-orange-500/20">
+                  <Loader2 className="w-8 h-8 text-white animate-spin" />
+                </div>
+                <div className="text-center">
+                  <h3 className="text-lg font-black text-white uppercase tracking-tighter">AI Analysis in Progress</h3>
+                  <p className="text-sm text-zinc-400 font-medium px-8">Extracting specific nutrition strategies, guidelines, and meal schedules from your document...</p>
+                </div>
+                <motion.div 
+                  initial={{ width: 0 }}
+                  animate={{ width: "200px" }}
+                  transition={{ duration: 2, repeat: Infinity }}
+                  className="h-1 bg-orange-500 rounded-full"
+                />
+              </div>
+            )}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               <div className="space-y-6">
                 <div className="space-y-4">
@@ -2251,13 +2342,19 @@ function NutritionManager({ client, showToast }: { client: UserProfile, showToas
                         className="hidden" 
                         accept="application/pdf,image/*,text/*"
                         onChange={handleFileUpload}
+                        disabled={analyzingFile}
                       />
                       <label 
                         htmlFor="nutrition-upload"
-                        className="flex items-center gap-2 px-4 py-2 bg-zinc-950 border border-dashed border-zinc-800 rounded-xl text-[10px] font-bold text-zinc-400 hover:text-white hover:border-orange-500 transition-all cursor-pointer"
+                        className={cn(
+                          "flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-bold transition-all cursor-pointer",
+                          analyzingFile 
+                            ? "bg-orange-500 text-white animate-pulse" 
+                            : "bg-zinc-950 border border-dashed border-zinc-800 text-zinc-400 hover:text-white hover:border-orange-500"
+                        )}
                       >
                         {analyzingFile ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
-                        {analyzingFile ? 'Analyzing...' : 'Upload Plan (PDF/Img)'}
+                        {analyzingFile ? 'AI IS ANALYZING PLAN...' : 'Upload Plan (PDF/Img)'}
                       </label>
                     </div>
                   </div>
