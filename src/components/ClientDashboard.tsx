@@ -45,7 +45,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import Chat from './Chat';
-import { generateMotivationalMessage, analyzeMealImage, analyzeMealText } from '../lib/gemini';
+import { generateMotivationalMessage, analyzeMealImage, analyzeMealText, analyzeDailyNutrition, getMacrosForItemsWithQuantities } from '../lib/gemini';
 import { 
   format, 
   startOfMonth, 
@@ -710,6 +710,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
               >
                 <MealAI 
                   user={user} 
+                  profile={profile}
                   todayMetrics={todayMetrics} 
                   metrics={metrics}
                   meals={meals}
@@ -1673,12 +1674,14 @@ function WorkoutCard({
 
 function MealAI({ 
   user, 
+  profile,
   todayMetrics, 
   metrics,
   meals,
   sendAutomatedCoachMessage 
 }: { 
   user: User, 
+  profile: UserProfile,
   todayMetrics: BodyMetrics | null, 
   metrics: BodyMetrics[],
   meals: any[],
@@ -1687,10 +1690,14 @@ function MealAI({
   const [image, setImage] = useState<string | null>(null);
   const [mealDescription, setMealDescription] = useState('');
   const [analyzing, setAnalyzing] = useState(false);
+  const [recalculating, setRecalculating] = useState(false);
   const [result, setResult] = useState<any>(null);
+  const [dailyAdvice, setDailyAdvice] = useState<any>(null);
+  const [analyzingDaily, setAnalyzingDaily] = useState(false);
   const [logging, setLogging] = useState(false);
-  const [manualItems, setManualItems] = useState<{ name: string, calories: number, protein: number, carbs: number, fats: number }[]>([]);
-  const [newItem, setNewItem] = useState({ name: '', calories: 0, protein: 0, carbs: 0, fats: 0 });
+  const [manualItems, setManualItems] = useState<{ name: string, quantity: string, calories: number, protein: number, carbs: number, fats: number }[]>([]);
+  const [newItem, setNewItem] = useState({ name: '', quantity: '1 portion', calories: 0, protein: 0, carbs: 0, fats: 0 });
+  const [customMealName, setCustomMealName] = useState('');
 
   const [mealType, setMealType] = useState<'Breakfast' | 'Lunch' | 'Dinner' | 'Snack'>('Lunch');
 
@@ -1720,14 +1727,18 @@ function MealAI({
 
       if (analysis) {
         setResult(analysis);
-        // Add analyzed meal as a single item for now, or we could split it if AI returned items
-        setManualItems([{
-          name: analysis.mealName,
-          calories: analysis.calories,
-          protein: analysis.protein,
-          carbs: analysis.carbs,
-          fats: analysis.fats
-        }]);
+        // Add all analyzed items to the manual items list for review/edit
+        if (analysis.items && Array.isArray(analysis.items)) {
+          const mappedItems = analysis.items.map((item: any) => ({
+            name: item.name,
+            quantity: item.quantity || '1 portion',
+            calories: Math.round(item.calories),
+            protein: Math.round(item.protein),
+            carbs: Math.round(item.carbs),
+            fats: Math.round(item.fats)
+          }));
+          setManualItems([...manualItems, ...mappedItems]);
+        }
         setMealDescription('');
       }
     } catch (error) {
@@ -1740,7 +1751,43 @@ function MealAI({
   const addManualItem = () => {
     if (!newItem.name) return;
     setManualItems([...manualItems, newItem]);
-    setNewItem({ name: '', calories: 0, protein: 0, carbs: 0, fats: 0 });
+    setNewItem({ name: '', quantity: '1 portion', calories: 0, protein: 0, carbs: 0, fats: 0 });
+  };
+
+  const handleRecalculateMacros = async () => {
+    if (manualItems.length === 0) return;
+    setRecalculating(true);
+    try {
+      const resp = await getMacrosForItemsWithQuantities(manualItems.map(i => ({ name: i.name, quantity: i.quantity })));
+      if (resp && resp.items) {
+        setManualItems(resp.items.map((item: any) => ({
+          name: item.name,
+          quantity: item.quantity,
+          calories: Math.round(item.calories),
+          protein: Math.round(item.protein),
+          carbs: Math.round(item.carbs),
+          fats: Math.round(item.fats)
+        })));
+      }
+    } catch (error) {
+      console.error("Error recalculating macros:", error);
+    } finally {
+      setRecalculating(false);
+    }
+  };
+
+  const handleAnalyzeToday = async () => {
+    setAnalyzingDaily(true);
+    try {
+      const todayStr = format(new Date(), 'yyyy-MM-dd');
+      const todayMeals = meals.filter(m => m.date === todayStr);
+      const advice = await analyzeDailyNutrition(todayMeals, profile);
+      setDailyAdvice(advice);
+    } catch (error) {
+      console.error("Error getting daily advice:", error);
+    } finally {
+      setAnalyzingDaily(false);
+    }
   };
 
   const removeManualItem = (index: number) => {
@@ -1767,7 +1814,7 @@ function MealAI({
         clientId: user.uid,
         date: todayStr,
         type: mealType,
-        name: result?.mealName || (manualItems.length === 1 ? manualItems[0].name : `${mealType} Log`),
+        name: customMealName || result?.mealName || (manualItems.length === 1 ? manualItems[0].name : `${mealType} Log`),
         items: manualItems,
         totalCalories: totalMealMacros.calories,
         totalProtein: totalMealMacros.protein,
@@ -1811,6 +1858,7 @@ function MealAI({
       setImage(null);
       setResult(null);
       setManualItems([]);
+      setCustomMealName('');
       alert('Meal logged successfully!');
     } catch (error) {
       console.error('Error logging meal:', error);
@@ -1837,6 +1885,10 @@ function MealAI({
               AI Meal Analysis
             </h3>
             
+            <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest bg-zinc-950 p-3 rounded-xl border border-zinc-800">
+              Tip: Upload a clear photo of your plate OR type a detailed description. Nik's AI will estimate everything for you!
+            </p>
+
             <div className="space-y-4">
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 {(['Breakfast', 'Lunch', 'Dinner', 'Snack'] as const).map((t) => (
@@ -1904,65 +1956,132 @@ function MealAI({
           <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 space-y-6">
             <h3 className="text-xl font-bold flex items-center gap-2">
               <Plus className="w-5 h-5 text-orange-500" />
-              Manual Entry
+              Quick Add & Manual Entry
             </h3>
             <div className="space-y-4">
-              <input 
-                type="text" 
-                placeholder="Food Item Name"
-                value={newItem.name}
-                onChange={(e) => setNewItem({ ...newItem, name: e.target.value })}
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm outline-none focus:ring-1 focus:ring-orange-500"
-              />
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Calories</label>
+              <div className="p-4 bg-zinc-950 rounded-2xl border border-zinc-800 space-y-4">
+                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Quick Add Multiple Items</label>
+                <div className="flex gap-2">
                   <input 
-                    type="number" 
-                    placeholder="Cal"
-                    value={newItem.calories || ''}
-                    onChange={(e) => setNewItem({ ...newItem, calories: Number(e.target.value) })}
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm outline-none focus:ring-1 focus:ring-orange-500"
+                    type="text" 
+                    placeholder="e.g. 2 eggs, toast, coffee"
+                    value={newItem.name}
+                    onChange={(e) => setNewItem({ ...newItem, name: e.target.value })}
+                    className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm outline-none focus:ring-1 focus:ring-orange-500"
                   />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Protein (g)</label>
-                  <input 
-                    type="number" 
-                    placeholder="P"
-                    value={newItem.protein || ''}
-                    onChange={(e) => setNewItem({ ...newItem, protein: Number(e.target.value) })}
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm outline-none focus:ring-1 focus:ring-orange-500"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Carbs (g)</label>
-                  <input 
-                    type="number" 
-                    placeholder="C"
-                    value={newItem.carbs || ''}
-                    onChange={(e) => setNewItem({ ...newItem, carbs: Number(e.target.value) })}
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm outline-none focus:ring-1 focus:ring-orange-500"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Fats (g)</label>
-                  <input 
-                    type="number" 
-                    placeholder="F"
-                    value={newItem.fats || ''}
-                    onChange={(e) => setNewItem({ ...newItem, fats: Number(e.target.value) })}
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm outline-none focus:ring-1 focus:ring-orange-500"
-                  />
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!newItem.name.trim()) return;
+                      setAnalyzing(true);
+                      try {
+                        const analysis = await analyzeMealText(newItem.name);
+                        if (analysis && analysis.items) {
+                          const mappedItems = analysis.items.map((item: any) => ({
+                            name: item.name,
+                            quantity: item.quantity || '1 portion',
+                            calories: Math.round(item.calories),
+                            protein: Math.round(item.protein),
+                            carbs: Math.round(item.carbs),
+                            fats: Math.round(item.fats)
+                          }));
+                          setManualItems([...manualItems, ...mappedItems]);
+                          if (analysis.advice && !result?.advice) {
+                            setResult({ ...result, advice: analysis.advice });
+                          }
+                          setNewItem({ name: '', quantity: '1 portion', calories: 0, protein: 0, carbs: 0, fats: 0 });
+                        }
+                      } finally {
+                        setAnalyzing(false);
+                      }
+                    }}
+                    disabled={analyzing || !newItem.name.trim()}
+                    className="px-4 bg-orange-500 text-white rounded-xl hover:bg-orange-600 transition-all font-bold text-[10px] uppercase tracking-widest disabled:opacity-50"
+                  >
+                    {analyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Add via AI'}
+                  </button>
                 </div>
               </div>
-              <button 
-                onClick={addManualItem}
-                className="w-full py-3 bg-zinc-800 text-white font-bold rounded-xl hover:bg-zinc-700 transition-all flex items-center justify-center gap-2"
-              >
-                <Plus className="w-4 h-4" />
-                Add Item
-              </button>
+
+              <div className="flex items-center gap-4">
+                <div className="flex-1 h-px bg-zinc-800" />
+                <span className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest">OR ADD ONE MANUALLY</span>
+                <div className="flex-1 h-px bg-zinc-800" />
+              </div>
+
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Item Name</label>
+                    <input 
+                      type="text" 
+                      placeholder="e.g. Chicken breast"
+                      value={newItem.name}
+                      onChange={(e) => setNewItem({ ...newItem, name: e.target.value })}
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm outline-none focus:ring-1 focus:ring-orange-500"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Quantity</label>
+                    <input 
+                      type="text" 
+                      placeholder="e.g. 200g, 1 cup"
+                      value={newItem.quantity}
+                      onChange={(e) => setNewItem({ ...newItem, quantity: e.target.value })}
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm outline-none focus:ring-1 focus:ring-orange-500"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Calories</label>
+                    <input 
+                      type="number" 
+                      placeholder="Cal"
+                      value={newItem.calories || ''}
+                      onChange={(e) => setNewItem({ ...newItem, calories: Number(e.target.value) })}
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm outline-none focus:ring-1 focus:ring-orange-500"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Protein (g)</label>
+                    <input 
+                      type="number" 
+                      placeholder="P"
+                      value={newItem.protein || ''}
+                      onChange={(e) => setNewItem({ ...newItem, protein: Number(e.target.value) })}
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm outline-none focus:ring-1 focus:ring-orange-500"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Carbs (g)</label>
+                    <input 
+                      type="number" 
+                      placeholder="C"
+                      value={newItem.carbs || ''}
+                      onChange={(e) => setNewItem({ ...newItem, carbs: Number(e.target.value) })}
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm outline-none focus:ring-1 focus:ring-orange-500"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Fats (g)</label>
+                    <input 
+                      type="number" 
+                      placeholder="F"
+                      value={newItem.fats || ''}
+                      onChange={(e) => setNewItem({ ...newItem, fats: Number(e.target.value) })}
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm outline-none focus:ring-1 focus:ring-orange-500"
+                    />
+                  </div>
+                </div>
+                <button 
+                  onClick={addManualItem}
+                  className="w-full py-3 bg-zinc-800 text-white font-bold rounded-xl hover:bg-zinc-700 transition-all flex items-center justify-center gap-2"
+                >
+                  <Plus className="w-4 h-4" />
+                  Add to Current Meal
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1971,12 +2090,33 @@ function MealAI({
           <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 space-y-6 h-full flex flex-col">
             <div className="flex items-center justify-between">
               <h3 className="text-xl font-bold">Current Meal</h3>
-              <div className="px-3 py-1 bg-orange-500/10 rounded-full text-[10px] font-bold text-orange-500 uppercase tracking-widest">
-                {manualItems.length} Items
+              <div className="flex items-center gap-2">
+                {manualItems.length > 0 && (
+                  <button 
+                    onClick={() => setManualItems([])}
+                    className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest hover:text-red-500 transition-colors"
+                  >
+                    Clear All
+                  </button>
+                )}
+                <div className="px-3 py-1 bg-orange-500/10 rounded-full text-[10px] font-bold text-orange-500 uppercase tracking-widest">
+                  {manualItems.length} Items
+                </div>
               </div>
             </div>
 
-            <div className="flex-1 space-y-3 overflow-y-auto max-h-[400px] custom-scrollbar pr-2">
+            <div className="space-y-4">
+              <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Meal Name (Optional)</label>
+              <input 
+                type="text" 
+                placeholder="e.g. Lunch with team, Pre-workout snack..."
+                value={customMealName}
+                onChange={(e) => setCustomMealName(e.target.value)}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm outline-none focus:ring-1 focus:ring-orange-500"
+              />
+            </div>
+
+            <div className="flex-1 space-y-3 overflow-y-auto max-h-[400px] custom-scrollbar pr-2 mt-4">
               {manualItems.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full py-12 text-zinc-600 space-y-2">
                   <Utensils className="w-12 h-12 opacity-20" />
@@ -1984,24 +2124,122 @@ function MealAI({
                 </div>
               ) : (
                 manualItems.map((item, i) => (
-                  <div key={i} className="bg-zinc-950 border border-zinc-800 rounded-2xl p-4 flex items-center justify-between group">
-                    <div>
-                      <h4 className="font-bold text-sm">{item.name}</h4>
-                      <p className="text-[10px] text-zinc-500 font-medium">
-                        {item.calories} kcal • P: {item.protein}g • C: {item.carbs}g • F: {item.fats}g
-                      </p>
+                  <div key={i} className="bg-zinc-950 border border-zinc-800 rounded-2xl p-4 space-y-4 group">
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="flex-1 space-y-2">
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[9px] font-bold text-zinc-600 uppercase tracking-widest ml-1">Item Name</label>
+                          <input 
+                            type="text"
+                            value={item.name}
+                            onChange={(e) => {
+                              const newItems = [...manualItems];
+                              newItems[i].name = e.target.value;
+                              setManualItems(newItems);
+                            }}
+                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm font-bold text-white w-full outline-none focus:ring-1 focus:ring-orange-500"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[9px] font-bold text-zinc-600 uppercase tracking-widest ml-1">Quantity / Serving Size</label>
+                          <input 
+                            type="text"
+                            value={item.quantity}
+                            onChange={(e) => {
+                              const newItems = [...manualItems];
+                              newItems[i].quantity = e.target.value;
+                              setManualItems(newItems);
+                            }}
+                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-[10px] text-orange-500 font-bold w-full outline-none focus:ring-1 focus:ring-orange-500"
+                          />
+                        </div>
+                      </div>
+                      <button 
+                        onClick={() => removeManualItem(i)}
+                        className="p-3 bg-red-500/10 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all opacity-0 group-hover:opacity-100 flex-shrink-0"
+                      >
+                        <Trash2 className="w-5 h-5" />
+                      </button>
                     </div>
-                    <button 
-                      onClick={() => removeManualItem(i)}
-                      className="p-2 text-zinc-600 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+
+                    <div className="grid grid-cols-4 gap-2 bg-zinc-900/50 p-3 rounded-xl border border-zinc-800/50">
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[8px] font-bold text-zinc-600 uppercase tracking-widest text-center">Calories</span>
+                        <input 
+                          type="number"
+                          value={item.calories}
+                          onChange={(e) => {
+                            const newItems = [...manualItems];
+                            newItems[i].calories = Number(e.target.value);
+                            setManualItems(newItems);
+                          }}
+                          className="bg-zinc-950 border border-zinc-800 rounded-lg py-1 px-1 text-center text-[10px] font-bold text-zinc-300 outline-none"
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[8px] font-bold text-zinc-600 uppercase tracking-widest text-center">Protein</span>
+                        <input 
+                          type="number"
+                          value={item.protein}
+                          onChange={(e) => {
+                            const newItems = [...manualItems];
+                            newItems[i].protein = Number(e.target.value);
+                            setManualItems(newItems);
+                          }}
+                          className="bg-zinc-950 border border-zinc-800 rounded-lg py-1 px-1 text-center text-[10px] font-bold text-zinc-300 outline-none"
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[8px] font-bold text-zinc-600 uppercase tracking-widest text-center">Carbs</span>
+                        <input 
+                          type="number"
+                          value={item.carbs}
+                          onChange={(e) => {
+                            const newItems = [...manualItems];
+                            newItems[i].carbs = Number(e.target.value);
+                            setManualItems(newItems);
+                          }}
+                          className="bg-zinc-950 border border-zinc-800 rounded-lg py-1 px-1 text-center text-[10px] font-bold text-zinc-300 outline-none"
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[8px] font-bold text-zinc-600 uppercase tracking-widest text-center">Fats</span>
+                        <input 
+                          type="number"
+                          value={item.fats}
+                          onChange={(e) => {
+                            const newItems = [...manualItems];
+                            newItems[i].fats = Number(e.target.value);
+                            setManualItems(newItems);
+                          }}
+                          className="bg-zinc-950 border border-zinc-800 rounded-lg py-1 px-1 text-center text-[10px] font-bold text-zinc-300 outline-none"
+                        />
+                      </div>
+                    </div>
                   </div>
                 ))
               )}
             </div>
 
+            {manualItems.length > 0 && (
+              <button
+                onClick={handleRecalculateMacros}
+                disabled={recalculating}
+                className="w-full py-2 bg-zinc-800 text-zinc-300 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-zinc-700 transition-all flex items-center justify-center gap-2"
+              >
+                {recalculating ? <Loader2 className="w-3 h-3 animate-spin" /> : <Activity className="w-3 h-3" />}
+                {recalculating ? 'Analyzing Quantities...' : 'Update Macros for Quantities'}
+              </button>
+            )}
+
+            {/* AI Advice */}
+            {result?.advice && (
+              <div className="bg-orange-500/5 border border-orange-500/20 rounded-2xl p-4 flex gap-3 items-start">
+                <Sparkles className="w-5 h-5 text-orange-500 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-zinc-400 italic">" {result.advice} "</p>
+              </div>
+            )}
+            
             {manualItems.length > 0 && (
               <div className="pt-6 border-t border-zinc-800 space-y-6">
                 <div className="grid grid-cols-4 gap-2">
@@ -2060,6 +2298,140 @@ function MealAI({
               </div>
             </div>
           </div>
+
+      {/* Today's Logged Meals List */}
+      <div className="space-y-8 pt-8 border-t border-zinc-800">
+        <div className="flex items-center justify-between">
+          <h3 className="text-2xl font-bold flex items-center gap-3">
+            <TrendingUp className="w-6 h-6 text-orange-500" />
+            Nutritional AI Advisor
+          </h3>
+          <button 
+            onClick={handleAnalyzeToday}
+            disabled={analyzingDaily || meals.filter(m => m.date === format(new Date(), 'yyyy-MM-dd')).length === 0}
+            className="px-6 py-3 bg-zinc-900 border border-zinc-800 rounded-2xl text-xs font-bold hover:border-orange-500 transition-all flex items-center gap-2 disabled:opacity-50"
+          >
+            {analyzingDaily ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+            Review Today's Nutrition
+          </button>
+        </div>
+
+        {dailyAdvice ? (
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="grid grid-cols-1 md:grid-cols-3 gap-6"
+          >
+            <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 flex flex-col items-center justify-center text-center space-y-4">
+              <div className="relative w-32 h-32">
+                <svg className="w-full h-full -rotate-90">
+                  <circle cx="64" cy="64" r="58" stroke="currentColor" strokeWidth="8" fill="transparent" className="text-zinc-800" />
+                  <circle 
+                    cx="64" cy="64" r="58" stroke="currentColor" strokeWidth="8" fill="transparent" 
+                    strokeDasharray={364.4} strokeDashoffset={364.4 - (364.4 * (dailyAdvice.score / 10))} 
+                    className="text-orange-500" 
+                  />
+                </svg>
+                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                  <span className="text-4xl font-black">{dailyAdvice.score}</span>
+                  <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Day Score</span>
+                </div>
+              </div>
+              <p className="text-sm text-zinc-400">"{dailyAdvice.educationalTip}"</p>
+            </div>
+
+            <div className="md:col-span-2 space-y-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="bg-green-500/5 border border-green-500/10 rounded-2xl p-6 space-y-3">
+                  <h4 className="text-xs font-bold text-green-500 uppercase tracking-widest flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4" /> Key Wins
+                  </h4>
+                  <ul className="space-y-2">
+                    {dailyAdvice.wins.map((win: string, i: number) => (
+                      <li key={i} className="text-xs text-zinc-400 flex items-start gap-2">
+                        <div className="w-1 h-1 rounded-full bg-green-500 mt-1.5 flex-shrink-0" />
+                        {win}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="bg-orange-500/5 border border-orange-500/10 rounded-2xl p-6 space-y-3">
+                  <h4 className="text-xs font-bold text-orange-500 uppercase tracking-widest flex items-center gap-2">
+                    <Target className="w-4 h-4" /> Improvements
+                  </h4>
+                  <ul className="space-y-2">
+                    {dailyAdvice.improvements.map((imp: string, i: number) => (
+                      <li key={i} className="text-xs text-zinc-400 flex items-start gap-2">
+                        <div className="w-1 h-1 rounded-full bg-orange-500 mt-1.5 flex-shrink-0" />
+                        {imp}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+
+              <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 space-y-4">
+                <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-widest flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-orange-500" /> Action Plan for Tomorrow
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {dailyAdvice.suggestions.map((sug: string, i: number) => (
+                    <div key={i} className="bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-xs text-zinc-300 font-medium">
+                      {sug}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        ) : (
+          <div className="bg-zinc-900/50 border border-zinc-800 rounded-[32px] p-12 text-center space-y-4">
+            <div className="inline-flex p-4 bg-zinc-800 rounded-3xl text-zinc-500">
+              <Utensils className="w-8 h-8" />
+            </div>
+            <div className="space-y-2">
+              <h4 className="text-lg font-bold">Ready for a Review?</h4>
+              <p className="text-zinc-500 max-w-md mx-auto text-sm">
+                Log your meals for the day, then Nik's AI Nutritionist will analyze your balance and give you a performance score with an action plan for tomorrow.
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {meals.filter(m => m.date === format(new Date(), 'yyyy-MM-dd')).length > 0 && (
+            <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 space-y-6">
+              <h3 className="text-xl font-bold flex items-center gap-2">
+                <Utensils className="w-5 h-5 text-orange-500" />
+                Logged Today
+              </h3>
+              <div className="space-y-4">
+                {meals
+                  .filter(m => m.date === format(new Date(), 'yyyy-MM-dd'))
+                  .sort((a, b) => {
+                    const timeA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0;
+                    const timeB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0;
+                    return timeB - timeA;
+                  })
+                  .map((meal, idx) => (
+                    <div key={idx} className="bg-zinc-950 border border-zinc-800 rounded-2xl p-4 flex gap-4 items-center">
+                      {meal.imageURL && (
+                        <div className="w-12 h-12 rounded-xl overflow-hidden border border-zinc-800 flex-shrink-0">
+                          <img src={meal.imageURL} alt="" className="w-full h-full object-cover" />
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <p className="text-[10px] font-bold text-orange-500 uppercase tracking-widest">{meal.type}</p>
+                          <p className="text-[10px] text-zinc-500 font-bold">{meal.totalCalories} kcal</p>
+                        </div>
+                        <h4 className="font-bold text-sm truncate">{meal.name}</h4>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

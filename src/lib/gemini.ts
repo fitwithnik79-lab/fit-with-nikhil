@@ -63,7 +63,7 @@ export async function analyzeMealImage(base64Image: string, mimeType: string) {
             },
           },
           {
-            text: "Analyze this meal image. Identify the food items and estimate the total calories, protein, carbs, and fats. Return the result as a JSON object.",
+            text: "Analyze this meal image. Identify the food items and estimate calories, protein, carbs, and fats FOR EACH ITEM separately. Return the result as a JSON object with a 'mealName' and an 'items' array. Each item should have 'name', 'calories', 'protein', 'carbs', and 'fats'. Also include a general 'advice' string.",
           },
         ],
       },
@@ -73,17 +73,23 @@ export async function analyzeMealImage(base64Image: string, mimeType: string) {
           type: Type.OBJECT,
           properties: {
             mealName: { type: Type.STRING },
-            calories: { type: Type.NUMBER },
-            protein: { type: Type.NUMBER },
-            carbs: { type: Type.NUMBER },
-            fats: { type: Type.NUMBER },
-            ingredients: {
+            items: {
               type: Type.ARRAY,
-              items: { type: Type.STRING }
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  name: { type: Type.STRING },
+                  calories: { type: Type.NUMBER },
+                  protein: { type: Type.NUMBER },
+                  carbs: { type: Type.NUMBER },
+                  fats: { type: Type.NUMBER }
+                },
+                required: ["name", "calories", "protein", "carbs", "fats"]
+              }
             },
             advice: { type: Type.STRING, description: "Short nutritional advice for this meal" }
           },
-          required: ["mealName", "calories", "protein", "carbs", "fats", "ingredients", "advice"]
+          required: ["mealName", "items", "advice"]
         }
       }
     });
@@ -99,31 +105,120 @@ export async function analyzeMealText(mealDescription: string) {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: `Analyze the following meal description: "${mealDescription}". 
-      Identify the food items and estimate the total calories, protein, carbs, and fats. 
-      Return the result as a JSON object.`,
+      Identify the food items and estimate calories, protein, carbs, and fats FOR EACH ITEM separately.
+      Return the result as a JSON object with a 'mealName' and an 'items' array. 
+      Each item should have 'name', 'calories', 'protein', 'carbs', and 'fats'. 
+      Also include a general 'advice' string.`,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
           properties: {
             mealName: { type: Type.STRING },
-            calories: { type: Type.NUMBER },
-            protein: { type: Type.NUMBER },
-            carbs: { type: Type.NUMBER },
-            fats: { type: Type.NUMBER },
-            ingredients: {
+            items: {
               type: Type.ARRAY,
-              items: { type: Type.STRING }
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  name: { type: Type.STRING },
+                  calories: { type: Type.NUMBER },
+                  protein: { type: Type.NUMBER },
+                  carbs: { type: Type.NUMBER },
+                  fats: { type: Type.NUMBER }
+                },
+                required: ["name", "calories", "protein", "carbs", "fats"]
+              }
             },
             advice: { type: Type.STRING, description: "Short nutritional advice for this meal" }
           },
-          required: ["mealName", "calories", "protein", "carbs", "fats", "ingredients", "advice"]
+          required: ["mealName", "items", "advice"]
         }
       }
     });
     return JSON.parse(response.text || "{}");
   } catch (error) {
     console.error("Error analyzing meal text:", error);
+    return null;
+  }
+}
+
+export async function getMacrosForItemsWithQuantities(items: { name: string, quantity: string }[]) {
+  try {
+    const itemsDescription = items.map(i => `${i.quantity} of ${i.name}`).join(", ");
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: `Calculate the calories, protein, carbs, and fats for the following food items and their specific quantities: "${itemsDescription}". 
+      Return the result as a JSON object with an 'items' array. 
+      Each item should have 'name', 'quantity', 'calories', 'protein', 'carbs', and 'fats'.`,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            items: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  name: { type: Type.STRING },
+                  quantity: { type: Type.STRING },
+                  calories: { type: Type.NUMBER },
+                  protein: { type: Type.NUMBER },
+                  carbs: { type: Type.NUMBER },
+                  fats: { type: Type.NUMBER }
+                },
+                required: ["name", "quantity", "calories", "protein", "carbs", "fats"]
+              }
+            }
+          },
+          required: ["items"]
+        }
+      }
+    });
+    return JSON.parse(response.text || "{}");
+  } catch (error) {
+    console.error("Error getting macros for quantities:", error);
+    return null;
+  }
+}
+
+export async function analyzeDailyNutrition(meals: any[], profile: any) {
+  try {
+    const mealsSummary = meals.map(m => `- ${m.type}: ${m.name} (${m.totalCalories} kcal, ${m.totalProtein}g P, ${m.totalCarbs}g C, ${m.totalFats}g F)`).join("\n");
+    const goalsSummary = `Goal: ${profile.fitnessGoal || "Overall Health"}, Height: ${profile.height}cm, Weight: ${profile.weight}kg. Target Protein: ${profile.macroGoals?.protein || "balanced"}g, Carbs: ${profile.macroGoals?.carbs || "balanced"}g.`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: `You are Nik, a world-class performance nutritionist. Analyze today's logged meals for this client and provide personalized actionable advice.
+      
+      Client Goals: ${goalsSummary}
+      Today's Meals:
+      ${mealsSummary}
+      
+      Provide your response in JSON format focusing on:
+      1. Overall Score (1-10)
+      2. Key Wins (what they did well)
+      3. Areas for Improvement
+      4. Specific suggestions for tomorrow or their next meal (e.g., "Add 30g more protein", "Swap white rice for quinoa")
+      5. Educational tip related to their goal.`,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            score: { type: Type.NUMBER },
+            wins: { type: Type.ARRAY, items: { type: Type.STRING } },
+            improvements: { type: Type.ARRAY, items: { type: Type.STRING } },
+            suggestions: { type: Type.ARRAY, items: { type: Type.STRING } },
+            educationalTip: { type: Type.STRING }
+          },
+          required: ["score", "wins", "improvements", "suggestions", "educationalTip"]
+        }
+      }
+    });
+    return JSON.parse(response.text || "{}");
+  } catch (error) {
+    console.error("Error analyzing daily nutrition:", error);
     return null;
   }
 }

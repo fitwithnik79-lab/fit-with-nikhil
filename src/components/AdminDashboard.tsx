@@ -3158,11 +3158,12 @@ function ClientDashboardView({ client }: { client: UserProfile }) {
                         <span className="text-green-500 text-xs">{meal.totalCarbs}g</span> C
                       </div>
                     </div>
-                    <div className="mt-3 flex flex-wrap gap-1">
+                    <div className="mt-3 space-y-1">
                       {meal.items?.map((item: any, i: number) => (
-                        <span key={i} className="text-[10px] text-zinc-500 bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800/50 line-clamp-1">
-                          {item.name}
-                        </span>
+                        <div key={i} className="flex items-center justify-between text-[9px] text-zinc-500 bg-zinc-950/50 px-2 py-1 rounded border border-zinc-800/30">
+                          <span className="font-medium truncate flex-1">{item.name}</span>
+                          <span className="font-bold text-zinc-400 ml-2">{item.calories} kcal</span>
+                        </div>
                       ))}
                     </div>
                   </div>
