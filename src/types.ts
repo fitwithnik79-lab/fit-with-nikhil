@@ -43,7 +43,10 @@ export interface Exercise {
   rest: string;
   coachNote: string;
   completedWeight?: string;
+  completedReps?: string;
+  completedSets?: number;
   clientNote?: string;
+  isCompleted?: boolean;
 }
 
 export interface Workout {
@@ -124,4 +127,43 @@ export interface Meal {
   totalFats: number;
   imageURL?: string;
   createdAt: any;
+}
+
+export interface NutritionPlan {
+  id?: string;
+  clientId: string;
+  name: string;
+  description: string;
+  targetMacros: {
+    calories: number;
+    protein: number;
+    carbs: number;
+    fats: number;
+  };
+  plannedMeals?: {
+    id: string;
+    time: string;
+    name: string;
+    notes: string;
+    isCompleted?: boolean;
+    completedAt?: string;
+  }[];
+  guidelines: string[];
+  recommendedFoods: string[];
+  restrictedFoods: string[];
+  isActive: boolean;
+  createdAt: any;
+}
+
+export interface NutritionTemplate {
+  id: string;
+  name: string;
+  description: string;
+  targetMacros: {
+    calories: number;
+    protein: number;
+    carbs: number;
+    fats: number;
+  };
+  guidelines: string[];
 }

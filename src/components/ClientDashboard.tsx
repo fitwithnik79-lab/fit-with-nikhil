@@ -2,10 +2,11 @@ import { useState, useEffect, useMemo } from 'react';
 import { User } from 'firebase/auth';
 import { collection, query, where, onSnapshot, addDoc, serverTimestamp, orderBy, limit, getDocs, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { UserProfile, Workout, Exercise, Feedback, BodyMetrics } from '../types';
+import { BodyMetrics, Workout, Feedback, UserProfile, NutritionPlan } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { 
   CheckCircle, 
+  Check,
   ExternalLink, 
   Play, 
   MessageSquare, 
@@ -185,13 +186,53 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   const [clientNote, setClientNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [showChat, setShowChat] = useState(false);
+  const [showSuccess, setShowSuccess] = useState(false);
   const [adminProfile, setAdminProfile] = useState<UserProfile | null>(null);
-  const [activeTab, setActiveTab] = useState<'dash' | 'calendar' | 'goals' | 'program' | 'meal' | 'progress' | 'badges' | 'classes' | 'profile' | 'meal-ai'>('dash');
+  const [activeTab, setActiveTab] = useState<'dash' | 'calendar' | 'goals' | 'program' | 'meal' | 'progress' | 'badges' | 'classes' | 'profile' | 'meal-ai' | 'nutrition'>('dash');
   const [selectedWorkout, setSelectedWorkout] = useState<Workout | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [metrics, setMetrics] = useState<BodyMetrics[]>([]);
   const [todayMetrics, setTodayMetrics] = useState<BodyMetrics | null>(null);
   const [meals, setMeals] = useState<any[]>([]);
+  const [activeNutritionPlan, setActiveNutritionPlan] = useState<NutritionPlan | null>(null);
+
+  useEffect(() => {
+    if (!user.uid) return;
+    const q = query(collection(db, 'nutritionPlans'), where('clientId', '==', user.uid), where('isActive', '==', true), limit(1));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      if (!snapshot.empty) {
+        setActiveNutritionPlan({ id: snapshot.docs[0].id, ...snapshot.docs[0].data() } as NutritionPlan);
+      } else {
+        setActiveNutritionPlan(null);
+      }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, 'nutritionPlans');
+    });
+    return () => unsubscribe();
+  }, [user.uid]);
+
+  const handleTogglePlannedMeal = async (mealId: string) => {
+    if (!activeNutritionPlan?.id || !activeNutritionPlan.plannedMeals) return;
+
+    const updatedMeals = activeNutritionPlan.plannedMeals.map(m => {
+      if (m.id === mealId) {
+        return {
+          ...m,
+          isCompleted: !m.isCompleted,
+          completedAt: !m.isCompleted ? new Date().toISOString() : null
+        };
+      }
+      return m;
+    });
+
+    try {
+      await updateDoc(doc(db, 'nutritionPlans', activeNutritionPlan.id), {
+        plannedMeals: updatedMeals
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `nutritionPlans/${activeNutritionPlan.id}`);
+    }
+  };
 
   // Helper to send automated coach messages
   const sendAutomatedCoachMessage = async (text: string, type: 'motivation' | 'reminder' = 'motivation') => {
@@ -378,7 +419,13 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     }
   }, [loading, allWorkouts, allFeedback, meals, user.uid]);
 
-  const handleComplete = async (workout: Workout, exerciseFeedback?: Record<number, { completedWeight: string, clientNote: string }>) => {
+  const handleComplete = async (workout: Workout, exerciseFeedback?: Record<number, { 
+    completedWeight: string, 
+    completedReps: string, 
+    completedSets: number, 
+    clientNote: string, 
+    isCompleted: boolean 
+  }>) => {
     setSubmitting(true);
     try {
       const motivationalMessage = await generateMotivationalMessage(profile.displayName || 'Champ', workout.weekNumber);
@@ -387,8 +434,11 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
       if (workout.id && exerciseFeedback) {
         const updatedExercises = workout.exercises.map((ex, idx) => ({
           ...ex,
-          completedWeight: exerciseFeedback[idx]?.completedWeight || '',
-          clientNote: exerciseFeedback[idx]?.clientNote || ''
+          completedWeight: exerciseFeedback[idx]?.completedWeight || ex.weight || '',
+          completedReps: exerciseFeedback[idx]?.completedReps || ex.reps || '',
+          completedSets: exerciseFeedback[idx]?.completedSets || ex.sets || 0,
+          clientNote: exerciseFeedback[idx]?.clientNote || '',
+          isCompleted: exerciseFeedback[idx]?.isCompleted || false
         }));
         
         await updateDoc(doc(db, 'workouts', workout.id), {
@@ -431,9 +481,11 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
       
       setShowFeedbackForm(false);
       setClientNote('');
+      setShowSuccess(true);
       if (selectedWorkout?.id === workout.id) {
         setSelectedWorkout(null);
       }
+      setTimeout(() => setShowSuccess(false), 4000);
     } catch (error) {
       console.error('Error submitting feedback:', error);
     } finally {
@@ -461,6 +513,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     { id: 'goals', label: 'Goals and Habits', icon: Target },
     { id: 'program', label: 'Training Program', icon: Folder },
     { id: 'meal-ai', label: 'Daily Nutrition', icon: Utensils },
+    { id: 'nutrition', label: 'Nutrition Plan', icon: Sparkles },
     { id: 'progress', label: 'Progress', icon: TrendingUp },
     { id: 'profile', label: 'My Profile', icon: UserIcon },
   ];
@@ -698,6 +751,203 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                 exit={{ opacity: 0, y: -20 }}
               >
                 <ProfileSection user={user} profile={profile} setShowChat={setShowChat} />
+              </motion.div>
+            )}
+
+            {activeTab === 'nutrition' && (
+              <motion.div
+                key="nutrition"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="max-w-4xl mx-auto space-y-8"
+              >
+                <div className="text-center space-y-2">
+                  <div className="inline-flex p-4 bg-orange-500/10 rounded-full text-orange-500 mb-4">
+                    <Sparkles className="w-8 h-8" />
+                  </div>
+                  <h2 className="text-3xl font-bold">Your Nutrition Framework</h2>
+                  <p className="text-zinc-500">Structured eating for massive results, designed by Coach Nik.</p>
+                </div>
+
+                {activeNutritionPlan ? (
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    <div className="lg:col-span-2 space-y-8">
+                      <div className="bg-zinc-900 border border-zinc-800 rounded-[40px] p-8 md:p-12 space-y-10 relative overflow-hidden">
+                        <div className="absolute top-0 right-0 p-8 opacity-5">
+                          <Utensils className="w-32 h-32 text-orange-500" />
+                        </div>
+
+                        <div className="space-y-4 relative">
+                          <div className="inline-block px-3 py-1 bg-orange-500/10 border border-orange-500/20 rounded-full text-[10px] font-bold text-orange-500 uppercase tracking-widest">
+                            Active Strategy
+                          </div>
+                          <h3 className="text-4xl font-black">{activeNutritionPlan.name}</h3>
+                          <p className="text-lg text-zinc-400 leading-relaxed max-w-xl">
+                            {activeNutritionPlan.description}
+                          </p>
+                        </div>
+
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                          <div className="bg-zinc-950 border border-zinc-800 rounded-3xl p-6 text-center group hover:border-orange-500/50 transition-all">
+                            <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Calories</p>
+                            <p className="text-3xl font-black text-white">{activeNutritionPlan.targetMacros.calories}</p>
+                          </div>
+                          <div className="bg-zinc-950 border border-zinc-800 rounded-3xl p-6 text-center group hover:border-blue-500/50 transition-all">
+                            <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Protein</p>
+                            <p className="text-3xl font-black text-blue-500">{activeNutritionPlan.targetMacros.protein}g</p>
+                          </div>
+                          <div className="bg-zinc-950 border border-zinc-800 rounded-3xl p-6 text-center group hover:border-green-500/50 transition-all">
+                            <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Carbs</p>
+                            <p className="text-3xl font-black text-green-500">{activeNutritionPlan.targetMacros.carbs}g</p>
+                          </div>
+                          <div className="bg-zinc-950 border border-zinc-800 rounded-3xl p-6 text-center group hover:border-orange-500/50 transition-all">
+                            <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Fats</p>
+                            <p className="text-3xl font-black text-orange-500">{activeNutritionPlan.targetMacros.fats}g</p>
+                          </div>
+                        </div>
+
+                        <div className="space-y-6">
+                          <h4 className="text-sm font-bold text-zinc-500 uppercase tracking-widest flex items-center gap-3">
+                            <div className="h-px flex-1 bg-zinc-800" />
+                            Planned Meal Schedule
+                            <div className="h-px flex-1 bg-zinc-800" />
+                          </h4>
+                          <div className="space-y-3">
+                            {activeNutritionPlan.plannedMeals?.length > 0 ? (
+                              activeNutritionPlan.plannedMeals.map((m) => (
+                                <div 
+                                  key={m.id} 
+                                  className={cn(
+                                    "flex items-center gap-4 p-4 rounded-2xl border transition-all duration-300",
+                                    m.isCompleted 
+                                      ? "bg-orange-500/10 border-orange-500/30 opacity-75" 
+                                      : "bg-zinc-950/50 border-zinc-800/50"
+                                  )}
+                                >
+                                  <button 
+                                    onClick={() => handleTogglePlannedMeal(m.id)}
+                                    className={cn(
+                                      "w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all",
+                                      m.isCompleted 
+                                        ? "bg-orange-500 border-orange-500 text-white" 
+                                        : "border-zinc-700 hover:border-orange-500"
+                                    )}
+                                  >
+                                    {m.isCompleted && <Check className="w-4 h-4" />}
+                                  </button>
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-[10px] font-black text-zinc-600 bg-zinc-900 px-2 py-0.5 rounded uppercase">{m.time}</span>
+                                      <h5 className={cn("font-bold text-sm", m.isCompleted ? "text-zinc-500 line-through" : "text-white")}>
+                                        {m.name}
+                                      </h5>
+                                    </div>
+                                    <p className="text-xs text-zinc-500 mt-0.5">{m.notes}</p>
+                                  </div>
+                                  {m.isCompleted && (
+                                    <span className="text-[10px] font-bold text-orange-500 uppercase">Tracked</span>
+                                  )}
+                                </div>
+                              ))
+                            ) : (
+                              <p className="text-center text-zinc-600 text-sm italic">No specific meal schedule defined. Follow the general guidelines below.</p>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="space-y-6">
+                          <h4 className="text-sm font-bold text-zinc-500 uppercase tracking-widest flex items-center gap-3">
+                            <div className="h-px flex-1 bg-zinc-800" />
+                            Core Guidelines
+                            <div className="h-px flex-1 bg-zinc-800" />
+                          </h4>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {activeNutritionPlan.guidelines.map((g, i) => (
+                              <div key={i} className="flex items-center gap-4 bg-zinc-950/50 p-4 rounded-2xl border border-zinc-800/50 group hover:border-orange-500/30 transition-all">
+                                <div className="w-2 h-2 rounded-full bg-orange-500 group-hover:scale-125 transition-transform" />
+                                <span className="text-sm text-zinc-300 font-medium">{g}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Visual Progress Integration Hook */}
+                      <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 flex flex-col md:flex-row items-center gap-8">
+                        <div className="flex-1 space-y-4">
+                          <div className="flex items-center gap-2">
+                            <span className="relative flex h-3 w-3">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
+                              <span className="relative inline-flex rounded-full h-3 w-3 bg-orange-500"></span>
+                            </span>
+                            <h4 className="font-bold text-sm uppercase tracking-widest text-orange-500">Smart Connect</h4>
+                          </div>
+                          <h3 className="text-2xl font-bold">Sync with AI Tracker</h3>
+                          <p className="text-zinc-500 text-sm leading-relaxed">
+                            Nik's AI tracker automatically monitors your meals against this framework. Head over to <b>Daily Nutrition</b> to log your food and see how you match up.
+                          </p>
+                          <button 
+                            onClick={() => setActiveTab('meal-ai')}
+                            className="bg-zinc-800 hover:bg-zinc-700 text-white px-6 py-2 rounded-xl text-xs font-bold transition-all"
+                          >
+                            Go to Log
+                          </button>
+                        </div>
+                        <div className="w-full md:w-48 aspect-square bg-zinc-950 rounded-3xl border border-zinc-800 flex items-center justify-center relative overflow-hidden group">
+                           <Utensils className="w-12 h-12 text-zinc-800 group-hover:scale-110 group-hover:text-orange-500/20 transition-all duration-500" />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-6">
+                      <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 space-y-6">
+                        <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Recommended Foods</h4>
+                        <div className="space-y-3">
+                          {activeNutritionPlan.recommendedFoods?.length > 0 ? (
+                            activeNutritionPlan.recommendedFoods.map((f, i) => (
+                              <div key={i} className="flex items-center gap-3 text-sm text-zinc-300">
+                                <div className="w-1 h-1 rounded-full bg-green-500" />
+                                {f}
+                              </div>
+                            ))
+                          ) : (
+                            <p className="text-zinc-600 text-xs italic">No specific recommendations yet. Focus on whole foods.</p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 space-y-6">
+                        <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Acknowledge Plan</h4>
+                        <p className="text-xs text-zinc-500 leading-relaxed">
+                          By following this plan, you agree to track your intake as accurately as possible for the best results.
+                        </p>
+                        <div className="p-4 bg-orange-500/10 rounded-2xl border border-orange-500/20 flex items-center gap-3">
+                          <Award className="w-5 h-5 text-orange-500" />
+                          <span className="text-[10px] font-bold text-orange-500 uppercase tracking-widest">Elite Strategy</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-zinc-900/50 border border-dashed border-zinc-800 rounded-[40px] p-24 text-center space-y-8">
+                    <div className="w-20 h-20 bg-zinc-900 rounded-full border border-zinc-800 flex items-center justify-center mx-auto">
+                      <Utensils className="w-8 h-8 text-zinc-800" />
+                    </div>
+                    <div className="max-w-md mx-auto space-y-4">
+                      <h3 className="text-2xl font-bold">Strategy Pending</h3>
+                      <p className="text-zinc-500 text-sm leading-relaxed">
+                        Coach Nik is currently analyzing your performance and goals to craft the perfect nutrition framework for you. Check back soon for your personalized elite strategy.
+                      </p>
+                      <button 
+                         onClick={() => setShowChat(true)}
+                         className="px-8 py-3 bg-zinc-800 text-white rounded-2xl font-bold text-xs uppercase tracking-widest hover:bg-zinc-700 transition-all"
+                      >
+                        Ask Nik about your plan
+                      </button>
+                    </div>
+                  </div>
+                )}
               </motion.div>
             )}
 
@@ -1066,6 +1316,85 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                 </div>
               </div>
             )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Success Celebration Overlay */}
+      <AnimatePresence>
+        {showSuccess && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md"
+          >
+            <motion.div
+              initial={{ scale: 0.5, y: 50, opacity: 0 }}
+              animate={{ scale: 1, y: 0, opacity: 1 }}
+              exit={{ scale: 0.8, y: -20, opacity: 0 }}
+              className="bg-zinc-900 border border-zinc-800 rounded-[40px] p-12 text-center shadow-2xl max-w-sm relative overflow-hidden"
+            >
+              <div className="absolute inset-0 bg-gradient-to-b from-orange-500/10 to-transparent pointer-events-none" />
+              
+              <motion.div 
+                animate={{ rotate: [0, 10, -10, 10, 0], scale: [1, 1.1, 1] }}
+                transition={{ duration: 1, repeat: Infinity }}
+                className="inline-flex p-6 bg-orange-500 rounded-full text-white mb-8 shadow-xl shadow-orange-500/40 relative z-10"
+              >
+                <Trophy className="w-12 h-12" />
+              </motion.div>
+
+              <div className="space-y-4 relative z-10">
+                <motion.h2 
+                  initial={{ y: 20, opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  transition={{ delay: 0.2 }}
+                  className="text-3xl font-black text-white"
+                >
+                  WORKOUT CRUSHED!
+                </motion.h2>
+                <motion.p 
+                  initial={{ y: 20, opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  transition={{ delay: 0.3 }}
+                  className="text-zinc-400 font-medium"
+                >
+                  Every session brings you closer to your elite version. Coach Nik is proud of your effort!
+                </motion.p>
+              </div>
+
+              <motion.div 
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+                transition={{ delay: 0.5, type: 'spring' }}
+                className="mt-8 flex justify-center gap-2"
+              >
+                {[...Array(5)].map((_, i) => (
+                  <motion.div
+                    key={i}
+                    animate={{ 
+                      y: [0, -10, 0],
+                      opacity: [0.5, 1, 0.5]
+                    }}
+                    transition={{ 
+                      duration: 1.5, 
+                      repeat: Infinity, 
+                      delay: i * 0.1 
+                    }}
+                  >
+                    <Sparkles className="w-5 h-5 text-orange-400" />
+                  </motion.div>
+                ))}
+              </motion.div>
+
+              <button 
+                onClick={() => setShowSuccess(false)}
+                className="mt-10 w-full py-4 bg-zinc-800 hover:bg-zinc-700 text-white font-bold rounded-2xl transition-all uppercase tracking-widest text-xs"
+              >
+                Let's Keep Going
+              </button>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -1448,12 +1777,18 @@ function WorkoutCard({
   clientNote: string,
   setClientNote: (s: string) => void,
   submitting: boolean,
-  handleComplete: (feedback?: Record<number, { completedWeight: string, clientNote: string }>) => void
+  handleComplete: (feedback?: Record<number, { 
+    completedWeight: string, 
+    completedReps: string, 
+    completedSets: number, 
+    clientNote: string, 
+    isCompleted: boolean 
+  }>) => void
 }) {
   const [showConfirm, setShowConfirm] = useState(false);
-  const [exerciseFeedback, setExerciseFeedback] = useState<Record<number, { completedWeight: string, clientNote: string }>>({});
+  const [exerciseFeedback, setExerciseFeedback] = useState<Record<number, { completedWeight: string, completedReps: string, completedSets: number, clientNote: string, isCompleted: boolean }>>({});
 
-  const updateExerciseFeedback = (idx: number, field: 'completedWeight' | 'clientNote', value: string) => {
+  const updateExerciseFeedback = (idx: number, field: keyof typeof exerciseFeedback[0], value: any) => {
     setExerciseFeedback(prev => ({
       ...prev,
       [idx]: {
@@ -1494,25 +1829,43 @@ function WorkoutCard({
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: idx * 0.1 }}
-            className="group bg-zinc-900 border border-zinc-800 rounded-2xl p-5 hover:border-zinc-700 transition-all"
+            className={cn(
+              "group bg-zinc-900 border rounded-2xl p-5 hover:border-zinc-700 transition-all",
+              exerciseFeedback[idx]?.isCompleted ? "border-orange-500/50 bg-orange-500/[0.02]" : "border-zinc-800"
+            )}
           >
             <div className="flex items-start justify-between gap-4 mb-4">
-              <div className="flex-1">
-                <h3 className="text-xl font-bold group-hover:text-orange-500 transition-colors">{ex.name}</h3>
-                <div className="flex flex-wrap gap-3 mt-2">
-                  <div className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-950 rounded-lg border border-zinc-800 text-xs font-bold text-zinc-400">
-                    <span className="text-orange-500">{ex.sets}</span> SETS
-                  </div>
-                  <div className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-950 rounded-lg border border-zinc-800 text-xs font-bold text-zinc-400">
-                    <span className="text-orange-500">{ex.reps}</span> REPS
-                  </div>
-                  {ex.weight && (
-                    <div className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-950 rounded-lg border border-zinc-800 text-xs font-bold text-zinc-400">
-                      <span className="text-orange-500">{ex.weight}</span>
-                    </div>
+              <div className="flex-1 flex gap-4">
+                <button 
+                  onClick={() => updateExerciseFeedback(idx, 'isCompleted', !exerciseFeedback[idx]?.isCompleted)}
+                  className={cn(
+                    "mt-1 w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all flex-shrink-0",
+                    exerciseFeedback[idx]?.isCompleted 
+                      ? "bg-orange-500 border-orange-500 text-white" 
+                      : "border-zinc-700 hover:border-orange-500"
                   )}
-                  <div className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-950 rounded-lg border border-zinc-800 text-xs font-bold text-zinc-400">
-                    <span className="text-orange-500">{ex.rest}</span> REST
+                >
+                  {exerciseFeedback[idx]?.isCompleted && <Check className="w-4 h-4" />}
+                </button>
+                <div>
+                  <h3 className={cn("text-xl font-bold transition-colors", exerciseFeedback[idx]?.isCompleted && "text-zinc-500 line-through")}>
+                    {ex.name}
+                  </h3>
+                  <div className="flex flex-wrap gap-3 mt-2">
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-950 rounded-lg border border-zinc-800 text-xs font-bold text-zinc-400">
+                      <span className="text-orange-500">{ex.sets}</span> SETS
+                    </div>
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-950 rounded-lg border border-zinc-800 text-xs font-bold text-zinc-400">
+                      <span className="text-orange-500">{ex.reps}</span> REPS
+                    </div>
+                    {ex.weight && (
+                      <div className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-950 rounded-lg border border-zinc-800 text-xs font-bold text-zinc-400">
+                        <span className="text-orange-500">{ex.weight}</span>
+                      </div>
+                    )}
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-950 rounded-lg border border-zinc-800 text-xs font-bold text-zinc-400">
+                      <span className="text-orange-500">{ex.rest}</span> REST
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1562,22 +1915,42 @@ function WorkoutCard({
               </a>
             )}
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4 pt-4 border-t border-zinc-800/50">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4 pt-4 border-t border-zinc-800/50">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Actual Sets</label>
+                <input 
+                  type="number"
+                  placeholder={ex.sets.toString()}
+                  value={exerciseFeedback[idx]?.completedSets || ''}
+                  onChange={(e) => updateExerciseFeedback(idx, 'completedSets', Number(e.target.value))}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-sm focus:ring-1 focus:ring-orange-500 outline-none transition-all"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Actual Reps</label>
+                <input 
+                  type="text"
+                  placeholder={ex.reps}
+                  value={exerciseFeedback[idx]?.completedReps || ''}
+                  onChange={(e) => updateExerciseFeedback(idx, 'completedReps', e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-sm focus:ring-1 focus:ring-orange-500 outline-none transition-all"
+                />
+              </div>
               <div className="space-y-1.5">
                 <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Weight Used</label>
                 <input 
                   type="text"
-                  placeholder="e.g. 65kg"
+                  placeholder={ex.weight || '0kg'}
                   value={exerciseFeedback[idx]?.completedWeight || ''}
                   onChange={(e) => updateExerciseFeedback(idx, 'completedWeight', e.target.value)}
                   className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-sm focus:ring-1 focus:ring-orange-500 outline-none transition-all"
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Exercise Note</label>
+                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Modification Note</label>
                 <input 
                   type="text"
-                  placeholder="How did it feel?"
+                  placeholder="e.g. Felt heavy"
                   value={exerciseFeedback[idx]?.clientNote || ''}
                   onChange={(e) => updateExerciseFeedback(idx, 'clientNote', e.target.value)}
                   className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-sm focus:ring-1 focus:ring-orange-500 outline-none transition-all"
@@ -1695,6 +2068,8 @@ function MealAI({
   const [dailyAdvice, setDailyAdvice] = useState<any>(null);
   const [analyzingDaily, setAnalyzingDaily] = useState(false);
   const [logging, setLogging] = useState(false);
+  const [fetchingSingle, setFetchingSingle] = useState(false);
+  const [quickAddText, setQuickAddText] = useState('');
   const [manualItems, setManualItems] = useState<{ name: string, quantity: string, calories: number, protein: number, carbs: number, fats: number }[]>([]);
   const [newItem, setNewItem] = useState({ name: '', quantity: '1 portion', calories: 0, protein: 0, carbs: 0, fats: 0 });
   const [customMealName, setCustomMealName] = useState('');
@@ -1752,6 +2127,28 @@ function MealAI({
     if (!newItem.name) return;
     setManualItems([...manualItems, newItem]);
     setNewItem({ name: '', quantity: '1 portion', calories: 0, protein: 0, carbs: 0, fats: 0 });
+  };
+  
+  const handleFetchMacrosForSingle = async () => {
+    if (!newItem.name.trim()) return;
+    setFetchingSingle(true);
+    try {
+      const resp = await getMacrosForItemsWithQuantities([{ name: newItem.name, quantity: newItem.quantity || '1 portion' }]);
+      if (resp && resp.items && resp.items.length > 0) {
+        const item = resp.items[0];
+        setNewItem({
+          ...newItem,
+          calories: Math.round(item.calories),
+          protein: Math.round(item.protein),
+          carbs: Math.round(item.carbs),
+          fats: Math.round(item.fats)
+        });
+      }
+    } catch (error) {
+      console.error("Error fetching macros for single item:", error);
+    } finally {
+      setFetchingSingle(false);
+    }
   };
 
   const handleRecalculateMacros = async () => {
@@ -1965,17 +2362,17 @@ function MealAI({
                   <input 
                     type="text" 
                     placeholder="e.g. 2 eggs, toast, coffee"
-                    value={newItem.name}
-                    onChange={(e) => setNewItem({ ...newItem, name: e.target.value })}
+                    value={quickAddText}
+                    onChange={(e) => setQuickAddText(e.target.value)}
                     className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm outline-none focus:ring-1 focus:ring-orange-500"
                   />
                   <button
                     type="button"
                     onClick={async () => {
-                      if (!newItem.name.trim()) return;
+                      if (!quickAddText.trim()) return;
                       setAnalyzing(true);
                       try {
-                        const analysis = await analyzeMealText(newItem.name);
+                        const analysis = await analyzeMealText(quickAddText);
                         if (analysis && analysis.items) {
                           const mappedItems = analysis.items.map((item: any) => ({
                             name: item.name,
@@ -1989,13 +2386,13 @@ function MealAI({
                           if (analysis.advice && !result?.advice) {
                             setResult({ ...result, advice: analysis.advice });
                           }
-                          setNewItem({ name: '', quantity: '1 portion', calories: 0, protein: 0, carbs: 0, fats: 0 });
+                          setQuickAddText('');
                         }
                       } finally {
                         setAnalyzing(false);
                       }
                     }}
-                    disabled={analyzing || !newItem.name.trim()}
+                    disabled={analyzing || !quickAddText.trim()}
                     className="px-4 bg-orange-500 text-white rounded-xl hover:bg-orange-600 transition-all font-bold text-[10px] uppercase tracking-widest disabled:opacity-50"
                   >
                     {analyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Add via AI'}
@@ -2010,7 +2407,7 @@ function MealAI({
               </div>
 
               <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Item Name</label>
                     <input 
@@ -2022,7 +2419,17 @@ function MealAI({
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Quantity</label>
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Quantity</label>
+                      <button 
+                        onClick={handleFetchMacrosForSingle}
+                        disabled={fetchingSingle || !newItem.name.trim()}
+                        className="text-[9px] font-bold text-orange-500 hover:text-orange-400 disabled:opacity-50 flex items-center gap-1 transition-colors"
+                      >
+                        {fetchingSingle ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Sparkles className="w-2.5 h-2.5" />}
+                        FETCH MACROS
+                      </button>
+                    </div>
                     <input 
                       type="text" 
                       placeholder="e.g. 200g, 1 cup"

@@ -4,8 +4,10 @@ import { collection, query, where, onSnapshot, addDoc, serverTimestamp, doc, upd
 import { db } from '../lib/firebase';
 import { UserProfile, Workout, Exercise, Feedback, WorkoutTemplate, BodyMetrics } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
-import { searchExerciseVideos, parseWorkoutFile } from '../lib/gemini';
+import { searchExerciseVideos, parseWorkoutFile, analyzeNutritionFile } from '../lib/gemini';
 import { SAMPLE_PROGRAMS, WEEKLY_PROGRAMS, WORKOUT_TEMPLATES } from '../constants/workoutTemplates';
+import { NUTRITION_TEMPLATES } from '../constants/nutritionTemplates';
+import { NutritionPlan, NutritionTemplate } from '../types';
 import { Plus, Users, Calendar, CheckCircle, ExternalLink, ChevronRight, Search, Activity, Clock, MessageSquare, Trash2, Edit2, ChevronDown, ChevronUp, Save, Download, Layout, Copy, ChevronLeft, Play, Sparkles, Loader2, Droplets, Footprints, Flame, Scale, LayoutDashboard, X, Bell, Send, BookOpen, Layers, Upload, Youtube, Utensils } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
@@ -55,7 +57,7 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
     setConfirmModal({ title, message, onConfirm });
   };
 
-  const [clientViewTab, setClientViewTab] = useState<'program' | 'dashboard' | 'chat'>('program');
+  const [clientViewTab, setClientViewTab] = useState<'program' | 'dashboard' | 'chat' | 'nutrition'>('program');
 
   useEffect(() => {
     const q = query(collection(db, 'users'), where('role', '==', 'client'));
@@ -370,6 +372,15 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
                         Program
                       </button>
                       <button
+                        onClick={() => setClientViewTab('nutrition')}
+                        className={cn(
+                          "px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all",
+                          clientViewTab === 'nutrition' ? "bg-orange-500 text-white" : "text-zinc-500 hover:text-white"
+                        )}
+                      >
+                        Nutrition
+                      </button>
+                      <button
                         onClick={() => setClientViewTab('dashboard')}
                         className={cn(
                           "px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all",
@@ -409,6 +420,17 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
                             <Chat currentUser={{ uid: user.uid, role: profile.role }} otherUser={selectedClient} />
                           </div>
                         </div>
+                      </motion.div>
+                    )}
+
+                    {clientViewTab === 'nutrition' && (
+                      <motion.div
+                        key="nutrition"
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -10 }}
+                      >
+                        <NutritionManager client={selectedClient} showToast={showToast} />
                       </motion.div>
                     )}
 
@@ -2069,6 +2091,467 @@ function getYouTubeId(url: string) {
   const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
   const match = url.match(regExp);
   return (match && match[2].length === 11) ? match[2] : null;
+}
+
+function NutritionManager({ client, showToast }: { client: UserProfile, showToast: (m: string, t?: 'success' | 'error') => void }) {
+  const [activePlan, setActivePlan] = useState<NutritionPlan | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [analyzingFile, setAnalyzingFile] = useState(false);
+  const [planDraft, setPlanDraft] = useState<Partial<NutritionPlan>>({
+    name: '',
+    description: '',
+    targetMacros: { calories: 2000, protein: 150, carbs: 200, fats: 70 },
+    guidelines: [],
+    plannedMeals: [],
+    recommendedFoods: [],
+    restrictedFoods: [],
+    isActive: true
+  });
+
+  useEffect(() => {
+    if (!client.uid) return;
+    const q = query(collection(db, 'nutritionPlans'), where('clientId', '==', client.uid), where('isActive', '==', true), limit(1));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      if (!snapshot.empty) {
+        const plan = { id: snapshot.docs[0].id, ...snapshot.docs[0].data() } as NutritionPlan;
+        setActivePlan(plan);
+        setPlanDraft(plan);
+      } else {
+        setActivePlan(null);
+      }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, 'nutritionPlans');
+    });
+    return () => unsubscribe();
+  }, [client.uid]);
+
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setAnalyzingFile(true);
+    try {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const content = e.target?.result as string;
+        const analysis = await analyzeNutritionFile(content, file.name);
+        if (analysis) {
+          setPlanDraft({
+            ...planDraft,
+            ...analysis,
+            isActive: true
+          });
+          showToast('Nutrition plan extracted successfully!');
+        }
+      };
+      reader.readAsText(file);
+    } catch (error) {
+      console.error("Error analyzing nutrition file:", error);
+      showToast('Failed to analyze file', 'error');
+    } finally {
+      setAnalyzingFile(false);
+    }
+  };
+
+  const applyTemplate = (template: NutritionTemplate) => {
+    setPlanDraft({
+      ...planDraft,
+      name: template.name,
+      description: template.description,
+      targetMacros: { ...template.targetMacros },
+      guidelines: [...template.guidelines],
+      plannedMeals: [],
+      recommendedFoods: [],
+      restrictedFoods: []
+    });
+    setIsEditing(true);
+  };
+
+  const handleSavePlan = async () => {
+    if (!client.uid) return;
+    setSaving(true);
+    try {
+      // Deactivate old plans
+      const q = query(collection(db, 'nutritionPlans'), where('clientId', '==', client.uid), where('isActive', '==', true));
+      let oldPlans;
+      try {
+        oldPlans = await getDocs(q);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.GET, 'nutritionPlans');
+        return;
+      }
+
+      for (const d of oldPlans.docs) {
+        try {
+          await updateDoc(doc(db, 'nutritionPlans', d.id), { isActive: false });
+        } catch (error) {
+          handleFirestoreError(error, OperationType.UPDATE, `nutritionPlans/${d.id}`);
+        }
+      }
+
+      const planData = {
+        ...planDraft,
+        clientId: client.uid,
+        isActive: true,
+        createdAt: serverTimestamp()
+      };
+
+      try {
+        await addDoc(collection(db, 'nutritionPlans'), planData);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.CREATE, 'nutritionPlans');
+      }
+
+      showToast('Nutrition plan updated successfully!');
+      setIsEditing(false);
+    } catch (error) {
+      console.error("Error saving plan:", error);
+      showToast('Failed to save plan', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-2xl font-bold">Nutrition Advisor</h3>
+          <p className="text-zinc-500 text-sm">Design a scientific nutrition framework for {client.displayName}.</p>
+        </div>
+        {!isEditing && (
+          <button 
+            onClick={() => setIsEditing(true)}
+            className="px-6 py-3 bg-orange-500 text-white rounded-2xl font-bold text-xs uppercase tracking-widest hover:bg-orange-600 transition-all shadow-lg shadow-orange-500/20"
+          >
+            {activePlan ? 'Update Plan' : 'Create New Plan'}
+          </button>
+        )}
+      </div>
+
+      <AnimatePresence mode="wait">
+        {isEditing ? (
+          <motion.div
+            key="editing"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="space-y-8 bg-zinc-900 border border-zinc-800 rounded-[32px] p-8"
+          >
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              <div className="space-y-6">
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest ml-1">AI Setup</label>
+                    <div className="relative group">
+                      <input 
+                        type="file" 
+                        id="nutrition-upload" 
+                        className="hidden" 
+                        accept="application/pdf,image/*,text/*"
+                        onChange={handleFileUpload}
+                      />
+                      <label 
+                        htmlFor="nutrition-upload"
+                        className="flex items-center gap-2 px-4 py-2 bg-zinc-950 border border-dashed border-zinc-800 rounded-xl text-[10px] font-bold text-zinc-400 hover:text-white hover:border-orange-500 transition-all cursor-pointer"
+                      >
+                        {analyzingFile ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
+                        {analyzingFile ? 'Analyzing...' : 'Upload Plan (PDF/Img)'}
+                      </label>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {NUTRITION_TEMPLATES.map(t => (
+                      <button
+                        key={t.id}
+                        onClick={() => applyTemplate(t)}
+                        className="p-4 bg-zinc-950 border border-zinc-800 rounded-2xl text-left hover:border-orange-500 transition-all group"
+                      >
+                        <h4 className="font-bold text-xs group-hover:text-orange-500 transition-colors">{t.name}</h4>
+                        <p className="text-[10px] text-zinc-500 mt-1 line-clamp-1">{t.description}</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest ml-1">Plan Name</label>
+                    <input 
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-5 py-4 text-sm outline-none focus:ring-2 focus:ring-orange-500 transition-all"
+                      value={planDraft.name}
+                      onChange={(e) => setPlanDraft({...planDraft, name: e.target.value})}
+                      placeholder="e.g. Lean Muscle Evolution"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest ml-1">Description</label>
+                    <textarea 
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-5 py-4 text-sm outline-none focus:ring-2 focus:ring-orange-500 transition-all min-h-[100px] resize-none"
+                      value={planDraft.description}
+                      onChange={(e) => setPlanDraft({...planDraft, description: e.target.value})}
+                      placeholder="Overall strategy for this client..."
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2 pt-4 border-t border-zinc-800">
+                  <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest ml-1 flex items-center justify-between">
+                    Meal Schedule
+                    <button 
+                      onClick={() => setPlanDraft({...planDraft, plannedMeals: [...(planDraft.plannedMeals || []), { id: crypto.randomUUID(), time: '08:00', name: '', notes: '' }]})}
+                      className="text-[10px] text-orange-500 hover:text-orange-400 font-bold"
+                    >
+                      + Add Meal
+                    </button>
+                  </label>
+                  <div className="space-y-3">
+                    {planDraft.plannedMeals?.map((m, i) => (
+                      <div key={m.id} className="p-4 bg-zinc-950 border border-zinc-800 rounded-2xl space-y-3">
+                        <div className="flex gap-2">
+                          <input 
+                            type="time"
+                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-[10px] text-zinc-400"
+                            value={m.time}
+                            onChange={(e) => {
+                              const newM = [...planDraft.plannedMeals!];
+                              newM[i].time = e.target.value;
+                              setPlanDraft({...planDraft, plannedMeals: newM});
+                            }}
+                          />
+                          <input 
+                            placeholder="Meal Name"
+                            className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1 text-xs text-white"
+                            value={m.name}
+                            onChange={(e) => {
+                              const newM = [...planDraft.plannedMeals!];
+                              newM[i].name = e.target.value;
+                              setPlanDraft({...planDraft, plannedMeals: newM});
+                            }}
+                          />
+                          <button 
+                            onClick={() => {
+                              const newM = planDraft.plannedMeals!.filter(meal => meal.id !== m.id);
+                              setPlanDraft({...planDraft, plannedMeals: newM});
+                            }}
+                            className="text-zinc-600 hover:text-red-500 transition-colors"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                        <input 
+                          placeholder="Items/Notes (e.g. 3 eggs, 2 slices toast)"
+                          className="w-full bg-zinc-900/50 border border-zinc-800/50 rounded-lg px-3 py-1 text-[10px] text-zinc-500"
+                          value={m.notes}
+                          onChange={(e) => {
+                            const newM = [...planDraft.plannedMeals!];
+                            newM[i].notes = e.target.value;
+                            setPlanDraft({...planDraft, plannedMeals: newM});
+                          }}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                <div className="space-y-4">
+                  <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest ml-1">Daily Macro Targets</label>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <span className="text-[10px] font-bold text-zinc-600 uppercase ml-1">Calories</span>
+                      <input 
+                        type="number"
+                        className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-5 py-3 text-sm outline-none focus:ring-1 focus:ring-orange-500"
+                        value={planDraft.targetMacros?.calories}
+                        onChange={(e) => setPlanDraft({...planDraft, targetMacros: {...planDraft.targetMacros!, calories: Number(e.target.value)}})}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <span className="text-[10px] font-bold text-zinc-600 uppercase ml-1">Protein (g)</span>
+                      <input 
+                        type="number"
+                        className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-5 py-3 text-sm outline-none focus:ring-1 focus:ring-orange-500"
+                        value={planDraft.targetMacros?.protein}
+                        onChange={(e) => setPlanDraft({...planDraft, targetMacros: {...planDraft.targetMacros!, protein: Number(e.target.value)}})}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <span className="text-[10px] font-bold text-zinc-600 uppercase ml-1">Carbs (g)</span>
+                      <input 
+                        type="number"
+                        className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-5 py-3 text-sm outline-none focus:ring-1 focus:ring-orange-500"
+                        value={planDraft.targetMacros?.carbs}
+                        onChange={(e) => setPlanDraft({...planDraft, targetMacros: {...planDraft.targetMacros!, carbs: Number(e.target.value)}})}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <span className="text-[10px] font-bold text-zinc-600 uppercase ml-1">Fats (g)</span>
+                      <input 
+                        type="number"
+                        className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-5 py-3 text-sm outline-none focus:ring-1 focus:ring-orange-500"
+                        value={planDraft.targetMacros?.fats}
+                        onChange={(e) => setPlanDraft({...planDraft, targetMacros: {...planDraft.targetMacros!, fats: Number(e.target.value)}})}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest ml-1">Core Guidelines</label>
+                  <div className="space-y-2">
+                    {planDraft.guidelines?.map((g, i) => (
+                      <div key={i} className="flex gap-2">
+                        <input 
+                          className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-xs outline-none focus:ring-1 focus:ring-orange-500"
+                          value={g}
+                          onChange={(e) => {
+                            const newG = [...planDraft.guidelines!];
+                            newG[i] = e.target.value;
+                            setPlanDraft({...planDraft, guidelines: newG});
+                          }}
+                        />
+                        <button 
+                          onClick={() => {
+                            const newG = planDraft.guidelines!.filter((_, idx) => idx !== i);
+                            setPlanDraft({...planDraft, guidelines: newG});
+                          }}
+                          className="p-2 text-zinc-600 hover:text-red-500"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                    <button 
+                      onClick={() => setPlanDraft({...planDraft, guidelines: [...(planDraft.guidelines || []), '']})}
+                      className="w-full py-2 border border-dashed border-zinc-800 rounded-xl text-[10px] font-bold text-zinc-500 hover:text-white transition-all flex items-center justify-center gap-2"
+                    >
+                      <Plus className="w-3 h-3" />
+                      Add Guideline
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-4 pt-8 border-t border-zinc-800">
+              <button
+                onClick={() => setIsEditing(false)}
+                className="flex-1 py-4 border border-zinc-800 rounded-2xl font-bold text-zinc-400 hover:bg-zinc-800 transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSavePlan}
+                disabled={saving || !planDraft.name}
+                className="flex-[2] bg-orange-500 text-white font-bold py-4 rounded-2xl hover:bg-orange-600 disabled:opacity-50 transition-all shadow-xl shadow-orange-500/20 flex items-center justify-center gap-2"
+              >
+                {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
+                Save Nutrition Plan
+              </button>
+            </div>
+          </motion.div>
+        ) : (
+          <motion.div
+            key="display"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+          >
+            {activePlan ? (
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div className="lg:col-span-2 space-y-6">
+                  <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 space-y-6">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <div className="p-3 bg-orange-500/10 rounded-2xl text-orange-500">
+                          <Utensils className="w-6 h-6" />
+                        </div>
+                        <div>
+                          <h4 className="text-xl font-bold text-white">{activePlan.name}</h4>
+                          <p className="text-sm text-zinc-500">{activePlan.description}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                      <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-4 text-center">
+                        <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1">Calories</p>
+                        <p className="text-2xl font-black text-white">{activePlan.targetMacros.calories}</p>
+                      </div>
+                      <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-4 text-center">
+                        <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1">Protein</p>
+                        <p className="text-2xl font-black text-blue-500">{activePlan.targetMacros.protein}g</p>
+                      </div>
+                      <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-4 text-center">
+                        <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1">Carbs</p>
+                        <p className="text-2xl font-black text-green-500">{activePlan.targetMacros.carbs}g</p>
+                      </div>
+                      <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-4 text-center">
+                        <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1">Fats</p>
+                        <p className="text-2xl font-black text-orange-500">{activePlan.targetMacros.fats}g</p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      <h5 className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Client Guidelines</h5>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {activePlan.guidelines.map((g, i) => (
+                          <div key={i} className="flex items-center gap-3 bg-zinc-950/50 p-3 rounded-xl border border-zinc-800">
+                            <div className="w-1.5 h-1.5 rounded-full bg-orange-500" />
+                            <span className="text-sm text-zinc-300">{g}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-6">
+                  <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 space-y-4">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-orange-500" />
+                      <h4 className="font-bold text-sm uppercase tracking-widest text-zinc-500">Coach Insights</h4>
+                    </div>
+                    <p className="text-xs text-zinc-400 leading-relaxed italic">
+                      "This plan is designed to optimize their hormonal profile while maintaining a steady caloric deficit. Ensure they are tracking fiber intake alongside these macros."
+                    </p>
+                  </div>
+
+                  <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 space-y-4">
+                    <h4 className="font-bold text-sm uppercase tracking-widest text-zinc-500">Recently Logged</h4>
+                    <div className="text-xs text-zinc-500">
+                      Feature coming soon: Visual sync between this plan and their actual logged meals.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-zinc-900/50 border border-dashed border-zinc-800 rounded-[32px] p-24 text-center space-y-6">
+                <div className="p-6 bg-zinc-900 rounded-full border border-zinc-800 inline-block">
+                  <Utensils className="w-12 h-12 text-zinc-800" />
+                </div>
+                <div className="max-w-md mx-auto space-y-2">
+                  <h4 className="text-xl font-bold">No High-Performance Plan Set</h4>
+                  <p className="text-sm text-zinc-500">
+                    Assign a structured nutrition strategy to help {client.displayName} reach their goals faster.
+                  </p>
+                </div>
+                <button 
+                  onClick={() => setIsEditing(true)}
+                  className="px-8 py-4 bg-orange-500 text-white rounded-2xl font-bold text-sm hover:bg-orange-600 transition-all"
+                >
+                  Start Nutrition Planning
+                </button>
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
 }
 
 function WorkoutManager({ client, initialDate, initialWorkout, onSave, showToast, confirmAction }: { client: UserProfile, initialDate?: Date, initialWorkout?: Workout, onSave?: () => void, showToast: (m: string, t?: 'success' | 'error') => void, confirmAction: (t: string, m: string, c: () => void) => void }) {

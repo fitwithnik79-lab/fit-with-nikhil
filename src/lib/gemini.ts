@@ -298,3 +298,66 @@ export async function parseWorkoutFile(fileContent: string, fileName: string) {
     return null;
   }
 }
+
+export async function analyzeNutritionFile(fileContent: string, fileName: string) {
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: `You are an expert performance nutritionist. Parse the following nutrition plan content from a file named "${fileName}". 
+      Extact the structured data for a Nutrition Plan.
+      
+      Content:
+      ${fileContent}
+      
+      Return a JSON object with:
+      1. name: string
+      2. description: string
+      3. targetMacros: { calories: number, protein: number, carbs: number, fats: number }
+      4. guidelines: string[] (Key nutritional instructions)
+      5. recommendedFoods: string[]
+      6. restrictedFoods: string[]
+      7. plannedMeals: array of { id: string, time: string, name: string, notes: string } (Typical meal schedule if present, else synthesize based on common protocols like 4 meals/day).`,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            name: { type: Type.STRING },
+            description: { type: Type.STRING },
+            targetMacros: {
+              type: Type.OBJECT,
+              properties: {
+                calories: { type: Type.NUMBER },
+                protein: { type: Type.NUMBER },
+                carbs: { type: Type.NUMBER },
+                fats: { type: Type.NUMBER }
+              },
+              required: ["calories", "protein", "carbs", "fats"]
+            },
+            guidelines: { type: Type.ARRAY, items: { type: Type.STRING } },
+            recommendedFoods: { type: Type.ARRAY, items: { type: Type.STRING } },
+            restrictedFoods: { type: Type.ARRAY, items: { type: Type.STRING } },
+            plannedMeals: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  id: { type: Type.STRING },
+                  time: { type: Type.STRING },
+                  name: { type: Type.STRING },
+                  notes: { type: Type.STRING }
+                },
+                required: ["id", "time", "name"]
+              }
+            }
+          },
+          required: ["name", "description", "targetMacros", "guidelines", "plannedMeals"]
+        }
+      }
+    });
+    return JSON.parse(response.text || "{}");
+  } catch (error) {
+    console.error("Error analyzing nutrition file:", error);
+    return null;
+  }
+}
