@@ -45,8 +45,10 @@ import {
   Shield,
   Sun,
   Zap,
-  Crown
+  Crown,
+  RefreshCcw
 } from 'lucide-react';
+import { GoogleFitService } from '../services/googleFitService';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, playNotificationSound, getAvatarUrl } from '../lib/utils';
 import Chat from './Chat';
@@ -129,7 +131,13 @@ const StreakDisplay = ({ history }: { history: BodyMetrics[] }) => {
   );
 };
 
-const QuickLog = ({ todayMetrics, onLog }: { todayMetrics: BodyMetrics | null, onLog: (data: Partial<BodyMetrics>) => void }) => {
+const QuickLog = ({ todayMetrics, onLog, profile, onSyncFit, syncingFit }: { 
+  todayMetrics: BodyMetrics | null, 
+  onLog: (data: Partial<BodyMetrics>) => void,
+  profile: UserProfile,
+  onSyncFit: () => void,
+  syncingFit: boolean
+}) => {
   if (todayMetrics && todayMetrics.waterIntake > 0 && todayMetrics.stepCount > 0) return null;
 
   return (
@@ -154,13 +162,24 @@ const QuickLog = ({ todayMetrics, onLog }: { todayMetrics: BodyMetrics | null, o
             </button>
           )}
           {!todayMetrics?.stepCount && (
-            <button 
-              onClick={() => onLog({ stepCount: 5000 })}
-              className="bg-black text-white px-6 py-3 rounded-2xl font-bold text-sm hover:scale-105 transition-transform flex items-center gap-2"
-            >
-              <Footprints className="w-4 h-4" />
-              Log 5k Steps
-            </button>
+            profile.googleFitTokens ? (
+              <button 
+                onClick={onSyncFit}
+                disabled={syncingFit}
+                className="bg-black text-white px-6 py-3 rounded-2xl font-bold text-sm hover:scale-105 transition-transform flex items-center gap-2"
+              >
+                <RefreshCcw className={cn("w-4 h-4", syncingFit && "animate-spin")} />
+                {syncingFit ? 'Syncing...' : 'Sync Steps'}
+              </button>
+            ) : (
+              <button 
+                onClick={() => onLog({ stepCount: 5000 })}
+                className="bg-black text-white px-6 py-3 rounded-2xl font-bold text-sm hover:scale-105 transition-transform flex items-center gap-2"
+              >
+                <Footprints className="w-4 h-4" />
+                Log 5k Steps
+              </button>
+            )
           )}
         </div>
       </div>
@@ -200,6 +219,74 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   const [meals, setMeals] = useState<any[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [activeNutritionPlan, setActiveNutritionPlan] = useState<NutritionPlan | null>(null);
+  const [syncingFit, setSyncingFit] = useState(false);
+
+  const syncGoogleFitSteps = async () => {
+    if (!profile.googleFitTokens) return;
+    setSyncingFit(true);
+    try {
+      const accessToken = await GoogleFitService.getValidAccessToken(user.uid);
+      if (!accessToken) {
+        console.warn('Could not get valid Google Fit access token');
+        setSyncingFit(false);
+        return;
+      }
+
+      const steps = await GoogleFitService.fetchDailySteps(accessToken);
+      
+      const dateStr = format(new Date(), 'yyyy-MM-dd');
+      const q = query(collection(db, 'metrics'), where('clientId', '==', user.uid), where('date', '==', dateStr));
+      const snap = await getDocs(q);
+      
+      if (!snap.empty) {
+        // Only update if steps have increased or if they were 0
+        const currentSteps = snap.docs[0].data().stepCount || 0;
+        if (steps > currentSteps || currentSteps === 0) {
+          await updateDoc(doc(db, 'metrics', snap.docs[0].id), {
+            stepCount: steps,
+            updatedAt: serverTimestamp()
+          });
+        }
+      } else {
+        await addDoc(collection(db, 'metrics'), {
+          clientId: user.uid,
+          date: dateStr,
+          waterIntake: 0,
+          stepCount: steps,
+          calories: 0,
+          createdAt: serverTimestamp()
+        });
+      }
+    } catch (error) {
+      console.error('Error syncing Google Fit:', error);
+    } finally {
+      setSyncingFit(false);
+    }
+  };
+
+  useEffect(() => {
+    if (profile.googleFitTokens && !loading) {
+      // Sync on mount if connected
+      syncGoogleFitSteps();
+      
+      // Also set up an interval to sync every 30 minutes
+      const interval = setInterval(syncGoogleFitSteps, 30 * 60 * 1000);
+      return () => clearInterval(interval);
+    }
+  }, [profile.googleFitTokens, loading, user.uid]);
+
+  const handleConnectGoogleFit = async () => {
+    try {
+      const tokens = await GoogleFitService.connect();
+      await GoogleFitService.saveTokens(user.uid, tokens);
+      // Success will trigger the useEffect above via profile update if listener is active
+      // But we can also trigger manually
+      syncGoogleFitSteps();
+    } catch (error) {
+      console.error('Connection failed:', error);
+      alert('Failed to connect to Google Fit. Please try again.');
+    }
+  };
 
   useEffect(() => {
     if ("Notification" in window && Notification.permission === "default") {
@@ -782,6 +869,9 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
 
                 <QuickLog 
                   todayMetrics={todayMetrics} 
+                  profile={profile}
+                  syncingFit={syncingFit}
+                  onSyncFit={syncGoogleFitSteps}
                   onLog={async (data) => {
                     const dateStr = format(new Date(), 'yyyy-MM-dd');
                     const q = query(collection(db, 'metrics'), where('clientId', '==', user.uid), where('date', '==', dateStr));
@@ -1328,9 +1418,29 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                   </div>
 
                   <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 space-y-6">
-                    <h3 className="font-bold text-lg flex items-center gap-2">
-                      <Footprints className="w-5 h-5 text-blue-500" />
-                      Step Count
+                    <h3 className="font-bold text-lg flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <Footprints className="w-5 h-5 text-blue-500" />
+                        Step Count
+                      </div>
+                      {!profile.googleFitTokens ? (
+                        <button 
+                          onClick={handleConnectGoogleFit}
+                          className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-2 border border-zinc-700"
+                        >
+                          <Settings className="w-3 h-3" />
+                          Connect Fit
+                        </button>
+                      ) : (
+                        <button 
+                          onClick={syncGoogleFitSteps}
+                          disabled={syncingFit}
+                          className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-2 border border-zinc-700"
+                        >
+                          <RefreshCcw className={cn("w-3 h-3", syncingFit && "animate-spin")} />
+                          {syncingFit ? 'Syncing...' : 'Sync Now'}
+                        </button>
+                      )}
                     </h3>
                     <div className="h-[200px] w-full">
                       <ResponsiveContainer width="100%" height="100%">

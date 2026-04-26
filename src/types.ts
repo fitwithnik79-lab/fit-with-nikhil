@@ -25,6 +25,13 @@ export interface UserProfile {
   lastLogin?: any;
   streak?: number;
   badges?: Badge[];
+  googleFitTokens?: {
+    access_token: string;
+    refresh_token?: string;
+    expiry_date?: number;
+    scope?: string;
+    token_type?: string;
+  };
   createdAt?: any;
 }
 
