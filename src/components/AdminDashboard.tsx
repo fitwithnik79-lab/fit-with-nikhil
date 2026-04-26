@@ -110,13 +110,15 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
           if (change.type === "added") {
             const msg = change.doc.data() as Message;
             if (msg.senderId !== user.uid) {
+              // Always play sound and vibrate for incoming messages
+              playNotificationSound();
+
               const client = clients.find(c => c.uid === msg.senderId);
               if ("Notification" in window && Notification.permission === "granted") {
                 new Notification(`New Message from ${client?.displayName || 'Client'}`, {
                   body: msg.text,
                   icon: client?.photoURL || '/favicon.ico'
                 });
-                playNotificationSound();
               }
             }
           }
@@ -128,6 +130,12 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
     });
     return () => unsubscribe();
   }, [user.uid, clients]);
+
+  useEffect(() => {
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }, []);
 
   const unreadMessagesCount = useMemo(() => {
     return messages.filter(m => !m.isRead).length;

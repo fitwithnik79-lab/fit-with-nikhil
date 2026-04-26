@@ -227,12 +227,14 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
           if (change.type === "added") {
             const msg = change.doc.data() as Message;
             if (msg.senderId !== user.uid) {
+              // Always play sound and vibrate for incoming messages
+              playNotificationSound();
+
               if ("Notification" in window && Notification.permission === "granted") {
                 new Notification("New Message from Coach Nik", {
                   body: msg.text,
                   icon: '/favicon.ico'
                 });
-                playNotificationSound();
               }
             }
           }
@@ -512,6 +514,12 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     }
   }, [loading, allWorkouts, allFeedback, meals, user.uid]);
 
+  useEffect(() => {
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }, []);
+
   const handleComplete = async (workout: Workout, exerciseFeedback?: Record<number, { 
     completedWeight: string, 
     completedReps: string, 
@@ -576,11 +584,14 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
       setClientNote('');
       setShowSuccess(true);
       if (selectedWorkout?.id === workout.id) {
-        setSelectedWorkout(null);
+        // We delay closing the modal slightly so the user sees the success state if it's there
+        setTimeout(() => setSelectedWorkout(null), 1000);
       }
       setTimeout(() => setShowSuccess(false), 4000);
     } catch (error) {
       console.error('Error submitting feedback:', error);
+      // Give feedback to the user on error too
+      alert("There was an issue submitting your workout. Please try again. If it persists, please message your coach.");
     } finally {
       setSubmitting(false);
     }

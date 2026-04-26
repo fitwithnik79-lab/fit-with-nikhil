@@ -150,7 +150,8 @@ service cloud.firestore {
 
     match /workouts/{workoutId} {
       allow read: if isAuthenticated() && (request.auth.uid == resource.data.clientId || isAdmin());
-      allow create, update: if isAdmin() && isValidWorkout(request.resource.data);
+      allow update: if (isAuthenticated() && request.auth.uid == resource.data.clientId && isValidWorkout(request.resource.data)) || isAdmin();
+      allow create: if isAdmin() && isValidWorkout(request.resource.data);
       allow delete: if isAdmin();
     }
 
