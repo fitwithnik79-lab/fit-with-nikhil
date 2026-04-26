@@ -29,11 +29,16 @@ async function startServer() {
       return res.status(500).json({ error: 'GOOGLE_FIT_CLIENT_ID is not configured' });
     }
 
-    const oauth2Client = new OAuth2Client(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
+    // Determine redirect URI dynamically based on the current origin
+    const protocol = req.get('x-forwarded-proto') || 'https';
+    const host = req.get('host');
+    const dynamicRedirectUri = `${protocol}://${host}/auth/callback`;
+
+    const oauth2Client = new OAuth2Client(CLIENT_ID, CLIENT_SECRET, dynamicRedirectUri);
 
     const url = oauth2Client.generateAuthUrl({
-      access_type: 'offline', // Critical for refresh token
-      prompt: 'consent',      // Force consent to ensure refresh token is provided
+      access_type: 'offline',
+      prompt: 'consent',
       scope: [
         'openid',
         'email',
@@ -42,7 +47,7 @@ async function startServer() {
       ],
     });
 
-    res.json({ url });
+    res.json({ url, redirectUri: dynamicRedirectUri });
   });
 
   // OAuth Callback Handler
@@ -54,7 +59,11 @@ async function startServer() {
     }
 
     try {
-      const oauth2Client = new OAuth2Client(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
+      const protocol = req.get('x-forwarded-proto') || 'https';
+      const host = req.get('host');
+      const dynamicRedirectUri = `${protocol}://${host}/auth/callback`;
+
+      const oauth2Client = new OAuth2Client(CLIENT_ID, CLIENT_SECRET, dynamicRedirectUri);
       const { tokens } = await oauth2Client.getToken(code);
 
       // Return tokens to the client via postMessage

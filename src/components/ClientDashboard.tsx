@@ -336,6 +336,14 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
 
   const unreadCount = useMemo(() => messages.filter(m => !m.isRead).length, [messages]);
 
+  const isWorkoutCompletedToday = useMemo(() => {
+    return allFeedback.some(f => {
+      if (!f.createdAt || f.workoutId !== currentWorkout?.id) return false;
+      const fDate = (f.createdAt as any).toDate ? (f.createdAt as any).toDate() : new Date(f.createdAt as any);
+      return isSameDay(fDate, new Date());
+    });
+  }, [allFeedback, currentWorkout?.id]);
+
   useEffect(() => {
     if (!user.uid) return;
     const q = query(collection(db, 'nutritionPlans'), where('clientId', '==', user.uid), where('isActive', '==', true), limit(1));
@@ -923,6 +931,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                     setClientNote={setClientNote}
                     submitting={submitting}
                     handleComplete={(feedback) => handleComplete(currentWorkout, feedback)}
+                    isCompletedToday={isWorkoutCompletedToday}
                   />
                 ) : (
                   <div className="py-20 text-center space-y-6">
@@ -1535,6 +1544,11 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                   setClientNote={setClientNote}
                   submitting={submitting}
                   handleComplete={(feedback) => handleComplete(selectedWorkout, feedback)}
+                  isCompletedToday={allFeedback.some(f => {
+                    if (!f.createdAt || f.workoutId !== selectedWorkout.id) return false;
+                    const fDate = (f.createdAt as any).toDate ? (f.createdAt as any).toDate() : new Date(f.createdAt as any);
+                    return isSameDay(fDate, new Date());
+                  })}
                 />
               </div>
             </motion.div>
@@ -2051,7 +2065,8 @@ function WorkoutCard({
   clientNote, 
   setClientNote, 
   submitting, 
-  handleComplete 
+  handleComplete,
+  isCompletedToday
 }: { 
   workout: Workout, 
   onComplete: () => void,
@@ -2066,10 +2081,27 @@ function WorkoutCard({
     completedSets: number, 
     clientNote: string, 
     isCompleted: boolean 
-  }>) => void
+  }>) => void,
+  isCompletedToday: boolean
 }) {
   const [showConfirm, setShowConfirm] = useState(false);
   const [exerciseFeedback, setExerciseFeedback] = useState<Record<number, { completedWeight: string, completedReps: string, completedSets: number, clientNote: string, isCompleted: boolean }>>({});
+
+  useEffect(() => {
+    if (workout.exercises) {
+      const initialFeedback: Record<number, any> = {};
+      workout.exercises.forEach((ex, idx) => {
+        initialFeedback[idx] = {
+          completedWeight: ex.completedWeight || '',
+          completedReps: ex.completedReps || '',
+          completedSets: ex.completedSets || 0,
+          clientNote: ex.clientNote || '',
+          isCompleted: ex.isCompleted || false
+        };
+      });
+      setExerciseFeedback(initialFeedback);
+    }
+  }, [workout.id]);
 
   const updateExerciseFeedback = (idx: number, field: keyof typeof exerciseFeedback[0], value: any) => {
     setExerciseFeedback(prev => ({
@@ -2204,9 +2236,10 @@ function WorkoutCard({
                 <input 
                   type="number"
                   placeholder={ex.sets.toString()}
+                  disabled={isCompletedToday}
                   value={exerciseFeedback[idx]?.completedSets || ''}
                   onChange={(e) => updateExerciseFeedback(idx, 'completedSets', Number(e.target.value))}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-sm focus:ring-1 focus:ring-orange-500 outline-none transition-all"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-sm focus:ring-1 focus:ring-orange-500 outline-none transition-all disabled:opacity-50"
                 />
               </div>
               <div className="space-y-1.5">
@@ -2214,9 +2247,10 @@ function WorkoutCard({
                 <input 
                   type="text"
                   placeholder={ex.reps}
+                  disabled={isCompletedToday}
                   value={exerciseFeedback[idx]?.completedReps || ''}
                   onChange={(e) => updateExerciseFeedback(idx, 'completedReps', e.target.value)}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-sm focus:ring-1 focus:ring-orange-500 outline-none transition-all"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-sm focus:ring-1 focus:ring-orange-500 outline-none transition-all disabled:opacity-50"
                 />
               </div>
               <div className="space-y-1.5">
@@ -2224,9 +2258,10 @@ function WorkoutCard({
                 <input 
                   type="text"
                   placeholder={ex.weight || '0kg'}
+                  disabled={isCompletedToday}
                   value={exerciseFeedback[idx]?.completedWeight || ''}
                   onChange={(e) => updateExerciseFeedback(idx, 'completedWeight', e.target.value)}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-sm focus:ring-1 focus:ring-orange-500 outline-none transition-all"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-sm focus:ring-1 focus:ring-orange-500 outline-none transition-all disabled:opacity-50"
                 />
               </div>
               <div className="space-y-1.5">
@@ -2234,9 +2269,10 @@ function WorkoutCard({
                 <input 
                   type="text"
                   placeholder="e.g. Felt heavy"
+                  disabled={isCompletedToday}
                   value={exerciseFeedback[idx]?.clientNote || ''}
                   onChange={(e) => updateExerciseFeedback(idx, 'clientNote', e.target.value)}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-sm focus:ring-1 focus:ring-orange-500 outline-none transition-all"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-sm focus:ring-1 focus:ring-orange-500 outline-none transition-all disabled:opacity-50"
                 />
               </div>
             </div>
@@ -2244,11 +2280,25 @@ function WorkoutCard({
         ))}
       </div>
 
-      <AnimatePresence>
-        {!showFeedbackForm ? (
+      <AnimatePresence mode="wait">
+        {isCompletedToday ? (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="w-full bg-zinc-900 border border-zinc-800 text-zinc-400 font-bold py-6 rounded-2xl flex flex-col items-center justify-center gap-2 shadow-inner"
+          >
+            <div className="p-2 bg-orange-500/10 rounded-full text-orange-500">
+              <CheckCircle className="w-8 h-8" />
+            </div>
+            <p className="text-xl">Workout Finished for Today!</p>
+            <p className="text-sm font-medium text-zinc-600 uppercase tracking-widest">Great work, keep it up!</p>
+          </motion.div>
+        ) : !showFeedbackForm ? (
           <motion.button
+            key="complete-btn"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
             onClick={handleCompleteClick}
             className="w-full bg-orange-500 text-white font-bold py-5 rounded-2xl hover:bg-orange-600 transition-all shadow-xl shadow-orange-500/20 flex items-center justify-center gap-3 text-lg"
           >
@@ -2257,8 +2307,10 @@ function WorkoutCard({
           </motion.button>
         ) : (
           <motion.div
+            key="feedback-form"
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
             className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 space-y-4"
           >
             <h3 className="font-bold text-xl">How was the session?</h3>
