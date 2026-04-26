@@ -87,7 +87,9 @@ service cloud.firestore {
              (!('height' in data) || data.height is string) &&
              (!('weight' in data) || data.weight is string) &&
              (!('chosenProgram' in data) || data.chosenProgram is string) &&
-             (!('onboardingComplete' in data) || data.onboardingComplete is bool);
+             (!('onboardingComplete' in data) || data.onboardingComplete is bool) &&
+             (!('fcmTokens' in data) || data.fcmTokens is list) &&
+             (!('googleFitTokens' in data) || data.googleFitTokens is map);
     }
 
     function isValidMetric(data) {

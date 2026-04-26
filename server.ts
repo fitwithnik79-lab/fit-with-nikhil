@@ -4,8 +4,18 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { OAuth2Client } from 'google-auth-library';
 import dotenv from 'dotenv';
+import admin from 'firebase-admin';
 
 dotenv.config();
+
+// Try to initialize admin
+try {
+  admin.initializeApp({
+    projectId: process.env.VITE_FIREBASE_PROJECT_ID || 'gen-lang-client-0278884559'
+  });
+} catch (e) {
+  console.log('Firebase admin already initialized or error:', e);
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -107,6 +117,55 @@ async function startServer() {
     } catch (error) {
       console.error('Error refreshing token:', error);
       res.status(500).json({ error: 'Failed to refresh token' });
+    }
+  });
+
+  // API to send push notification
+  app.post('/api/notifications/send', async (req, res) => {
+    const { userId, title, body, data } = req.body;
+    if (!userId || !title || !body) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    try {
+      // Get user tokens from Firestore
+      const userDoc = await admin.firestore().collection('users').doc(userId).get();
+      const userData = userDoc.data();
+      const tokens = userData?.fcmTokens || [];
+
+      if (tokens.length === 0) {
+        return res.json({ success: true, message: 'No tokens found for user' });
+      }
+
+      const message = {
+        notification: {
+          title,
+          body
+        },
+        data: data || {},
+        tokens: tokens
+      };
+
+      const response = await admin.messaging().sendEachForMulticast(message);
+      
+      // Cleanup invalid tokens
+      if (response.failureCount > 0) {
+        const failedTokens: string[] = [];
+        response.responses.forEach((resp, idx) => {
+          if (!resp.success) {
+            failedTokens.push(tokens[idx]);
+          }
+        });
+        
+        await admin.firestore().collection('users').doc(userId).update({
+          fcmTokens: admin.firestore.FieldValue.arrayRemove(...failedTokens)
+        });
+      }
+
+      res.json({ success: true, response });
+    } catch (error) {
+      console.error('Error sending notification:', error);
+      res.status(500).json({ error: 'Failed to send notification' });
     }
   });
 

@@ -15,7 +15,12 @@
         "weight": { "type": "string" },
         "chosenProgram": { "type": "string" },
         "onboardingComplete": { "type": "boolean" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "createdAt": { "type": "string", "format": "date-time" },
+        "fcmTokens": { 
+          "type": "array", 
+          "items": { "type": "string" },
+          "description": "List of FCM registration tokens for push notifications"
+        }
       },
       "required": ["uid", "email", "role"]
     },

@@ -3,6 +3,7 @@ import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp,
 import { db } from '../lib/firebase';
 import { Message, UserProfile } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
+import { triggerPushNotification } from '../lib/notifications';
 import { Send, MessageSquare, Bell, Sparkles, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
@@ -85,6 +86,17 @@ export default function Chat({ currentUser, otherUser, onClose }: ChatProps) {
         isRead: false,
         createdAt: serverTimestamp()
       }).catch(err => handleFirestoreError(err, OperationType.CREATE, 'messages'));
+
+      // Trigger Push Notification if sender is admin and receiver is client
+      if (currentUser.role === 'admin') {
+        const title = `Message from Coach Nik`;
+        triggerPushNotification(otherUser.uid, title, text, { type: 'chat', senderId: currentUser.uid });
+      } else if (otherUser.role === 'admin') {
+        // Optional: Notify coach of client messages
+        const title = `New message from ${currentUser.uid === otherUser.uid ? 'Client' : 'Client'}`; // Needs proper display name if available
+        triggerPushNotification(otherUser.uid, `Message from client`, text, { type: 'chat', senderId: currentUser.uid });
+      }
+
     } catch (error) {
       console.error('Error sending message:', error);
     }

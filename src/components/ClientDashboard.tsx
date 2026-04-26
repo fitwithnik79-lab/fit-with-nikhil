@@ -49,6 +49,7 @@ import {
   RefreshCcw
 } from 'lucide-react';
 import { GoogleFitService } from '../services/googleFitService';
+import { requestNotificationPermission, onForegroundMessage } from '../lib/notifications';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, playNotificationSound, getAvatarUrl } from '../lib/utils';
 import Chat from './Chat';
@@ -289,10 +290,11 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   };
 
   useEffect(() => {
-    if ("Notification" in window && Notification.permission === "default") {
-      Notification.requestPermission();
+    if (user.uid) {
+      requestNotificationPermission(user.uid);
+      onForegroundMessage();
     }
-  }, []);
+  }, [user.uid]);
 
   useEffect(() => {
     if (!user.uid) return;

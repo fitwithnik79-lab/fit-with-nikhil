@@ -5,6 +5,7 @@ import { db } from '../lib/firebase';
 import { UserProfile, Workout, Exercise, Feedback, WorkoutTemplate, BodyMetrics, Message } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { searchExerciseVideos, parseWorkoutFile, analyzeNutritionFile } from '../lib/gemini';
+import { triggerPushNotification } from '../lib/notifications';
 import { SAMPLE_PROGRAMS, WEEKLY_PROGRAMS, WORKOUT_TEMPLATES } from '../constants/workoutTemplates';
 import { NUTRITION_TEMPLATES } from '../constants/nutritionTemplates';
 import { NutritionPlan, NutritionTemplate } from '../types';
@@ -2796,6 +2797,13 @@ function WorkoutManager({ client, initialDate, initialWorkout, onSave, showToast
           type: 'motivation',
           createdAt: serverTimestamp()
         });
+
+        triggerPushNotification(
+          client.uid, 
+          'New Workout Assigned!', 
+          `Coach Nik just assigned a new activity for you. Check it out! 🚀`,
+          { type: 'workout', week, day }
+        );
       }
       onSave?.();
     } catch (error) {
