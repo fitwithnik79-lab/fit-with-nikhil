@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import { OAuth2Client } from 'google-auth-library';
 import dotenv from 'dotenv';
 import admin from 'firebase-admin';
+import { getFirestore as getAdminFirestore, FieldValue } from 'firebase-admin/firestore';
 import { format } from 'date-fns';
 
 dotenv.config();
@@ -36,7 +37,7 @@ try {
 
 // Helper to get firestore instance
 const getFirestore = () => {
-  return DATABASE_ID ? admin.firestore(DATABASE_ID) : admin.firestore();
+  return getAdminFirestore(DATABASE_ID);
 };
 
 async function startServer() {
@@ -216,7 +217,7 @@ async function startServer() {
               clientId: client.uid,
               steps: totalSteps,
               date: dateStr,
-              updatedAt: admin.firestore.FieldValue.serverTimestamp()
+              updatedAt: FieldValue.serverTimestamp()
             }, { merge: true });
 
             // 2. Sync to metrics collection for the app's existing tracking system
@@ -229,7 +230,7 @@ async function startServer() {
             if (!metricsQuery.empty) {
               await firestore.collection('metrics').doc(metricsQuery.docs[0].id).update({
                 stepCount: totalSteps,
-                updatedAt: admin.firestore.FieldValue.serverTimestamp()
+                updatedAt: FieldValue.serverTimestamp()
               });
             } else {
               // Create default metrics for today if they don't exist
@@ -240,8 +241,8 @@ async function startServer() {
                 waterIntake: 0,
                 calories: 0,
                 weight: Number((client as any).weight) || 0,
-                createdAt: admin.firestore.FieldValue.serverTimestamp(),
-                updatedAt: admin.firestore.FieldValue.serverTimestamp()
+                createdAt: FieldValue.serverTimestamp(),
+                updatedAt: FieldValue.serverTimestamp()
               });
             }
 
@@ -300,7 +301,7 @@ async function startServer() {
         });
         
         await getFirestore().collection('users').doc(userId).update({
-          fcmTokens: admin.firestore.FieldValue.arrayRemove(...failedTokens)
+          fcmTokens: FieldValue.arrayRemove(...failedTokens)
         });
       }
 
