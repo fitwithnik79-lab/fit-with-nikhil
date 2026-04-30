@@ -9,7 +9,7 @@ import { triggerPushNotification } from '../lib/notifications';
 import { SAMPLE_PROGRAMS, WEEKLY_PROGRAMS, WORKOUT_TEMPLATES } from '../constants/workoutTemplates';
 import { NUTRITION_TEMPLATES } from '../constants/nutritionTemplates';
 import { NutritionPlan, NutritionTemplate } from '../types';
-import { Plus, Users, Calendar, CheckCircle, ExternalLink, ChevronRight, Search, Activity, Clock, MessageSquare, Trash2, Edit2, ChevronDown, ChevronUp, Save, Download, Layout, Copy, ChevronLeft, Play, Sparkles, Loader2, Droplets, Footprints, Flame, Scale, LayoutDashboard, X, Bell, Send, BookOpen, Layers, Upload, Youtube, Utensils } from 'lucide-react';
+import { Plus, Users, Calendar, CheckCircle, ExternalLink, ChevronRight, Search, Activity, Clock, MessageSquare, Trash2, Edit2, ChevronDown, ChevronUp, Save, Download, Layout, Copy, ChevronLeft, Play, Sparkles, Loader2, Droplets, Footprints, Flame, Scale, LayoutDashboard, X, Bell, Send, BookOpen, Layers, Upload, Youtube, Utensils, Shield, Zap, ArrowRight, Check, Target, RefreshCcw } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, playNotificationSound, getAvatarUrl } from '../lib/utils';
 import Chat from './Chat';
@@ -49,6 +49,8 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
   const [showChat, setShowChat] = useState(false);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [confirmModal, setConfirmModal] = useState<{ title: string, message: string, onConfirm: () => void } | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [dailySteps, setDailySteps] = useState<Record<string, number>>({});
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
@@ -133,6 +135,38 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
   }, [user.uid, clients]);
 
   useEffect(() => {
+    // Fetch today's steps for all clients
+    const today = format(new Date(), 'yyyy-MM-dd');
+    const q = query(collection(db, 'daily_steps'), where('date', '==', today));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const stepsMap: Record<string, number> = {};
+      snapshot.docs.forEach(doc => {
+        const data = doc.data();
+        stepsMap[data.clientId] = data.steps;
+      });
+      setDailySteps(stepsMap);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const syncAthleteData = async () => {
+    setIsSyncing(true);
+    try {
+      const response = await fetch('/api/sync/all-steps', { method: 'POST' });
+      const data = await response.json();
+      if (data.success) {
+        showToast('Athlete data synchronized flawlessly', 'success');
+      } else {
+        showToast('Sync completed with discrepancies', 'error');
+      }
+    } catch (error) {
+      showToast('Synchronization failure', 'error');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  useEffect(() => {
     if ("Notification" in window && Notification.permission === "default") {
       Notification.requestPermission();
     }
@@ -143,79 +177,81 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
   }, [messages]);
 
   return (
-    <div className="space-y-8">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-3xl font-bold tracking-tight">Coach Dashboard</h2>
-          <p className="text-zinc-400">Manage your clients and track their consistency.</p>
+    <div className="space-y-12 pb-24 font-sans">
+      <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-8">
+        <div className="space-y-4">
+          <motion.div 
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            className="inline-flex items-center gap-2 px-3 py-1 bg-orange-500/10 border border-orange-500/20 rounded-full"
+          >
+            <Shield className="w-3.5 h-3.5 text-orange-400" />
+            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-500">Command Center Online</span>
+          </motion.div>
+          <div className="space-y-1">
+            <h2 className="text-5xl md:text-6xl font-black tracking-tighter uppercase leading-[0.85]">
+              Elite <span className="text-orange-500 italic">Coach</span> <br /> 
+              Interface <span className="font-serif italic lowercase font-normal text-zinc-700">v2.0</span>
+            </h2>
+            <p className="text-zinc-500 font-medium text-lg">Overseeing {clients.length} athletes performing at peak capacity.</p>
+          </div>
+          
+          <div className="flex items-center gap-4 mt-6">
+            <button
+              onClick={syncAthleteData}
+              disabled={isSyncing}
+              className={cn(
+                "group flex items-center gap-3 px-6 py-3 bg-zinc-950 border border-white/10 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:border-orange-500/50 transition-all",
+                isSyncing && "opacity-50 cursor-not-allowed"
+              )}
+            >
+              <RefreshCcw className={cn("w-4 h-4 text-orange-500", isSyncing && "animate-spin")} />
+              <span>{isSyncing ? 'Syncing Athletes...' : 'Sync Elite Metrics'}</span>
+            </button>
+            <div className="h-8 w-px bg-white/5" />
+            <div className="flex -space-x-3">
+              {clients.slice(0, 5).map((c, i) => (
+                <div key={i} className="w-8 h-8 rounded-full border-2 border-zinc-900 overflow-hidden shadow-xl ring-2 ring-zinc-950">
+                  <img src={getAvatarUrl(c.email || undefined, c.gender, c.photoURL)} className="w-full h-full object-cover" />
+                </div>
+              ))}
+              {clients.length > 5 && (
+                <div className="w-8 h-8 rounded-full bg-zinc-800 border-2 border-zinc-900 flex items-center justify-center text-[10px] font-black">
+                  +{clients.length - 5}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
         
-        <div className="flex bg-zinc-900 p-1 rounded-xl border border-zinc-800">
-          <button
-            onClick={() => setActiveTab('dash')}
-            className={cn(
-              "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all",
-              activeTab === 'dash' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-zinc-400 hover:text-white"
-            )}
-          >
-            <LayoutDashboard className="w-4 h-4" />
-            Action Center
-          </button>
-          <button
-            onClick={() => setActiveTab('clients')}
-            className={cn(
-              "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all relative",
-              activeTab === 'clients' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-zinc-400 hover:text-white"
-            )}
-          >
-            <Users className="w-4 h-4" />
-            Clients
-            {unreadMessagesCount > 0 && (
-              <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center border-2 border-zinc-900 animate-pulse">
-                {unreadMessagesCount}
-              </span>
-            )}
-          </button>
-          <button
-            onClick={() => setActiveTab('tracker')}
-            className={cn(
-              "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all",
-              activeTab === 'tracker' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-zinc-400 hover:text-white"
-            )}
-          >
-            <Activity className="w-4 h-4" />
-            Consistency
-          </button>
-          <button
-            onClick={() => setActiveTab('calendar')}
-            className={cn(
-              "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all",
-              activeTab === 'calendar' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-zinc-400 hover:text-white"
-            )}
-          >
-            <Calendar className="w-4 h-4" />
-            Calendar
-          </button>
-          <button
-            onClick={() => setActiveTab('reminders')}
-            className={cn(
-              "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all",
-              activeTab === 'reminders' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-zinc-400 hover:text-white"
-            )}
-          >
-            <Bell className="w-4 h-4" />
-            Reminders
-          </button>
-          <button
-            onClick={() => setActiveTab('templates')}
-            className={cn(
-              "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all",
-              activeTab === 'templates' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-zinc-400 hover:text-white"
-            )}
-          >
-            <BookOpen className="w-4 h-4" />
-            Templates
-          </button>
+        <div className="flex flex-wrap bg-zinc-950 p-1.5 rounded-3xl border border-white/5 shadow-2xl backdrop-blur-3xl">
+          {[
+            { id: 'dash', label: 'Actions', icon: LayoutDashboard },
+            { id: 'clients', label: 'Athletes', icon: Users, badge: unreadMessagesCount },
+            { id: 'tracker', label: 'Flow', icon: Activity },
+            { id: 'calendar', label: 'Plan', icon: Calendar },
+            { id: 'reminders', label: 'Alerts', icon: Bell },
+            { id: 'templates', label: 'Vault', icon: BookOpen },
+          ].map((item) => (
+            <button
+              key={item.id}
+              onClick={() => setActiveTab(item.id as any)}
+              className={cn(
+                "flex items-center gap-2 px-5 py-2.5 rounded-2xl text-xs font-black uppercase tracking-widest transition-all relative group",
+                activeTab === item.id 
+                  ? "bg-orange-500 text-white shadow-xl shadow-orange-500/30" 
+                  : "text-zinc-500 hover:text-white hover:bg-white/5"
+              )}
+            >
+              <item.icon className={cn("w-4 h-4 transition-transform group-hover:scale-110", activeTab === item.id ? "text-white" : "text-zinc-600")} />
+              <span>{item.label}</span>
+              {item.badge ? (
+                <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-[10px] font-black rounded-full flex items-center justify-center border-2 border-zinc-950 shadow-lg animate-bounce">
+                  {item.badge}
+                </span>
+              ) : null}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -223,34 +259,71 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
         {activeTab === 'dash' && (
           <motion.div
             key="dash"
-            initial={{ opacity: 0, y: 10 }}
+            initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            className="space-y-8"
+            exit={{ opacity: 0, y: -30 }}
+            className="space-y-12"
           >
+            {/* Mission Stats */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+               {[
+                 { label: 'Active Athletes', value: clients.length, trend: '+12%', icon: Users, color: 'text-blue-500' },
+                 { label: 'Workouts Today', value: feedbacks.filter(f => isToday(f.createdAt?.toDate ? f.createdAt.toDate() : new Date())).length, trend: 'Optimal', icon: Zap, color: 'text-orange-500' },
+                 { label: 'Pending Feedback', value: feedbacks.filter(f => !f.motivationalMessage).length, trend: 'High Priority', icon: MessageSquare, color: 'text-purple-500' },
+                 { label: 'Squad Consistency', value: '88%', trend: 'Stable', icon: Activity, color: 'text-green-500' },
+               ].map((stat, i) => (
+                 <motion.div 
+                   key={i}
+                   initial={{ opacity: 0, y: 20 }}
+                   animate={{ opacity: 1, y: 0, transition: { delay: i * 0.1 } }}
+                   className="bg-zinc-900 border border-white/5 p-8 rounded-[40px] group hover:border-orange-500/50 transition-all shadow-2xl shadow-black/50"
+                 >
+                   <div className="flex justify-between items-start mb-6">
+                      <div className={cn("p-4 rounded-2xl bg-zinc-950 group-hover:scale-110 transition-transform", stat.color)}>
+                        <stat.icon className="w-6 h-6" />
+                      </div>
+                      <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500">{stat.trend}</span>
+                   </div>
+                   <div>
+                      <p className="text-4xl font-black tracking-tighter mb-1">{stat.value}</p>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-zinc-600">{stat.label}</p>
+                   </div>
+                 </motion.div>
+               ))}
+            </div>
+
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              {/* Priority Feed */}
-              <div className="lg:col-span-2 space-y-6">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xl font-bold flex items-center gap-2">
-                    <Sparkles className="w-5 h-5 text-orange-500" />
-                    Priority Feed
+              {/* Priority Intelligence Feed */}
+              <div className="lg:col-span-2 space-y-8">
+                <div className="flex items-center justify-between px-2">
+                  <h3 className="text-2xl font-black uppercase italic tracking-tighter flex items-center gap-3">
+                    <Sparkles className="w-6 h-6 text-orange-500" />
+                    Intelligence <span className="text-zinc-700">Feed</span>
                   </h3>
-                  <span className="text-xs font-bold text-zinc-500 uppercase tracking-widest bg-zinc-900 px-3 py-1 rounded-full border border-zinc-800">
-                    {feedbacks.length} New Updates
-                  </span>
+                  <div className="flex gap-2">
+                    <span className="px-3 py-1 bg-zinc-900 border border-white/5 rounded-full text-[10px] font-black uppercase tracking-widest text-zinc-500">
+                      Syncing Live
+                    </span>
+                  </div>
                 </div>
 
                 <div className="space-y-4">
-                  {/* Recent Messages Section */}
+                  {/* Unread Message Alert */}
                   {messages.some(m => !m.isRead) && (
-                    <div className="bg-orange-500/10 border border-orange-500/30 rounded-3xl p-4 mb-4">
-                      <h4 className="text-sm font-bold text-orange-500 flex items-center gap-2 mb-3 px-2">
-                        <MessageSquare className="w-4 h-4" />
-                        Unread Messages
-                      </h4>
-                      <div className="space-y-2">
-                        {messages.filter(m => !m.isRead).slice(0, 3).map(m => {
+                    <motion.div 
+                      layout
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className="bg-orange-500/5 border border-orange-500/20 rounded-[32px] p-6 mb-8"
+                    >
+                      <div className="flex items-center justify-between mb-4 px-2">
+                        <h4 className="text-xs font-black text-orange-500 uppercase tracking-widest flex items-center gap-2">
+                          <MessageSquare className="w-4 h-4" />
+                          Pending Communications
+                        </h4>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {messages.filter(m => !m.isRead).slice(0, 4).map(m => {
                           const client = clients.find(c => c.uid === m.senderId);
                           return (
                             <button 
@@ -260,135 +333,148 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
                                 setActiveTab('clients');
                                 setClientViewTab('chat');
                               }}
-                              className="w-full bg-zinc-950 p-3 rounded-2xl border border-zinc-800 flex items-center justify-between hover:border-orange-500/50 transition-all group"
+                              className="bg-zinc-900 border border-white/5 p-4 rounded-2xl flex items-center gap-4 hover:border-orange-500/50 transition-all group group relative overflow-hidden"
                             >
-                              <div className="flex items-center gap-3">
-                                <div className="w-8 h-8 rounded-full bg-zinc-900 overflow-hidden border border-zinc-800">
-                                  <img 
-                                    src={getAvatarUrl(client?.email || undefined, client?.gender, client?.photoURL)} 
-                                    alt={client?.displayName} 
-                                    className="w-full h-full object-cover"
-                                  />
-                                </div>
-                                <div className="text-left">
-                                  <p className="text-xs font-bold text-white group-hover:text-orange-500">{client?.displayName}</p>
-                                  <p className="text-[10px] text-zinc-500 truncate max-w-[200px]">{m.text}</p>
-                                </div>
+                              <div className="w-10 h-10 rounded-xl bg-orange-500/10 flex items-center justify-center shrink-0">
+                                <img 
+                                  src={getAvatarUrl(client?.email || undefined, client?.gender, client?.photoURL)} 
+                                  alt={client?.displayName} 
+                                  className="w-full h-full object-cover rounded-xl"
+                                />
                               </div>
-                              <span className="text-[9px] font-bold text-orange-500 uppercase">Reply</span>
+                              <div className="text-left min-w-0">
+                                <p className="text-xs font-black text-white group-hover:text-orange-500 transition-colors truncate">{client?.displayName}</p>
+                                <p className="text-[10px] text-zinc-500 truncate">{m.text}</p>
+                              </div>
+                              <ArrowRight className="w-4 h-4 text-orange-500 absolute -right-full group-hover:right-4 transition-all" />
                             </button>
                           );
                         })}
                       </div>
-                    </div>
+                    </motion.div>
                   )}
+                  <div className="grid grid-cols-1 gap-4">
+                    {feedbacks.slice(0, 12).map((feedback, idx) => {
+                      const client = clients.find(c => c.uid === feedback.clientId);
+                      return (
+                        <motion.div 
+                          key={feedback.id} 
+                          initial={{ opacity: 0, x: -20 }}
+                          animate={{ opacity: 1, x: 0, transition: { delay: idx * 0.05 } }}
+                          className="bg-zinc-900/50 border border-white/5 rounded-[32px] p-8 hover:bg-zinc-900 group transition-all shadow-xl shadow-black/20"
+                        >
+                          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                            <div className="flex items-center gap-6">
+                              <div className="relative">
+                                <div className="w-16 h-16 rounded-[24px] overflow-hidden border-2 border-white/5 shadow-2xl">
+                                  <img 
+                                    src={getAvatarUrl(client?.email || undefined, client?.gender, client?.photoURL)} 
+                                    alt={client?.displayName} 
+                                    className="w-full h-full object-cover"
+                                    referrerPolicy="no-referrer"
+                                  />
+                                </div>
+                                <div className={cn(
+                                  "absolute -bottom-2 -right-2 p-1.5 rounded-xl border-2 border-zinc-900 shadow-xl",
+                                  feedback.completionStatus ? "bg-green-500" : "bg-red-500"
+                                )}>
+                                  {feedback.completionStatus ? <Check className="w-3 h-3 text-white" /> : <X className="w-3 h-3 text-white" />}
+                                </div>
+                              </div>
+                              <div>
+                                <h4 className="text-xl font-black text-white group-hover:text-orange-500 transition-colors leading-none mb-1">
+                                  {client?.displayName || 'Unknown Athlete'}
+                                </h4>
+                                <div className="flex items-center gap-3">
+                                  <p className="text-zinc-500 text-[10px] font-black uppercase tracking-widest bg-white/5 px-2 py-0.5 rounded">
+                                    Week {feedback.weekNumber} • Day {feedback.dayNumber}
+                                  </p>
+                                  <p className="text-zinc-600 text-[10px] font-bold">
+                                    {feedback.createdAt ? format(feedback.createdAt.toDate(), 'h:mm a') : 'Just now'}
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
 
-                  {feedbacks.slice(0, 10).map((feedback) => {
-                    const client = clients.find(c => c.uid === feedback.clientId);
-                    return (
-                      <div 
-                        key={feedback.id} 
-                        className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 hover:border-orange-500/30 transition-all group"
-                      >
-                        <div className="flex items-start justify-between gap-4">
-                          <div className="flex items-center gap-4">
-                            <div className="w-12 h-12 rounded-full overflow-hidden border-2 border-zinc-800">
-                              <img 
-                                src={getAvatarUrl(client?.email || undefined, client?.gender, client?.photoURL)} 
-                                alt={client?.displayName} 
-                                className="w-full h-full object-cover"
-                                referrerPolicy="no-referrer"
-                              />
-                            </div>
-                            <div>
-                              <h4 className="font-bold text-white group-hover:text-orange-500 transition-colors">
-                                {client?.displayName || 'Unknown Client'}
-                              </h4>
-                              <p className="text-zinc-500 text-xs">
-                                Completed Week {feedback.weekNumber} • Day {feedback.dayNumber}
-                              </p>
+                            <div className="flex items-center gap-3">
+                               <button 
+                                 onClick={() => {
+                                   setSelectedClient(client || null);
+                                   setActiveTab('clients');
+                                   setClientViewTab('chat');
+                                 }}
+                                 className="px-6 py-2.5 bg-orange-500 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-orange-600 transition-all shadow-lg shadow-orange-500/20"
+                               >
+                                 Respond
+                               </button>
+                               <button 
+                                 onClick={() => {
+                                   setSelectedClient(client || null);
+                                   setActiveTab('clients');
+                                   setClientViewTab('dashboard');
+                                 }}
+                                 className="px-6 py-2.5 bg-zinc-800 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-zinc-700 transition-all"
+                               >
+                                 Analysis
+                               </button>
                             </div>
                           </div>
-                          <div className="text-right">
-                            <p className="text-zinc-500 text-[10px] uppercase font-bold tracking-widest">
-                              {feedback.createdAt ? format(feedback.createdAt.toDate(), 'h:mm a') : 'Just now'}
-                            </p>
-                            <div className={cn(
-                              "mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-tighter",
-                              feedback.completionStatus ? "bg-green-500/10 text-green-500" : "bg-red-500/10 text-red-500"
-                            )}>
-                              {feedback.completionStatus ? <CheckCircle className="w-3 h-3" /> : <X className="w-3 h-3" />}
-                              {feedback.completionStatus ? 'Success' : 'Struggled'}
+                          
+                          {feedback.clientNote && (
+                            <div className="mt-8 relative">
+                               <div className="absolute left-0 top-0 bottom-0 w-1 bg-orange-500 rounded-full" />
+                               <p className="text-sm text-zinc-400 pl-6 italic font-serif py-1">
+                                 "{feedback.clientNote}"
+                               </p>
                             </div>
-                          </div>
-                        </div>
-                        
-                        {feedback.clientNote && (
-                          <div className="mt-4 p-4 bg-zinc-950 rounded-2xl border border-zinc-800 italic text-zinc-400 text-sm">
-                            "{feedback.clientNote}"
-                          </div>
-                        )}
-
-                        <div className="mt-6 flex items-center gap-3">
-                          <button 
-                            onClick={() => {
-                              setSelectedClient(client || null);
-                              setActiveTab('clients');
-                              setClientViewTab('chat');
-                            }}
-                            className="flex-1 bg-white text-black py-2 rounded-xl font-bold text-xs hover:bg-zinc-200 transition-colors flex items-center justify-center gap-2"
-                          >
-                            <MessageSquare className="w-3 h-3" />
-                            Send Motivation
-                          </button>
-                          <button 
-                            onClick={() => {
-                              setSelectedClient(client || null);
-                              setActiveTab('clients');
-                              setClientViewTab('dashboard');
-                            }}
-                            className="px-4 py-2 bg-zinc-800 text-white rounded-xl font-bold text-xs hover:bg-zinc-700 transition-colors"
-                          >
-                            View Stats
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
+                          )}
+                        </motion.div>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
 
-              {/* Sidebar Stats */}
-              <div className="space-y-6">
-                <div className="bg-orange-500 rounded-[32px] p-8 text-black shadow-2xl shadow-orange-500/20">
-                  <h3 className="text-2xl font-black uppercase tracking-tight leading-none mb-2">Daily Goal</h3>
-                  <p className="text-black/70 font-medium mb-6">Help 5 clients hit their targets today.</p>
-                  <div className="space-y-4">
-                    <div className="flex justify-between items-end">
-                      <span className="text-xs font-bold uppercase tracking-widest">Progress</span>
-                      <span className="text-2xl font-black">3/5</span>
+              {/* Sidebar Logic Panel */}
+              <div className="space-y-8">
+                <div className="bg-orange-500 rounded-[48px] p-10 text-white shadow-2xl shadow-orange-500/30 relative overflow-hidden group">
+                  <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
+                    <Target className="w-48 h-48" />
+                  </div>
+                  <div className="relative z-10 space-y-8">
+                    <div>
+                      <h3 className="text-3xl font-black uppercase tracking-tighter leading-none mb-2">Impact Goal</h3>
+                      <p className="text-orange-100 font-medium">Daily response target for athletes.</p>
                     </div>
-                    <div className="w-full h-3 bg-black/10 rounded-full overflow-hidden">
-                      <motion.div 
-                        initial={{ width: 0 }}
-                        animate={{ width: '60%' }}
-                        className="h-full bg-black" 
-                      />
+                    
+                    <div className="space-y-4">
+                      <div className="flex justify-between items-end">
+                        <span className="text-[10px] font-black uppercase tracking-widest opacity-70">Progress</span>
+                        <span className="text-5xl font-black italic">3<span className="text-2xl opacity-50">/10</span></span>
+                      </div>
+                      <div className="w-full h-3 bg-black/10 rounded-full overflow-hidden backdrop-blur-sm">
+                        <motion.div 
+                          initial={{ width: 0 }}
+                          animate={{ width: '30%' }}
+                          className="h-full bg-white shadow-[0_0_15px_rgba(255,255,255,0.5)]" 
+                        />
+                      </div>
+                      <p className="text-[10px] font-black uppercase tracking-widest opacity-60">7 athletes waiting for direction</p>
                     </div>
                   </div>
                 </div>
 
-                <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 space-y-4">
-                  <h4 className="font-bold text-sm uppercase tracking-widest text-zinc-500">Inactive Clients</h4>
-                  <div className="space-y-3">
+                <div className="bg-zinc-900/50 border border-white/5 rounded-[40px] p-8 space-y-8">
+                  <h4 className="text-xs font-black uppercase tracking-widest text-zinc-500 border-b border-white/5 pb-4">Athletes in Stagnation</h4>
+                  <div className="space-y-4">
                     {clients.filter(c => {
                       if (!c.lastLogin) return true;
-                      const lastLoginDate = c.lastLogin.toDate();
+                      const lastLoginDate = c.lastLogin.toDate ? c.lastLogin.toDate() : new Date(c.lastLogin);
                       return differenceInDays(new Date(), lastLoginDate) > 3;
                     }).slice(0, 5).map(c => (
-                      <div key={c.uid} className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full overflow-hidden border border-zinc-800">
+                      <div key={c.uid} className="flex items-center justify-between group">
+                        <div className="flex items-center gap-4">
+                          <div className="w-10 h-10 rounded-xl overflow-hidden border border-white/5 grayscale group-hover:grayscale-0 transition-all shadow-xl">
                             <img 
                               src={getAvatarUrl(c.email || undefined, c.gender, c.photoURL)} 
                               alt={c.displayName} 
@@ -396,9 +482,24 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
                               referrerPolicy="no-referrer"
                             />
                           </div>
-                          <span className="text-sm font-medium text-zinc-300">{c.displayName}</span>
+                          <div>
+                            <p className="text-xs font-black text-white group-hover:text-orange-500 transition-colors uppercase">{c.displayName}</p>
+                            <p className="text-[9px] font-black text-red-500 uppercase flex items-center gap-1">
+                              <Clock className="w-2.5 h-2.5" />
+                              {c.lastLogin ? format(c.lastLogin.toDate ? c.lastLogin.toDate() : new Date(c.lastLogin), 'MMM d') : 'Never'}
+                            </p>
+                          </div>
                         </div>
-                        <span className="text-[10px] font-bold text-red-500 uppercase">3+ Days</span>
+                        <button 
+                          onClick={() => {
+                            setSelectedClient(c);
+                            setActiveTab('clients');
+                            setClientViewTab('chat');
+                          }}
+                          className="p-3 bg-zinc-950 rounded-2xl border border-white/5 hover:border-orange-500/50 text-orange-500 transition-all"
+                        >
+                           <Send className="w-4 h-4" />
+                        </button>
                       </div>
                     ))}
                   </div>
@@ -408,7 +509,7 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
           </motion.div>
         )}
 
-        {activeTab === 'clients' ? (
+        {activeTab === 'clients' && (
           <motion.div
             key="clients"
             initial={{ opacity: 0, y: 10 }}
@@ -572,7 +673,9 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
               )}
             </div>
           </motion.div>
-        ) : activeTab === 'calendar' ? (
+        )}
+
+        {activeTab === 'calendar' && (
           <motion.div
             key="calendar"
             initial={{ opacity: 0, y: 10 }}
@@ -581,7 +684,9 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
           >
             <CalendarView clients={clients} showToast={showToast} confirmAction={confirmAction} />
           </motion.div>
-        ) : activeTab === 'reminders' ? (
+        )}
+
+        {activeTab === 'reminders' && (
           <motion.div
             key="reminders"
             initial={{ opacity: 0, y: 10 }}
@@ -591,7 +696,9 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
           >
             <RemindersView clients={clients} showToast={showToast} currentUser={user} />
           </motion.div>
-        ) : activeTab === 'templates' ? (
+        )}
+
+        {activeTab === 'templates' && (
           <motion.div
             key="templates"
             initial={{ opacity: 0, y: 10 }}
@@ -600,60 +707,139 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
           >
             <TemplatesView clients={clients} showToast={showToast} />
           </motion.div>
-        ) : (
+        )}
+
+        {activeTab === 'tracker' && (
           <motion.div
-            key="tracker"
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
-            className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden"
+            className="space-y-8"
           >
-            <div className="p-6 border-b border-zinc-800 flex items-center justify-between">
-              <h3 className="font-bold text-xl">Global Consistency Tracker</h3>
-              <div className="flex items-center gap-2 text-sm text-zinc-400">
-                <Clock className="w-4 h-4" />
-                Real-time updates
-              </div>
+            <div className="flex items-center justify-between">
+               <h3 className="text-3xl font-black uppercase italic tracking-tighter flex items-center gap-3">
+                <Activity className="w-8 h-8 text-orange-500" />
+                Athlete <span className="text-zinc-700">Consistency Flow</span>
+              </h3>
+              <button 
+                onClick={syncAthleteData}
+                className="flex items-center gap-2 px-4 py-2 bg-zinc-900 border border-white/5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-zinc-800 transition-colors"
+              >
+                <RefreshCcw className={cn("w-3 h-3 text-orange-500", isSyncing && "animate-spin")} />
+                Refresh Flow
+              </button>
             </div>
-            
-            <div className="divide-y divide-zinc-800">
-              {feedbacks.length > 0 ? (
-                feedbacks.map((fb) => {
-                  const client = clients.find(c => c.uid === fb.clientId);
-                  return (
-                    <div key={fb.id} className="p-6 flex items-start justify-between hover:bg-zinc-800/50 transition-colors">
-                      <div className="flex gap-4">
-                        <div className={cn(
-                          "p-2 rounded-full",
-                          fb.completionStatus ? "bg-green-500/10 text-green-500" : "bg-red-500/10 text-red-500"
-                        )}>
-                          {fb.completionStatus ? <CheckCircle className="w-6 h-6" /> : <Activity className="w-6 h-6" />}
-                        </div>
-                        <div>
-                          <div className="font-bold text-lg">{client?.displayName || 'Unknown Client'}</div>
-                          <div className="text-zinc-400 text-sm mb-2">
-                            Completed Week {fb.weekNumber}, Day {fb.dayNumber}
+
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+              {/* Daily Step Leaderboard */}
+              <div className="lg:col-span-1 space-y-6">
+                <div className="bg-zinc-900/50 border border-white/5 rounded-[40px] p-8 space-y-8">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-black uppercase tracking-widest text-zinc-500">Step Dominance</h4>
+                    <Footprints className="w-4 h-4 text-orange-500" />
+                  </div>
+                  <div className="space-y-6">
+                    {clients
+                      .sort((a, b) => (dailySteps[b.uid] || 0) - (dailySteps[a.uid] || 0))
+                      .slice(0, 10)
+                      .map((c, i) => (
+                      <div key={c.uid} className="flex items-center justify-between group">
+                        <div className="flex items-center gap-4">
+                          <span className="text-[10px] font-black text-zinc-700 w-4">#{(i + 1).toString().padStart(2, '0')}</span>
+                          <div className="w-10 h-10 rounded-xl overflow-hidden border border-white/5 shadow-xl">
+                            <img 
+                              src={getAvatarUrl(c.email || undefined, c.gender, c.photoURL)} 
+                              alt={c.displayName} 
+                              className="w-full h-full object-cover"
+                            />
                           </div>
-                          {fb.clientNote && (
-                            <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-800 text-sm italic text-zinc-300">
-                              "{fb.clientNote}"
-                            </div>
-                          )}
+                          <div>
+                            <p className="text-xs font-black text-white group-hover:text-orange-500 transition-colors uppercase truncate max-w-[80px]">{c.displayName}</p>
+                            <p className="text-[10px] font-black text-zinc-600 uppercase tracking-tighter">Athletic Rank</p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-sm font-black text-white italic">{(dailySteps[c.uid] || 0).toLocaleString()}</p>
+                          <p className="text-[9px] font-black text-zinc-600 uppercase">Steps</p>
                         </div>
                       </div>
-                      <div className="text-right">
-                        <div className="text-xs text-zinc-500">
-                          {fb.createdAt?.toDate ? fb.createdAt.toDate().toLocaleDateString() : 'Just now'}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })
-              ) : (
-                <div className="p-12 text-center text-zinc-500">
-                  No activity recorded yet.
+                    ))}
+                  </div>
                 </div>
-              )}
+              </div>
+
+              {/* Feedback History Timeline */}
+              <div className="lg:col-span-3">
+                <div className="bg-zinc-900 border border-white/5 rounded-[48px] overflow-hidden">
+                  <div className="p-10 border-b border-white/5 flex items-center justify-between bg-zinc-950/50">
+                    <div className="space-y-1">
+                      <h3 className="font-black text-2xl uppercase tracking-tighter">Performance Log</h3>
+                      <p className="text-xs text-zinc-500 font-medium uppercase tracking-widest">Real-time Athlete Output</p>
+                    </div>
+                  </div>
+                  
+                  <div className="divide-y divide-white/5 bg-zinc-900/30">
+                    {feedbacks.length > 0 ? (
+                      feedbacks.map((fb) => {
+                        const client = clients.find(c => c.uid === fb.clientId);
+                        return (
+                          <div key={fb.id} className="p-10 flex flex-col md:flex-row md:items-center justify-between hover:bg-zinc-800/30 transition-all group">
+                            <div className="flex gap-8">
+                              <div className={cn(
+                                "p-5 rounded-[24px] shadow-2xl transition-transform group-hover:scale-110",
+                                fb.completionStatus ? "bg-green-500/10 text-green-500" : "bg-red-500/10 text-red-500"
+                              )}>
+                                {fb.completionStatus ? <CheckCircle className="w-8 h-8" /> : <Activity className="w-8 h-8" />}
+                              </div>
+                              <div className="space-y-3">
+                                <div className="flex items-center gap-4">
+                                  <div className="font-black text-2xl group-hover:text-orange-500 transition-colors">{client?.displayName || 'Unknown Athlete'}</div>
+                                  <div className={cn(
+                                    "px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-[0.2em]",
+                                    fb.completionStatus ? "bg-green-500/10 text-green-500" : "bg-red-500/10 text-red-500"
+                                  )}>
+                                    {fb.completionStatus ? 'Peak Performance' : 'Resistance Identified'}
+                                  </div>
+                                </div>
+                                <div className="text-zinc-500 font-black text-[10px] uppercase tracking-widest flex items-center gap-2">
+                                  <Layout className="w-3.5 h-3.5" />
+                                  Cycle Week {fb.weekNumber} • Day {fb.dayNumber}
+                                </div>
+                                {fb.clientNote && (
+                                  <div className="bg-zinc-950/80 p-5 rounded-[24px] border border-white/5 text-sm italic text-zinc-400 font-serif max-w-xl">
+                                    "{fb.clientNote}"
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                            <div className="mt-6 md:mt-0 flex flex-col items-end gap-4">
+                              <div className="text-[10px] font-black text-zinc-600 uppercase tracking-widest flex items-center gap-2 bg-zinc-950 px-3 py-1 rounded-lg">
+                                <Clock className="w-3 h-3" />
+                                {fb.createdAt?.toDate ? format(fb.createdAt.toDate(), 'MMM d, h:mm a') : 'Live Now'}
+                              </div>
+                              <button 
+                                onClick={() => {
+                                  setSelectedClient(client || null);
+                                  setActiveTab('clients');
+                                  setClientViewTab('chat');
+                                }}
+                                className="px-6 py-2 bg-white text-black rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-orange-500 hover:text-white transition-all shadow-xl shadow-black/50"
+                              >
+                                Brief Athlete
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <div className="p-24 text-center">
+                        <Activity className="w-16 h-16 text-zinc-800 mx-auto mb-6 animate-pulse" />
+                        <p className="text-zinc-500 font-black uppercase tracking-widest italic">Scanning for athlete activity...</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
           </motion.div>
         )}
