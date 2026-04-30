@@ -28,6 +28,7 @@ import {
   User as UserIcon,
   ChevronLeft,
   Clock,
+  ArrowRight,
   MessageCircle,
   Droplets,
   Footprints,
@@ -84,7 +85,15 @@ import {
   differenceInDays
 } from 'date-fns';
 
-const GoalsAndHabits = ({ habits, habitLogs, goals, user, profile }: { habits: Habit[], habitLogs: HabitLog[], goals: Goal[], user: User, profile: UserProfile }) => {
+const GoalsAndHabits = ({ habits, habitLogs, goals, user, profile, adminProfile, sendAutomatedCoachMessage }: { 
+  habits: Habit[], 
+  habitLogs: HabitLog[], 
+  goals: Goal[], 
+  user: User, 
+  profile: UserProfile,
+  adminProfile: UserProfile | null,
+  sendAutomatedCoachMessage: (text: string, type?: 'motivation' | 'reminder') => Promise<void>
+}) => {
   const [showAddHabit, setShowAddHabit] = useState(false);
   const [showAddGoal, setShowAddGoal] = useState(false);
   const [newHabit, setNewHabit] = useState({ title: '', frequency: 'daily' as const, category: 'health', icon: 'zap' });
@@ -145,6 +154,19 @@ const GoalsAndHabits = ({ habits, habitLogs, goals, user, profile }: { habits: H
         status: 'in-progress',
         createdAt: serverTimestamp()
       });
+
+      // Notify the coach about the new goal
+      if (adminProfile) {
+        await addDoc(collection(db, 'messages'), {
+          senderId: user.uid,
+          receiverId: adminProfile.uid,
+          text: `NEW GOAL SET! ${profile.displayName} has committed to a new target: "${newGoal.title}" (${newGoal.targetValue} ${newGoal.unit}). Let's help them get there! 🎯`,
+          isRead: false,
+          type: 'motivation',
+          createdAt: serverTimestamp()
+        });
+      }
+
       setNewGoal({ title: '', targetValue: 0, unit: '', deadline: '', category: 'fitness' });
       setShowAddGoal(false);
     } catch (error) {
@@ -156,11 +178,32 @@ const GoalsAndHabits = ({ habits, habitLogs, goals, user, profile }: { habits: H
 
   const updateGoalProgress = async (goalId: string, current: number, target: number) => {
     try {
-      const status = current >= target ? 'completed' : 'in-progress';
+      const isAchieved = current >= target;
+      const status = isAchieved ? 'completed' : 'in-progress';
+      
+      const goalDoc = goals.find(g => g.id === goalId);
+      const wasAlreadyCompleted = goalDoc?.status === 'completed';
+
       await updateDoc(doc(db, 'goals', goalId), {
         currentValue: current,
         status
       });
+
+      if (isAchieved && !wasAlreadyCompleted) {
+        await sendAutomatedCoachMessage(`Incredible work! You just smashed your goal: "${goalDoc?.title}". Your dedication is truly paying off. Let's set the bar even higher! 🏆`, 'motivation');
+        
+        // Also notify the coach
+        if (adminProfile) {
+          await addDoc(collection(db, 'messages'), {
+            senderId: user.uid,
+            receiverId: adminProfile.uid,
+            text: `GOAL ACHIEVED! ${profile.displayName} has completed their goal: "${goalDoc?.title}". Time to celebrate and set new targets!`,
+            isRead: false,
+            type: 'motivation',
+            createdAt: serverTimestamp()
+          });
+        }
+      }
     } catch (error) {
       console.error('Error updating goal:', error);
     }
@@ -2154,6 +2197,8 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                   goals={goals} 
                   user={user} 
                   profile={profile} 
+                  adminProfile={adminProfile}
+                  sendAutomatedCoachMessage={sendAutomatedCoachMessage}
                 />
               </motion.div>
             )}
@@ -2203,17 +2248,20 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
               className="relative w-full max-w-3xl bg-zinc-900 border border-zinc-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
             >
-              <div className="p-6 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/50">
+              <div className="p-8 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/50 backdrop-blur-xl relative">
+                <div className="absolute bottom-0 left-0 h-1 bg-orange-500 transition-all duration-500 ease-out" 
+                     style={{ width: `${(allFeedback.some(f => f.workoutId === selectedWorkout.id) ? 100 : 0)}%` }} />
                 <div>
-                  <div className="flex items-center gap-2 text-orange-500 font-bold text-xs uppercase tracking-widest mb-1">
-                    <CalendarIcon className="w-3 h-3" />
-                    Week {selectedWorkout.weekNumber} • Day {selectedWorkout.dayNumber}
+                  <div className="flex items-center gap-3 text-orange-500 font-black text-[10px] uppercase tracking-[0.2em] mb-2">
+                    <div className="p-1 px-2 bg-orange-500/10 rounded-md border border-orange-500/20">
+                      Week {selectedWorkout.weekNumber} • Day {selectedWorkout.dayNumber}
+                    </div>
                   </div>
-                  <h3 className="font-bold text-xl">Workout Details</h3>
+                  <h3 className="font-black text-3xl italic tracking-tighter uppercase leading-none">Assemble <span className="text-orange-500">Power</span></h3>
                 </div>
                 <button 
                   onClick={() => setSelectedWorkout(null)}
-                  className="p-2 hover:bg-zinc-800 rounded-xl transition-colors text-zinc-500 hover:text-white"
+                  className="p-3 bg-zinc-800 hover:bg-zinc-700 rounded-2xl transition-all text-zinc-400 hover:text-white"
                 >
                   <X className="w-6 h-6" />
                 </button>
@@ -2821,15 +2869,28 @@ function WorkoutCard({
     <div className="space-y-6">
       <div className="flex items-end justify-between px-2">
         <div>
-          <div className="flex items-center gap-2 text-orange-500 font-bold text-sm uppercase tracking-widest mb-1">
-            <CalendarIcon className="w-4 h-4" />
-            Week {workout.weekNumber} • Day {workout.dayNumber}
+          <div className="flex items-center gap-2 text-zinc-500 font-bold text-[10px] uppercase tracking-[0.2em] mb-2">
+            <Activity className="w-4 h-4 text-orange-500" />
+            Active Session
           </div>
-          <h2 className="text-3xl font-bold tracking-tight">Workout Routine</h2>
+          <h2 className="text-4xl font-black tracking-tighter uppercase italic leading-none">Training <span className="text-orange-500">Protocol</span></h2>
         </div>
         <div className="text-right">
-          <span className="text-zinc-500 text-sm font-medium">{workout.exercises.length} Exercises</span>
+          <div className="text-3xl font-black italic tracking-tighter text-white">
+            {Object.values(exerciseFeedback).filter(f => f.isCompleted).length}
+            <span className="text-zinc-600 text-sm not-italic ml-1">/ {workout.exercises.length}</span>
+          </div>
+          <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Exercises Locked</p>
         </div>
+      </div>
+
+      {/* Progress Bar */}
+      <div className="h-1.5 w-full bg-zinc-800 rounded-full overflow-hidden">
+        <motion.div 
+          initial={{ width: 0 }}
+          animate={{ width: `${(Object.values(exerciseFeedback).filter(f => f.isCompleted).length / workout.exercises.length) * 100}%` }}
+          className="h-full bg-gradient-to-r from-orange-600 to-orange-400"
+        />
       </div>
 
       <div className="space-y-4">
@@ -2925,49 +2986,69 @@ function WorkoutCard({
               </a>
             )}
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4 pt-4 border-t border-zinc-800/50">
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Actual Sets</label>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6 pt-6 border-t border-zinc-800/50">
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-1">
+                  <div className="w-4 h-4 bg-zinc-800 rounded-md flex items-center justify-center">
+                    <Activity className="w-2.5 h-2.5" />
+                  </div>
+                  Actual Sets
+                </div>
                 <input 
                   type="number"
                   placeholder={ex.sets.toString()}
                   disabled={isCompletedToday}
                   value={exerciseFeedback[idx]?.completedSets || ''}
                   onChange={(e) => updateExerciseFeedback(idx, 'completedSets', Number(e.target.value))}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-sm focus:ring-1 focus:ring-orange-500 outline-none transition-all disabled:opacity-50"
+                  className="w-full bg-zinc-950/50 border border-zinc-800 rounded-2xl px-4 py-3 text-sm focus:ring-1 focus:ring-orange-500 outline-none transition-all disabled:opacity-50 hover:bg-zinc-950"
                 />
               </div>
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Actual Reps</label>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-1">
+                  <div className="w-4 h-4 bg-zinc-800 rounded-md flex items-center justify-center">
+                    <Zap className="w-2.5 h-2.5" />
+                  </div>
+                  Actual Reps
+                </div>
                 <input 
                   type="text"
                   placeholder={ex.reps}
                   disabled={isCompletedToday}
                   value={exerciseFeedback[idx]?.completedReps || ''}
                   onChange={(e) => updateExerciseFeedback(idx, 'completedReps', e.target.value)}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-sm focus:ring-1 focus:ring-orange-500 outline-none transition-all disabled:opacity-50"
+                  className="w-full bg-zinc-950/50 border border-zinc-800 rounded-2xl px-4 py-3 text-sm focus:ring-1 focus:ring-orange-500 outline-none transition-all disabled:opacity-50 hover:bg-zinc-950"
                 />
               </div>
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Weight Used</label>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-1">
+                  <div className="w-4 h-4 bg-zinc-800 rounded-md flex items-center justify-center">
+                    <Dumbbell className="w-2.5 h-2.5" />
+                  </div>
+                  Weight Used
+                </div>
                 <input 
                   type="text"
                   placeholder={ex.weight || '0kg'}
                   disabled={isCompletedToday}
                   value={exerciseFeedback[idx]?.completedWeight || ''}
                   onChange={(e) => updateExerciseFeedback(idx, 'completedWeight', e.target.value)}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-sm focus:ring-1 focus:ring-orange-500 outline-none transition-all disabled:opacity-50"
+                  className="w-full bg-zinc-950/50 border border-zinc-800 rounded-2xl px-4 py-3 text-sm focus:ring-1 focus:ring-orange-500 outline-none transition-all disabled:opacity-50 hover:bg-zinc-950"
                 />
               </div>
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Modification Note</label>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-1">
+                  <div className="w-4 h-4 bg-zinc-800 rounded-md flex items-center justify-center">
+                    <MessageSquare className="w-2.5 h-2.5" />
+                  </div>
+                  Personal Note
+                </div>
                 <input 
                   type="text"
-                  placeholder="e.g. Felt heavy"
+                  placeholder="How did it feel?"
                   disabled={isCompletedToday}
                   value={exerciseFeedback[idx]?.clientNote || ''}
                   onChange={(e) => updateExerciseFeedback(idx, 'clientNote', e.target.value)}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-sm focus:ring-1 focus:ring-orange-500 outline-none transition-all disabled:opacity-50"
+                  className="w-full bg-zinc-950/50 border border-zinc-800 rounded-2xl px-4 py-3 text-sm focus:ring-1 focus:ring-orange-500 outline-none transition-all disabled:opacity-50 hover:bg-zinc-950"
                 />
               </div>
             </div>
@@ -3018,16 +3099,20 @@ function WorkoutCard({
             <div className="flex gap-3">
               <button
                 onClick={() => setShowFeedbackForm(false)}
-                className="flex-1 py-4 px-6 border border-zinc-800 rounded-xl font-bold text-zinc-400 hover:bg-zinc-800 transition-all"
+                className="flex-1 py-4 px-6 border border-zinc-800 rounded-[24px] font-black uppercase tracking-widest text-[10px] text-zinc-500 hover:bg-zinc-800 hover:text-white transition-all outline-none"
               >
-                Cancel
+                Back
               </button>
               <button
                 onClick={() => handleComplete(exerciseFeedback)}
                 disabled={submitting}
-                className="flex-[2] bg-orange-500 text-white font-bold py-4 px-6 rounded-xl hover:bg-orange-600 disabled:opacity-50 transition-all shadow-lg shadow-orange-500/20"
+                className="flex-[2] relative bg-orange-500 text-white font-black uppercase tracking-widest py-4 px-6 rounded-[24px] hover:bg-orange-600 disabled:opacity-50 transition-all shadow-xl shadow-orange-500/20 group overflow-hidden"
               >
-                {submitting ? 'Submitting...' : 'Submit & Finish'}
+                <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300" />
+                <span className="relative z-10 flex items-center justify-center gap-2">
+                  {submitting ? 'Transmitting...' : 'Submit Protocol'}
+                  {!submitting && <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />}
+                </span>
               </button>
             </div>
           </motion.div>

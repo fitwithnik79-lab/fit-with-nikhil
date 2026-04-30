@@ -45,7 +45,7 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
   const [feedbacks, setFeedbacks] = useState<Feedback[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'dash' | 'clients' | 'tracker' | 'calendar' | 'reminders' | 'templates'>('dash');
+  const [activeTab, setActiveTab] = useState<'dash' | 'clients' | 'tracker' | 'calendar' | 'broadcast' | 'templates'>('dash');
   const [showChat, setShowChat] = useState(false);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [confirmModal, setConfirmModal] = useState<{ title: string, message: string, onConfirm: () => void } | null>(null);
@@ -286,7 +286,7 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
             { id: 'clients', label: 'Athletes', icon: Users, badge: unreadMessagesCount },
             { id: 'tracker', label: 'Flow', icon: Activity },
             { id: 'calendar', label: 'Plan', icon: Calendar },
-            { id: 'reminders', label: 'Alerts', icon: Bell },
+            { id: 'broadcast', label: 'Broadcast', icon: Send },
             { id: 'templates', label: 'Vault', icon: BookOpen },
           ].map((item) => (
             <button
@@ -800,9 +800,9 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
           </motion.div>
         )}
 
-        {activeTab === 'reminders' && (
+        {activeTab === 'broadcast' && (
           <motion.div
-            key="reminders"
+            key="broadcast"
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
@@ -2002,14 +2002,30 @@ function RemindersView({ clients, showToast, currentUser }: { clients: UserProfi
   };
 
   const motivationTemplates = [
-    "Keep pushing! You're doing amazing work this week. 🔥",
-    "Consistency is key. I see you logging those workouts, keep it up! 👏",
+    "The pain you feel today will be the strength you feel tomorrow. Keep pushing! ⚡️",
+    "Discipline over motivation. Finish the week strong! 🦾",
+    "Don't stop when you're tired, stop when you're done. Let's get it! 🔥",
+    "Your future self is thanking you for this workout. Stay focused! 🎯",
+    "Elite performance requires elite consistency. Log that session! 💎",
+    "Success isn't owned, it's leased. And rent is due every day. Go get it! 🦁",
+    "Small daily improvements are the key to staggering long-term results. 📈",
+    "The only bad workout is the one that didn't happen. No excuses today! ⚔️",
+    "You are stronger than your strongest excuse. Show me what you've got! 🌪",
+    "Champion mindset: Find a way, not an excuse. Locked in! 🏆",
     ...dbTemplates.filter(t => t.category === 'motivation').map(t => t.content)
   ];
 
   const reminderTemplates = [
-    "Don't forget to log your water intake today! 💧",
-    "Time to hit those steps! A quick walk makes a big difference. 🚶‍♂️",
+    "Movement is medicine. Make sure you get your steps in today! 👣",
+    "Hydration check! 💧 Have you hit your water goals for the day?",
+    "Recovery is just as important as the work. Prioritize your sleep tonight! 🌙",
+    "Nutrition check: Are you hitting your protein targets today? 🥩",
+    "Log your weights! Data allows us to track your progress effectively. 📉",
+    "Check your form on those heavy sets. Quality over quantity! 👁",
+    "Weekly check-in reminder: Don't forget to update your metrics! 📋",
+    "Sunday Reset: Prep your meals and plan your training for the week ahead! 🥗",
+    "Did you stretch today? Mobility keeps you in the game. 🧘‍♂️",
+    "Reminder to log your supplements. Consistency is king! 💊",
     ...dbTemplates.filter(t => t.category === 'reminder').map(t => t.content)
   ];
 
@@ -2024,8 +2040,8 @@ function RemindersView({ clients, showToast, currentUser }: { clients: UserProfi
             {messageType === 'motivation' ? <Sparkles className="w-6 h-6" /> : <Bell className="w-6 h-6" />}
           </div>
           <div>
-            <h3 className="text-2xl font-bold">Quick Broadcast</h3>
-            <p className="text-zinc-500">Send motivational messages or reminders to multiple clients at once.</p>
+            <h3 className="text-2xl font-black uppercase tracking-tighter italic">Coach <span className="text-orange-500">Broadcast</span> Console</h3>
+            <p className="text-zinc-500 text-sm font-medium">Deploy motivational tactical alerts or discipline reminders to multiple athletes.</p>
           </div>
         </div>
 
