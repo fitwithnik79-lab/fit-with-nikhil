@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { User } from 'firebase/auth';
 import { collection, query, where, onSnapshot, addDoc, serverTimestamp, orderBy, limit, getDocs, doc, getDoc, updateDoc } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { db, storage } from '../lib/firebase';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { BodyMetrics, Workout, Feedback, UserProfile, NutritionPlan, Message, Habit, HabitLog, Goal } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { 
@@ -624,12 +625,14 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     try {
       const tokens = await GoogleFitService.connect();
       await GoogleFitService.saveTokens(user.uid, tokens);
-      // Success will trigger the useEffect above via profile update if listener is active
-      // But we can also trigger manually
       syncGoogleFitSteps();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Connection failed:', error);
-      alert('Failed to connect to Google Fit. Please try again.');
+      if (error.message?.includes('500') || error.message?.includes('configured')) {
+        alert('Google Fit is not fully configured in the environment variables. Please check GOOGLE_FIT_CLIENT_ID and GOOGLE_FIT_CLIENT_SECRET in Settings.');
+      } else {
+        alert('Failed to connect to Google Fit. Please try again.');
+      }
     }
   };
 
@@ -3672,17 +3675,35 @@ function ProfileSection({ user, profile, setShowChat, onConnectGoogleFit, isGoog
     programGoals: profile.programGoals || '',
   });
   const [isSaving, setIsSaving] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   const [message, setMessage] = useState<{ text: string, type: 'success' | 'error' } | null>(null);
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setFormData(prev => ({ ...prev, photoURL: reader.result as string }));
-    };
-    reader.readAsDataURL(file);
+    // Check file size (limit to 2MB)
+    if (file.size > 2 * 1024 * 1024) {
+      setMessage({ text: 'Image is too large. Max size is 2MB.', type: 'error' });
+      return;
+    }
+
+    setIsUploading(true);
+    setMessage(null);
+
+    try {
+      const storageRef = ref(storage, `profiles/${user.uid}/${file.name}_${Date.now()}`);
+      await uploadBytes(storageRef, file);
+      const downloadURL = await getDownloadURL(storageRef);
+      
+      setFormData(prev => ({ ...prev, photoURL: downloadURL }));
+      setMessage({ text: 'Image uploaded! Remember to save your profile changes.', type: 'success' });
+    } catch (error) {
+      console.error('Error uploading image:', error);
+      setMessage({ text: 'Failed to upload image.', type: 'error' });
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   const handleSave = async () => {
@@ -3708,7 +3729,12 @@ function ProfileSection({ user, profile, setShowChat, onConnectGoogleFit, isGoog
           <p className="text-zinc-500">Manage your personal information and preferences.</p>
         </div>
         <div className="relative group">
-          <div className="w-24 h-24 rounded-3xl overflow-hidden border-2 border-orange-500/20 shadow-2xl transition-transform group-hover:scale-105">
+          <div className="w-24 h-24 rounded-3xl overflow-hidden border-2 border-orange-500/20 shadow-2xl transition-transform group-hover:scale-105 relative">
+            {isUploading ? (
+              <div className="absolute inset-0 bg-zinc-950/80 flex items-center justify-center">
+                <Loader2 className="w-6 h-6 text-orange-500 animate-spin" />
+              </div>
+            ) : null}
             <img 
               src={getAvatarUrl(user.email || undefined, formData.gender as any, formData.photoURL)} 
               alt="Profile" 
@@ -3716,13 +3742,17 @@ function ProfileSection({ user, profile, setShowChat, onConnectGoogleFit, isGoog
               referrerPolicy="no-referrer"
             />
           </div>
-          <label className="absolute -bottom-2 -right-2 p-3 bg-orange-500 text-white rounded-2xl shadow-xl cursor-pointer hover:bg-orange-600 transition-all hover:scale-110 active:scale-95">
+          <label className={cn(
+            "absolute -bottom-2 -right-2 p-3 bg-orange-500 text-white rounded-2xl shadow-xl cursor-pointer hover:bg-orange-600 transition-all hover:scale-110 active:scale-95",
+            isUploading && "opacity-50 cursor-not-allowed pointer-events-none"
+          )}>
             <Camera className="w-4 h-4" />
             <input 
               type="file" 
               accept="image/*" 
               onChange={handleImageUpload} 
               className="hidden" 
+              disabled={isUploading}
             />
           </label>
         </div>

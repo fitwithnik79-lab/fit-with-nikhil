@@ -86,6 +86,7 @@ export interface Feedback {
   completionStatus: boolean;
   clientNote: string;
   motivationalMessage?: string;
+  isRead?: boolean;
   createdAt: any;
 }
 

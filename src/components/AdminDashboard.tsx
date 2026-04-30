@@ -80,14 +80,34 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
 
   useEffect(() => {
     const q = query(collection(db, 'feedback'), orderBy('createdAt', 'desc'));
+    let isInitialLoad = true;
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const feedbackData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as Feedback);
       setFeedbacks(feedbackData);
+
+      if (!isInitialLoad) {
+        snapshot.docChanges().forEach((change) => {
+          if (change.type === "added") {
+            const fb = change.doc.data() as Feedback;
+            if (!fb.isRead) {
+              playNotificationSound();
+              const client = clients.find(c => c.uid === fb.clientId);
+              if ("Notification" in window && Notification.permission === "granted") {
+                new Notification(`New Fitness Feedback from ${client?.displayName || 'Client'}`, {
+                  body: fb.clientNote || 'Check out their latest workout results!',
+                  icon: client?.photoURL || '/favicon.ico'
+                });
+              }
+            }
+          }
+        });
+      }
+      isInitialLoad = false;
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, 'feedback');
     });
     return () => unsubscribe();
-  }, []);
+  }, [clients]);
 
   useEffect(() => {
     if ("Notification" in window && Notification.permission === "default") {
@@ -305,7 +325,7 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
                {[
                  { label: 'Active Athletes', value: clients.length, trend: '+12%', icon: Users, color: 'text-blue-500' },
                  { label: 'Workouts Today', value: feedbacks.filter(f => isToday(f.createdAt?.toDate ? f.createdAt.toDate() : new Date())).length, trend: 'Optimal', icon: Zap, color: 'text-orange-500' },
-                 { label: 'Pending Feedback', value: feedbacks.filter(f => !f.motivationalMessage).length, trend: 'High Priority', icon: MessageSquare, color: 'text-purple-500' },
+                 { label: 'Pending Feedback', value: feedbacks.filter(f => !f.motivationalMessage && !f.isRead).length, trend: 'High Priority', icon: MessageSquare, color: 'text-purple-500' },
                  { label: 'Squad Consistency', value: '88%', trend: 'Stable', icon: Activity, color: 'text-green-500' },
                ].map((stat, i) => (
                  <motion.div 
@@ -337,6 +357,19 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
                     Intelligence <span className="text-zinc-700">Feed</span>
                   </h3>
                   <div className="flex gap-2">
+                    <button 
+                      onClick={async () => {
+                        const unread = feedbacks.filter(f => !f.motivationalMessage && !f.isRead);
+                        for (const f of unread) {
+                          if (f.id) {
+                            await updateDoc(doc(db, 'feedback', f.id), { isRead: true }).catch(console.error);
+                          }
+                        }
+                      }}
+                      className="px-3 py-1 bg-zinc-900 border border-white/5 rounded-full text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-white transition-colors"
+                    >
+                      Dismiss All
+                    </button>
                     <span className="px-3 py-1 bg-zinc-900 border border-white/5 rounded-full text-[10px] font-black uppercase tracking-widest text-zinc-500">
                       Syncing Live
                     </span>
@@ -364,7 +397,10 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
                           return (
                             <button 
                               key={m.id}
-                              onClick={() => {
+                              onClick={async () => {
+                                if (m.id) {
+                                  await updateDoc(doc(db, 'messages', m.id), { isRead: true }).catch(console.error);
+                                }
                                 setSelectedClient(client || null);
                                 setActiveTab('clients');
                                 setClientViewTab('chat');
@@ -390,7 +426,7 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
                     </motion.div>
                   )}
                   <div className="grid grid-cols-1 gap-4">
-                    {feedbacks.slice(0, 12).map((feedback, idx) => {
+                    {feedbacks.filter(f => !f.motivationalMessage && !f.isRead).slice(0, 12).map((feedback, idx) => {
                       const client = clients.find(c => c.uid === feedback.clientId);
                       return (
                         <motion.div 
@@ -434,7 +470,10 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
 
                             <div className="flex items-center gap-3">
                                <button 
-                                 onClick={() => {
+                                 onClick={async () => {
+                                   if (feedback.id) {
+                                     await updateDoc(doc(db, 'feedback', feedback.id), { isRead: true }).catch(console.error);
+                                   }
                                    setSelectedClient(client || null);
                                    setActiveTab('clients');
                                    setClientViewTab('chat');
@@ -444,7 +483,10 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
                                  Respond
                                </button>
                                <button 
-                                 onClick={() => {
+                                 onClick={async () => {
+                                   if (feedback.id) {
+                                     await updateDoc(doc(db, 'feedback', feedback.id), { isRead: true }).catch(console.error);
+                                   }
                                    setSelectedClient(client || null);
                                    setActiveTab('clients');
                                    setClientViewTab('dashboard');
@@ -452,6 +494,17 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
                                  className="px-6 py-2.5 bg-zinc-800 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-zinc-700 transition-all"
                                >
                                  Analysis
+                               </button>
+                               <button 
+                                 onClick={async () => {
+                                   if (feedback.id) {
+                                     await updateDoc(doc(db, 'feedback', feedback.id), { isRead: true }).catch(console.error);
+                                   }
+                                 }}
+                                 className="p-2.5 bg-zinc-950 border border-white/5 text-zinc-500 rounded-2xl hover:text-white hover:border-zinc-700 transition-all"
+                                 title="Mark as seen"
+                               >
+                                 <CheckCircle className="w-4 h-4" />
                                </button>
                             </div>
                           </div>

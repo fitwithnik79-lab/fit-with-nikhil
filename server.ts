@@ -50,19 +50,22 @@ async function startServer() {
   // Use a fallback or the provided APP_URL for redirect URI
   const REDIRECT_URI = `${process.env.APP_URL || `http://localhost:${PORT}`}/auth/callback`;
 
+  // Helper to get consistent dynamic redirect URI
+  const getRedirectUri = (req: express.Request) => {
+    const protocol = req.get('x-forwarded-proto') || 'https';
+    const host = req.get('host');
+    return `${protocol}://${host}/auth/callback`;
+  };
+
   app.use(express.json());
 
   // API to get Authorization URL
   app.get('/api/auth/google-fit/url', (req, res) => {
-    if (!CLIENT_ID) {
-      return res.status(500).json({ error: 'GOOGLE_FIT_CLIENT_ID is not configured' });
+    if (!CLIENT_ID || !CLIENT_SECRET) {
+      return res.status(500).json({ error: 'Google Fit credentials (ID/Secret) are not configured in system environment variables.' });
     }
 
-    // Determine redirect URI dynamically based on the current origin
-    const protocol = req.get('x-forwarded-proto') || 'https';
-    const host = req.get('host');
-    const dynamicRedirectUri = `${protocol}://${host}/auth/callback`;
-
+    const dynamicRedirectUri = getRedirectUri(req);
     const oauth2Client = new OAuth2Client(CLIENT_ID, CLIENT_SECRET, dynamicRedirectUri);
 
     const url = oauth2Client.generateAuthUrl({
@@ -84,58 +87,56 @@ async function startServer() {
     const code = req.query.code as string;
     
     if (!code) {
-      return res.send('No code provided');
+      return res.status(400).send('No code provided by Google');
     }
 
     try {
-      const protocol = req.get('x-forwarded-proto') || 'https';
-      const host = req.get('host');
-      const dynamicRedirectUri = `${protocol}://${host}/auth/callback`;
-
+      const dynamicRedirectUri = getRedirectUri(req);
       const oauth2Client = new OAuth2Client(CLIENT_ID, CLIENT_SECRET, dynamicRedirectUri);
       const { tokens } = await oauth2Client.getToken(code);
 
       // Return tokens to the client via postMessage
       res.send(`
         <html>
-          <body>
+          <body style="background: #09090b; color: white; display: flex; align-items: center; justify-content: center; height: 100vh; font-family: sans-serif;">
             <script>
               if (window.opener) {
                 window.opener.postMessage({ 
                   type: 'GOOGLE_FIT_AUTH_SUCCESS', 
                   tokens: ${JSON.stringify(tokens)} 
                 }, '*');
-                window.close();
+                setTimeout(() => window.close(), 1000);
               } else {
                 window.location.href = '/';
               }
             </script>
-            <div style="font-family: sans-serif; text-align: center; margin-top: 50px;">
-              <h2>Authentication successful!</h2>
-              <p>Closing window...</p>
+            <div style="text-align: center;">
+              <h2 style="color: #f97316;">Connection Successful!</h2>
+              <p>Closing this window to return to the app...</p>
             </div>
           </body>
         </html>
       `);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error exchanging token:', error);
-      res.status(500).send('Error during authentication');
+      res.status(500).send('Error during authentication: ' + error.message);
     }
   });
 
-  // API to refresh token (proxy)
+  // API to refresh token
   app.post('/api/auth/google-fit/refresh', async (req, res) => {
     const { refresh_token } = req.body;
     if (!refresh_token) return res.status(400).json({ error: 'No refresh token provided' });
 
     try {
-      const oauth2Client = new OAuth2Client(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
+      const dynamicRedirectUri = getRedirectUri(req);
+      const oauth2Client = new OAuth2Client(CLIENT_ID, CLIENT_SECRET, dynamicRedirectUri);
       oauth2Client.setCredentials({ refresh_token });
       const { credentials } = await oauth2Client.refreshAccessToken();
       res.json(credentials);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error refreshing token:', error);
-      res.status(500).json({ error: 'Failed to refresh token' });
+      res.status(500).json({ error: 'Failed to refresh token: ' + error.message });
     }
   });
 
@@ -184,7 +185,7 @@ async function startServer() {
             body: JSON.stringify({
               aggregateBy: [{
                 dataTypeName: 'com.google.step_count.delta',
-                dataSourceId: 'derived:com.google.step_count.delta:com.google.android.gms:estimated_steps'
+                dataSourceId: 'derived:com.google.step_count.delta:com.google.android.gms:merge_step_deltas'
               }],
               bucketByTime: { durationMillis: 86400000 },
               startTimeMillis,
