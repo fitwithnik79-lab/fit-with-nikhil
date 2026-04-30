@@ -413,6 +413,97 @@ const GoalsAndHabits = ({ habits, habitLogs, goals, user, profile }: { habits: H
     </div>
   );
 };
+const WorkoutHistoryList = ({ 
+  workouts, 
+  feedback, 
+  onViewWorkout 
+}: { 
+  workouts: Workout[], 
+  feedback: Feedback[], 
+  onViewWorkout: (w: Workout) => void 
+}) => {
+  const sortedWorkouts = useMemo(() => {
+    return [...workouts]
+      .filter(w => w.scheduledDate)
+      .sort((a, b) => parseISO(b.scheduledDate!).getTime() - parseISO(a.scheduledDate!).getTime());
+  }, [workouts]);
+
+  return (
+    <div className="bg-zinc-900 border border-zinc-800 rounded-[40px] p-8 space-y-6">
+      <div className="flex items-center justify-between px-2">
+        <h3 className="text-xl font-bold flex items-center gap-2">
+          <Clock className="w-5 h-5 text-orange-500" />
+          Elite History
+        </h3>
+        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest bg-zinc-950 px-3 py-1 rounded-full border border-zinc-800">
+          {feedback.filter(f => f.completionStatus).length} Completed
+        </span>
+      </div>
+
+      <div className="space-y-3 max-h-[500px] overflow-y-auto custom-scrollbar pr-2">
+        {sortedWorkouts.map((w) => {
+          const workoutFeedback = feedback.find(f => f.workoutId === w.id);
+          const isCompleted = workoutFeedback?.completionStatus;
+          const workoutDate = w.scheduledDate ? parseISO(w.scheduledDate) : null;
+
+          return (
+            <motion.button
+              key={w.id}
+              whileHover={{ x: 5 }}
+              onClick={() => onViewWorkout(w)}
+              className={cn(
+                "w-full p-5 rounded-3xl border flex items-center justify-between transition-all group text-left",
+                isCompleted 
+                  ? "bg-green-500/5 border-green-500/10 hover:border-green-500/30" 
+                  : "bg-zinc-950/50 border-zinc-800 hover:border-orange-500/30"
+              )}
+            >
+              <div className="flex items-center gap-4">
+                <div className={cn(
+                  "w-12 h-12 rounded-2xl flex items-center justify-center transition-all",
+                  isCompleted 
+                    ? "bg-green-500 text-white shadow-lg shadow-green-500/20" 
+                    : "bg-zinc-800 text-zinc-500"
+                )}>
+                  {isCompleted ? <Trophy className="w-6 h-6" /> : <Dumbbell className="w-6 h-6" />}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h4 className="font-bold text-base">Week {w.weekNumber} • Day {w.dayNumber}</h4>
+                    {isCompleted && (
+                      <span className="flex items-center gap-1 text-[8px] font-black uppercase text-green-500 bg-green-500/10 px-2 py-0.5 rounded-full">
+                        <Check className="w-2.5 h-2.5" />
+                        Crushed
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mt-0.5">
+                    {workoutDate ? format(workoutDate, 'EEEE, MMM do') : 'Unscheduled'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                {!isCompleted && (
+                   <span className="text-[10px] font-black uppercase tracking-widest text-zinc-600 group-hover:text-orange-500 transition-colors">Details</span>
+                )}
+                <ChevronRight className="w-5 h-5 text-zinc-700 group-hover:text-orange-500 transition-all transform group-hover:translate-x-1" />
+              </div>
+            </motion.button>
+          );
+        })}
+        {sortedWorkouts.length === 0 && (
+          <div className="py-20 text-center space-y-4">
+            <div className="w-16 h-16 bg-zinc-950 border border-zinc-800 rounded-full flex items-center justify-center mx-auto opacity-20">
+               <CalendarIcon className="w-8 h-8 text-white" />
+            </div>
+            <p className="text-zinc-500 text-sm font-serif italic max-w-xs mx-auto">Your journey is just beginning. Your full battle history will appear here.</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const StreakDisplay = ({ history }: { history: BodyMetrics[] }) => {
   const calculateStreak = () => {
     if (history.length === 0) return 0;
@@ -480,48 +571,58 @@ const QuickLog = ({ todayMetrics, onLog, profile, onSyncFit, syncingFit }: {
   onSyncFit: () => void,
   syncingFit: boolean
 }) => {
-  if (todayMetrics && todayMetrics.waterIntake > 0 && todayMetrics.stepCount > 0) return null;
-
   return (
     <motion.div 
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
-      className="bg-orange-500 rounded-[32px] p-8 text-black shadow-2xl shadow-orange-500/20"
+      className="bg-gradient-to-br from-orange-600 to-orange-400 rounded-[48px] p-10 text-white shadow-2xl shadow-orange-500/30 overflow-hidden relative group"
     >
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-        <div className="space-y-2">
-          <h3 className="text-2xl font-black uppercase tracking-tight leading-none">Quick Log</h3>
-          <p className="text-black/70 font-medium">Keep the momentum going! Log your vitals.</p>
+      <motion.div 
+        animate={{ 
+          scale: [1, 1.2, 1],
+          rotate: [0, 10, 0]
+        }}
+        transition={{ duration: 10, repeat: Infinity }}
+        className="absolute -top-20 -right-20 w-80 h-80 bg-white/10 rounded-full blur-3xl pointer-events-none" 
+      />
+      
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-10 relative z-10">
+        <div className="space-y-4">
+          <div className="flex items-center gap-3">
+             <div className="w-10 h-10 bg-white/20 backdrop-blur-md rounded-2xl flex items-center justify-center">
+               <Zap className="w-5 h-5 text-white" />
+             </div>
+             <h3 className="text-3xl font-black uppercase tracking-tighter leading-none italic">Quick Actions</h3>
+          </div>
+          <p className="text-white/80 font-medium text-lg max-w-sm">Every small log is a step towards your bigger goal. Stay consistent.</p>
         </div>
-        <div className="flex flex-wrap gap-3">
-          {!todayMetrics?.waterIntake && (
+        
+        <div className="flex flex-wrap gap-4">
+          <button 
+            onClick={() => onLog({ waterIntake: (todayMetrics?.waterIntake || 0) + 250 })}
+            className="bg-white text-black px-8 py-4 rounded-[24px] font-black uppercase tracking-widest text-xs hover:bg-orange-50 transition-all flex items-center gap-3 shadow-xl hover:scale-105 active:scale-95"
+          >
+            <Droplets className="w-4 h-4 text-orange-500" />
+            +250ml Water
+          </button>
+          
+          {profile.googleFitTokens ? (
             <button 
-              onClick={() => onLog({ waterIntake: 250 })}
-              className="bg-black text-white px-6 py-3 rounded-2xl font-bold text-sm hover:scale-105 transition-transform flex items-center gap-2"
+              onClick={onSyncFit}
+              disabled={syncingFit}
+              className="bg-black text-white px-8 py-4 rounded-[24px] font-black uppercase tracking-widest text-xs hover:bg-zinc-900 transition-all flex items-center gap-3 shadow-xl hover:scale-105 active:scale-95 disabled:opacity-50"
             >
-              <Droplets className="w-4 h-4" />
-              +1 Glass Water
+              <RefreshCcw className={cn("w-4 h-4 text-orange-500", syncingFit && "animate-spin")} />
+              {syncingFit ? 'Syncing...' : 'Sync Steps'}
             </button>
-          )}
-          {!todayMetrics?.stepCount && (
-            profile.googleFitTokens ? (
-              <button 
-                onClick={onSyncFit}
-                disabled={syncingFit}
-                className="bg-black text-white px-6 py-3 rounded-2xl font-bold text-sm hover:scale-105 transition-transform flex items-center gap-2"
-              >
-                <RefreshCcw className={cn("w-4 h-4", syncingFit && "animate-spin")} />
-                {syncingFit ? 'Syncing...' : 'Sync Steps'}
-              </button>
-            ) : (
-              <button 
-                onClick={() => onLog({ stepCount: 5000 })}
-                className="bg-black text-white px-6 py-3 rounded-2xl font-bold text-sm hover:scale-105 transition-transform flex items-center gap-2"
-              >
-                <Footprints className="w-4 h-4" />
-                Log 5k Steps
-              </button>
-            )
+          ) : (
+            <button 
+              onClick={() => onLog({ stepCount: (todayMetrics?.stepCount || 0) + 1000 })}
+              className="bg-black text-white px-8 py-4 rounded-[24px] font-black uppercase tracking-widest text-xs hover:bg-zinc-900 transition-all flex items-center gap-3 shadow-xl hover:scale-105 active:scale-95"
+            >
+              <Footprints className="w-4 h-4 text-orange-500" />
+              +1k Steps
+            </button>
           )}
         </div>
       </div>
@@ -566,6 +667,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   const [habitLogs, setHabitLogs] = useState<HabitLog[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [habitLoading, setHabitLoading] = useState(true);
+  const [calendarViewDate, setCalendarViewDate] = useState(new Date());
 
   const syncGoogleFitSteps = async () => {
     if (!profile.googleFitTokens) return;
@@ -915,9 +1017,9 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
       
       if (todayWorkout) {
         setCurrentWorkout(todayWorkout);
-      } else if (workouts.length > 0) {
-        // Fallback to latest
-        setCurrentWorkout(workouts[0]);
+      } else {
+        // No workout for today - explicitly set to null
+        setCurrentWorkout(null);
       }
       
       setLoading(false);
@@ -931,7 +1033,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
 
   useEffect(() => {
     // Get feedback for the last 30 days
-    const thirtyDaysAgo = subDays(new Date(), 30);
+    const thirtyDaysAgo = subDays(new Date(), 90);
     const q = query(
       collection(db, 'feedback'),
       where('clientId', '==', user.uid),
@@ -1095,6 +1197,16 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     { id: 'profile', label: 'My Profile', icon: UserIcon },
   ];
 
+  const handleHistoryWorkoutClick = (workout: Workout) => {
+    if (workout.scheduledDate) {
+      setCalendarViewDate(parseISO(workout.scheduledDate));
+      setActiveTab('calendar');
+      setSelectedWorkout(workout);
+    } else {
+      setSelectedWorkout(workout);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-black text-white selection:bg-orange-500/30 font-sans -m-4 sm:-m-8">
       {/* Dynamic Background Elements */}
@@ -1213,51 +1325,55 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                   >
                     {/* Welcome Section */}
                     <div className="flex flex-col md:flex-row md:items-end justify-between gap-8 relative">
-                      <div className="space-y-4">
+                      <div className="space-y-6">
                         <motion.div 
                           initial={{ opacity: 0, x: -20 }}
                           animate={{ opacity: 1, x: 0 }}
-                          className="inline-flex items-center gap-2 px-3 py-1 bg-orange-500/10 border border-orange-500/20 rounded-full"
+                          className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-500/20 to-orange-500/5 border border-orange-500/20 rounded-2xl"
                         >
-                          <Sun className="w-3.5 h-3.5 text-orange-400" />
-                          <span className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-500">Good Morning, Champ</span>
+                          <Sparkles className="w-4 h-4 text-orange-500 animate-pulse" />
+                          <span className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-500">Elite Status Activated</span>
                         </motion.div>
-                        <h1 className="text-5xl md:text-7xl font-black tracking-tighter leading-[0.85] uppercase">
-                          Push <span className="text-orange-500 italic">Harder</span> <br /> 
-                          today <span className="font-serif italic lowercase font-normal text-zinc-700">than yesterday.</span>
+                        <h1 className="text-6xl md:text-8xl font-black tracking-tighter leading-[0.8] uppercase">
+                          No <span className="text-orange-500 italic">Excuses</span> <br /> 
+                          just <span className="font-serif italic lowercase font-normal text-zinc-700">results.</span>
                         </h1>
+                        <p className="text-zinc-500 font-medium text-lg max-w-md">
+                          You've completed <span className="text-white font-bold">{allFeedback.filter(f => f.completionStatus).length} sessions</span> so far. Keep building that momentum.
+                        </p>
                       </div>
                       
-                      <div className="flex flex-col gap-4 min-w-[280px]">
+                      <div className="flex flex-col gap-4 min-w-[320px]">
                         <StreakDisplay history={metrics} />
                         <motion.div 
                           initial={{ opacity: 0, x: 20 }}
                           animate={{ opacity: 1, x: 0 }}
-                          className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 flex flex-col justify-between group overflow-hidden relative"
+                          className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-6 flex flex-col justify-between group overflow-hidden relative shadow-xl shadow-black/20"
                         >
-                          <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
-                            <Zap className="w-16 h-16 text-orange-500" />
+                          <div className="absolute -right-4 -top-4 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
+                            <Target className="w-24 h-24 text-orange-500" />
                           </div>
-                          <div className="flex justify-between items-start mb-3">
+                          <div className="flex justify-between items-start mb-4">
                             <div className="space-y-1">
-                              <p className="text-zinc-500 text-[10px] font-black uppercase tracking-widest leading-none">Habit Momentum</p>
-                              <h4 className="text-sm font-black whitespace-nowrap">Daily Rituals</h4>
+                              <p className="text-zinc-500 text-[10px] font-black uppercase tracking-widest leading-none">Daily Rituals</p>
+                              <h4 className="text-lg font-black italic">Power Habits</h4>
                             </div>
                             <div className="text-right">
-                              <span className="text-2xl font-black text-white italic">
-                                {habits.filter(h => habitLogs.some(l => l.habitId === h.id && l.date === format(new Date(), 'yyyy-MM-dd') && l.completed)).length}/{habits.length || 0}
+                              <span className="text-3xl font-black text-white italic">
+                                {habits.filter(h => habitLogs.some(l => l.habitId === h.id && l.date === format(new Date(), 'yyyy-MM-dd') && l.completed)).length}
+                                <span className="text-sm text-zinc-500 not-italic ml-1">/ {habits.length || 0}</span>
                               </span>
                             </div>
                           </div>
-                          <div className="flex gap-1">
-                            {(habits.length > 0 ? habits : [...Array(5)]).slice(0, 7).map((h, i) => {
+                          <div className="flex gap-2">
+                            {(habits.length > 0 ? habits : [...Array(5)]).slice(0, 10).map((h, i) => {
                               const isDone = h?.id && habitLogs.some(l => l.habitId === h.id && l.date === format(new Date(), 'yyyy-MM-dd') && l.completed);
                               return (
                                 <div 
                                   key={i} 
                                   className={cn(
-                                    "h-1 rounded-full flex-1 transition-all duration-500",
-                                    isDone ? "bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.4)]" : "bg-zinc-800"
+                                    "h-1.5 rounded-full flex-1 transition-all duration-700",
+                                    isDone ? "bg-orange-500 shadow-[0_0_12px_rgba(249,115,22,0.6)]" : "bg-zinc-800"
                                   )} 
                                 />
                               );
@@ -1267,8 +1383,60 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                      <div className="lg:col-span-3 space-y-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                      <div className="lg:col-span-3 space-y-8">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                           <div className="bg-zinc-900 border border-white/5 rounded-[40px] p-8 flex flex-col justify-between transform hover:-translate-y-1 transition-all duration-500 group overflow-hidden relative shadow-2xl">
+                             <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:rotate-12 transition-transform">
+                               <Footprints className="w-32 h-32 text-orange-500" />
+                             </div>
+                             <div className="flex justify-between items-start mb-12">
+                               <div className="p-3 bg-orange-500/10 rounded-2xl">
+                                 <Footprints className="w-6 h-6 text-orange-500" />
+                               </div>
+                               {profile.googleFitTokens && (
+                                 <button 
+                                   onClick={syncGoogleFitSteps}
+                                   disabled={syncingFit}
+                                   className="p-2 bg-zinc-800 rounded-xl hover:bg-orange-500 transition-colors group/btn"
+                                 >
+                                   <RefreshCcw className={cn("w-4 h-4 text-zinc-400 group-hover/btn:text-white", syncingFit && "animate-spin")} />
+                                 </button>
+                               )}
+                             </div>
+                             <div>
+                               <p className="text-5xl font-black italic tracking-tighter mb-1">{todayMetrics?.stepCount || 0}</p>
+                               <p className="text-xs font-black uppercase tracking-widest text-zinc-500">Total Steps Today</p>
+                             </div>
+                           </div>
+
+                           <div className="bg-zinc-900 border border-white/5 rounded-[40px] p-8 flex flex-col justify-between transform hover:-translate-y-1 transition-all duration-500 group overflow-hidden relative shadow-2xl">
+                             <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:rotate-12 transition-transform">
+                               <Flame className="w-32 h-32 text-red-500" />
+                             </div>
+                             <div className="p-3 bg-red-500/10 rounded-2xl w-fit mb-12">
+                               <Flame className="w-6 h-6 text-red-500" />
+                             </div>
+                             <div>
+                               <p className="text-5xl font-black italic tracking-tighter mb-1">{todayMetrics?.calories || 0}</p>
+                               <p className="text-xs font-black uppercase tracking-widest text-zinc-500">Active Calories</p>
+                             </div>
+                           </div>
+
+                           <div className="bg-zinc-900 border border-white/5 rounded-[40px] p-8 flex flex-col justify-between transform hover:-translate-y-1 transition-all duration-500 group overflow-hidden relative shadow-2xl">
+                             <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:rotate-12 transition-transform">
+                               <Droplets className="w-32 h-32 text-blue-500" />
+                             </div>
+                             <div className="p-3 bg-blue-500/10 rounded-2xl w-fit mb-12">
+                               <Droplets className="w-6 h-6 text-blue-500" />
+                             </div>
+                             <div>
+                               <p className="text-5xl font-black italic tracking-tighter mb-1">{todayMetrics?.waterIntake || 0}<span className="text-xl ml-1">ml</span></p>
+                               <p className="text-xs font-black uppercase tracking-widest text-zinc-500">Daily Hydration</p>
+                             </div>
+                           </div>
+                        </div>
+
                         <QuickLog 
                           todayMetrics={todayMetrics} 
                           profile={profile}
@@ -1341,6 +1509,12 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                             </div>
                           </div>
                         )}
+
+                        <WorkoutHistoryList 
+                          workouts={allWorkouts}
+                          feedback={allFeedback}
+                          onViewWorkout={handleHistoryWorkoutClick}
+                        />
                       </div>
 
                       <div className="lg:col-span-1 space-y-4">
@@ -1369,18 +1543,58 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                            </div>
                         </div>
 
-                        <div className="bg-zinc-900 p-8 rounded-[40px] border border-white/5 flex flex-col justify-between aspect-square group hover:border-orange-500/50 transition-all duration-500">
-                          <div className="flex justify-between items-start">
-                            <div className="p-4 bg-zinc-950 rounded-3xl group-hover:bg-orange-500 transition-all duration-500">
+                        <div className="bg-zinc-900 p-8 rounded-[40px] border border-white/5 flex flex-col justify-between aspect-square group hover:border-orange-500/50 transition-all duration-700 shadow-2xl relative overflow-hidden">
+                          <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:scale-150 transition-transform duration-1000">
+                             <Droplets className="w-40 h-40 text-blue-500" />
+                          </div>
+                          <div className="flex justify-between items-start relative z-10">
+                            <div className="p-4 bg-zinc-950 rounded-[28px] group-hover:bg-blue-500 transition-all duration-500 shadow-lg shadow-black/40">
                                <Droplets className="w-7 h-7 text-zinc-500 group-hover:text-white" />
                             </div>
-                            <span className="text-[10px] font-black uppercase tracking-widest text-orange-500 px-3 py-1 bg-orange-500/10 rounded-full">Fuel</span>
+                            <button 
+                              onClick={() => {
+                                const newAmount = (todayMetrics?.waterIntake || 0) + 250;
+                                const dateStr = format(new Date(), 'yyyy-MM-dd');
+                                const q = query(collection(db, 'metrics'), where('clientId', '==', user.uid), where('date', '==', dateStr));
+                                getDocs(q).then(snap => {
+                                  if (!snap.empty) {
+                                    updateDoc(doc(db, 'metrics', snap.docs[0].id), { waterIntake: newAmount, updatedAt: serverTimestamp() });
+                                  } else {
+                                    addDoc(collection(db, 'metrics'), { clientId: user.uid, date: dateStr, waterIntake: newAmount, stepCount: 0, calories: 0, createdAt: serverTimestamp() });
+                                  }
+                                });
+                              }}
+                              className="p-3 bg-zinc-800 rounded-2xl hover:bg-zinc-700 transition-colors"
+                            >
+                              <Plus className="w-5 h-5" />
+                            </button>
                           </div>
-                          <div>
-                            <p className="text-5xl font-black font-serif italic mb-1">{todayMetrics?.waterIntake || 0}ml</p>
-                            <p className="text-xs font-black uppercase tracking-widest text-zinc-500">Hydration Status</p>
+                          <div className="relative z-10">
+                            <p className="text-6xl font-black tracking-tighter mb-1 mt-4">{todayMetrics?.waterIntake || 0}<span className="text-lg ml-1 font-normal opacity-50 not-italic">ml</span></p>
+                            <p className="text-xs font-black uppercase tracking-widest text-zinc-500">Level: <span className="text-blue-500 lowercase font-serif italic text-sm">Optimal</span></p>
                           </div>
                         </div>
+
+                        {!profile.googleFitTokens && (
+                          <div className="bg-gradient-to-br from-zinc-900 to-black p-8 rounded-[40px] border border-orange-500/20 flex flex-col justify-between aspect-square group hover:border-orange-500/50 transition-all duration-700 shadow-2xl relative overflow-hidden">
+                            <div className="absolute -bottom-8 -right-8 p-8 opacity-10 blur-2xl bg-orange-500 w-32 h-32 rounded-full" />
+                            <div className="flex justify-between items-start relative z-10">
+                              <div className="p-4 bg-orange-500/10 rounded-[28px] border border-orange-500/20 ring-4 ring-orange-500/5">
+                                 <Footprints className="w-7 h-7 text-orange-500" />
+                              </div>
+                            </div>
+                            <div className="relative z-10 space-y-4">
+                              <h4 className="text-xl font-black leading-tight">Connect <br />Google Fit</h4>
+                              <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Auto-Sync Steps & Data</p>
+                              <button 
+                                onClick={handleConnectGoogleFit}
+                                className="w-full py-3 bg-orange-500 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:scale-105 transition-transform"
+                              >
+                                Connect Now
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </motion.div>
@@ -1629,6 +1843,8 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                 <ClientCalendar 
                   workouts={allWorkouts} 
                   onSelectWorkout={(w) => setSelectedWorkout(w)} 
+                  viewDate={calendarViewDate}
+                  setViewDate={setCalendarViewDate}
                 />
               </motion.div>
             )}
@@ -3900,14 +4116,17 @@ function ProfileSection({ user, profile, setShowChat, onConnectGoogleFit, isGoog
   );
 }
 
-function ClientCalendar({ workouts, onSelectWorkout }: { workouts: Workout[], onSelectWorkout: (w: Workout) => void }) {
-  const [currentMonth, setCurrentMonth] = useState(new Date());
-
+function ClientCalendar({ workouts, onSelectWorkout, viewDate, setViewDate }: { 
+  workouts: Workout[], 
+  onSelectWorkout: (w: Workout) => void,
+  viewDate: Date,
+  setViewDate: (date: Date) => void
+}) {
   const days = useMemo(() => {
-    const start = startOfWeek(startOfMonth(currentMonth));
-    const end = endOfWeek(endOfMonth(currentMonth));
+    const start = startOfWeek(startOfMonth(viewDate));
+    const end = endOfWeek(endOfMonth(viewDate));
     return eachDayOfInterval({ start, end });
-  }, [currentMonth]);
+  }, [viewDate]);
 
   const getWorkoutsForDay = (day: Date) => {
     const dateStr = format(day, 'yyyy-MM-dd');
@@ -3922,25 +4141,25 @@ function ClientCalendar({ workouts, onSelectWorkout }: { workouts: Workout[], on
             <CalendarIcon className="w-6 h-6" />
           </div>
           <div>
-            <h3 className="text-xl font-bold">{format(currentMonth, 'MMMM yyyy')}</h3>
+            <h3 className="text-xl font-bold">{format(viewDate, 'MMMM yyyy')}</h3>
             <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider">Your Schedule</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
           <button 
-            onClick={() => setCurrentMonth(subMonths(currentMonth, 1))}
+            onClick={() => setViewDate(subMonths(viewDate, 1))}
             className="p-2 hover:bg-zinc-800 rounded-xl transition-colors text-zinc-400"
           >
             <ChevronLeft className="w-5 h-5" />
           </button>
           <button 
-            onClick={() => setCurrentMonth(new Date())}
+            onClick={() => setViewDate(new Date())}
             className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-xl text-xs font-bold transition-colors"
           >
             Today
           </button>
           <button 
-            onClick={() => setCurrentMonth(addMonths(currentMonth, 1))}
+            onClick={() => setViewDate(addMonths(viewDate, 1))}
             className="p-2 hover:bg-zinc-800 rounded-xl transition-colors text-zinc-400"
           >
             <ChevronRight className="w-5 h-5" />
@@ -3959,7 +4178,7 @@ function ClientCalendar({ workouts, onSelectWorkout }: { workouts: Workout[], on
       <div className="grid grid-cols-7">
         {days.map((day, idx) => {
           const dayWorkouts = getWorkoutsForDay(day);
-          const isCurrentMonth = isSameMonth(day, currentMonth);
+          const isCurrentMonth = isSameMonth(day, viewDate);
           
           return (
             <div 
