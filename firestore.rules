@@ -69,11 +69,12 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
+    function isCoach() {
+      return isAuthenticated() && request.auth.token.email == "fitwithnik79@gmail.com" && request.auth.token.email_verified == true;
+    }
+
     function isAdmin() {
-      return isAuthenticated() && (
-        (request.auth.token.email == "fitwithnik79@gmail.com" && request.auth.token.email_verified == true) ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
-      );
+      return isCoach() || (isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin');
     }
 
     function isValidUser(data) {
@@ -137,13 +138,43 @@ service cloud.firestore {
              data.isActive is bool;
     }
 
+    function isValidHabit(data) {
+      return data.keys().hasAll(['clientId', 'title', 'frequency', 'active']) &&
+             data.clientId is string &&
+             data.title is string &&
+             data.frequency in ['daily', 'weekly'] &&
+             data.active is bool;
+    }
+
+    function isValidHabitLog(data) {
+      return data.keys().hasAll(['habitId', 'clientId', 'date', 'completed']) &&
+             data.habitId is string &&
+             data.clientId is string &&
+             data.date is string &&
+             data.completed is bool;
+    }
+
+    function isValidGoal(data) {
+      return data.keys().hasAll(['clientId', 'title', 'status']) &&
+             data.clientId is string &&
+             data.title is string &&
+             data.status in ['in-progress', 'completed', 'deferred'];
+    }
+
+    function isValidMessageTemplate(data) {
+      return data.keys().hasAll(['title', 'content', 'category']) &&
+             data.title is string &&
+             data.content is string &&
+             data.category in ['motivation', 'reminder', 'general'];
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
 
     match /users/{userId} {
-      allow read: if isAuthenticated() && (isOwner(userId) || isAdmin() || resource.data.role == 'admin');
-      allow create: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == 'client' || isAdmin());
+      allow read: if isAuthenticated() && (isOwner(userId) || isCoach() || isAdmin() || resource.data.role == 'admin');
+      allow create: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == 'client' || isCoach());
       allow update: if isAuthenticated() && (
         (isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.role == resource.data.role) || 
         isAdmin()
@@ -158,9 +189,9 @@ service cloud.firestore {
     }
 
     match /feedback/{feedbackId} {
-      allow read: if isAuthenticated() && (request.auth.uid == resource.data.clientId || isAdmin());
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.clientId || isCoach() || isAdmin());
       allow create: if isAuthenticated() && request.auth.uid == request.resource.data.clientId && isValidFeedback(request.resource.data);
-      allow update: if isAdmin();
+      allow update: if isCoach() || isAdmin();
     }
 
     match /templates/{templateId} {
@@ -182,9 +213,14 @@ service cloud.firestore {
     }
 
     match /metrics/{metricId} {
-      allow read: if isAuthenticated() && (request.auth.uid == resource.data.clientId || isAdmin());
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.clientId || isCoach() || isAdmin());
       allow create: if isAuthenticated() && request.auth.uid == request.resource.data.clientId && isValidMetric(request.resource.data);
       allow update: if isAuthenticated() && request.auth.uid == resource.data.clientId && isValidMetric(request.resource.data);
+    }
+
+    match /daily_steps/{stepDocId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.clientId || isCoach() || isAdmin());
+      allow write: if isCoach() || isAdmin(); // Only allow server-side sync to write for now
     }
 
     match /meals/{mealId} {
@@ -197,6 +233,30 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (request.auth.uid == resource.data.clientId || isAdmin());
       allow create, update: if isAdmin() && isValidNutritionPlan(request.resource.data);
       allow delete: if isAdmin();
+    }
+
+    match /habits/{habitId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.clientId || isCoach() || isAdmin());
+      allow create: if isAuthenticated() && (request.auth.uid == request.resource.data.clientId || isCoach() || isAdmin()) && isValidHabit(request.resource.data);
+      allow update: if isAuthenticated() && (request.auth.uid == resource.data.clientId || isCoach() || isAdmin()) && isValidHabit(request.resource.data);
+      allow delete: if isAuthenticated() && (request.auth.uid == resource.data.clientId || isCoach() || isAdmin());
+    }
+
+    match /habitLogs/{logId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.clientId || isCoach() || isAdmin());
+      allow write: if isAuthenticated() && (request.auth.uid == request.resource.data.clientId || isCoach() || isAdmin()) && isValidHabitLog(request.resource.data);
+    }
+
+    match /goals/{goalId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.clientId || isCoach() || isAdmin());
+      allow create: if isAuthenticated() && (request.auth.uid == request.resource.data.clientId || isCoach() || isAdmin()) && isValidGoal(request.resource.data);
+      allow update: if isAuthenticated() && (request.auth.uid == resource.data.clientId || isCoach() || isAdmin()) && isValidGoal(request.resource.data);
+      allow delete: if isAuthenticated() && (request.auth.uid == resource.data.clientId || isCoach() || isAdmin());
+    }
+
+    match /messageTemplates/{templateId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin() && isValidMessageTemplate(request.resource.data);
     }
   }
 }

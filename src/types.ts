@@ -122,7 +122,7 @@ export interface Message {
   receiverId: string;
   text: string;
   isRead: boolean;
-  type: 'chat' | 'motivation' | 'reminder';
+  type: 'chat' | 'motivation' | 'reminder' | 'general';
   createdAt: any;
 }
 
@@ -184,4 +184,46 @@ export interface NutritionTemplate {
     fats: number;
   };
   guidelines: string[];
+}
+
+export interface Habit {
+  id?: string;
+  clientId: string;
+  title: string;
+  frequency: 'daily' | 'weekly';
+  category?: string;
+  icon?: string;
+  active: boolean;
+  createdAt: any;
+}
+
+export interface HabitLog {
+  id?: string;
+  habitId: string;
+  clientId: string;
+  date: string; // YYYY-MM-DD
+  completed: boolean;
+  updatedAt: any;
+}
+
+export interface Goal {
+  id?: string;
+  clientId: string;
+  title: string;
+  targetValue?: number;
+  currentValue?: number;
+  unit?: string;
+  deadline?: string;
+  category?: string;
+  status: 'in-progress' | 'completed' | 'deferred';
+  notes?: string;
+  createdAt: any;
+}
+
+export interface MessageTemplate {
+  id?: string;
+  title: string;
+  content: string;
+  category: 'motivation' | 'reminder' | 'general';
+  createdAt: any;
 }

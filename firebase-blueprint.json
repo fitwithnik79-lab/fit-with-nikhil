@@ -112,6 +112,63 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["clientId", "date", "waterIntake", "stepCount", "calories"]
+    },
+    "Habit": {
+      "title": "Habit",
+      "description": "A recurring habit defined for a client.",
+      "type": "object",
+      "properties": {
+        "clientId": { "type": "string" },
+        "title": { "type": "string" },
+        "frequency": { "type": "string", "enum": ["daily", "weekly"] },
+        "category": { "type": "string" },
+        "icon": { "type": "string" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["clientId", "title", "frequency", "active"]
+    },
+    "HabitLog": {
+      "title": "Habit Log",
+      "description": "Completion record for a habit on a specific date.",
+      "type": "object",
+      "properties": {
+        "habitId": { "type": "string" },
+        "clientId": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "completed": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["habitId", "clientId", "date", "completed"]
+    },
+    "Goal": {
+      "title": "Goal",
+      "description": "A specific fitness or health goal for a client.",
+      "type": "object",
+      "properties": {
+        "clientId": { "type": "string" },
+        "title": { "type": "string" },
+        "targetValue": { "type": "number" },
+        "currentValue": { "type": "number" },
+        "unit": { "type": "string" },
+        "deadline": { "type": "string", "format": "date" },
+        "category": { "type": "string" },
+        "status": { "type": "string", "enum": ["in-progress", "completed", "deferred"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["clientId", "title", "status"]
+    },
+    "MessageTemplate": {
+      "title": "Message Template",
+      "description": "A reusable motivational or reminder message template.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "category": { "type": "string", "enum": ["motivation", "reminder", "general"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "content", "category"]
     }
   },
   "firestore": {
@@ -138,6 +195,22 @@
     "/metrics/{metricId}": {
       "schema": "Metric",
       "description": "Daily body metrics tracked by clients"
+    },
+    "/habits/{habitId}": {
+      "schema": "Habit",
+      "description": "Habits defined for clients"
+    },
+    "/habitLogs/{logId}": {
+      "schema": "HabitLog",
+      "description": "Daily completion logs for habits"
+    },
+    "/goals/{goalId}": {
+      "schema": "Goal",
+      "description": "Personalized fitness goals for clients"
+    },
+    "/messageTemplates/{templateId}": {
+      "schema": "MessageTemplate",
+      "description": "Reusable message templates for admins"
     }
   }
 }

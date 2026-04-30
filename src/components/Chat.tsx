@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp, updateDoc, doc, limit } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { Message, UserProfile } from '../types';
+import { Message, UserProfile, MessageTemplate } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { triggerPushNotification } from '../lib/notifications';
-import { Send, MessageSquare, Bell, Sparkles, X } from 'lucide-react';
+import { Send, MessageSquare, Bell, Sparkles, X, ChevronUp, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
 import { cn, getAvatarUrl } from '../lib/utils';
@@ -19,13 +19,21 @@ export default function Chat({ currentUser, otherUser, onClose }: ChatProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(true);
+  const [templates, setTemplates] = useState<MessageTemplate[]>([]);
+  const [showTemplates, setShowTemplates] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // Fetch specialized templates if admin
   useEffect(() => {
-    // We update the query to be significantly more specific.
-    // Instead of filtering in-memory, we use a more direct query if possible.
-    // However, to avoid composite index issues, we still fetch by senderId
-    // but we'll sort by createdAt ASC and filter more strictly.
+    if (currentUser.role !== 'admin') return;
+    const q = query(collection(db, 'messageTemplates'), orderBy('createdAt', 'desc'));
+    const unsubscribe = onSnapshot(q, (snap) => {
+      setTemplates(snap.docs.map(doc => ({ id: doc.id, ...doc.data() }) as MessageTemplate));
+    });
+    return () => unsubscribe();
+  }, [currentUser.role]);
+
+  useEffect(() => {
     const q = query(
       collection(db, 'messages'),
       where('senderId', 'in', [currentUser.uid, otherUser.uid]),
@@ -51,7 +59,7 @@ export default function Chat({ currentUser, otherUser, onClose }: ChatProps) {
       snapshot.docs.forEach(d => {
         const data = d.data();
         if (data.receiverId === currentUser.uid && data.senderId === otherUser.uid && !data.isRead) {
-          updateDoc(doc(db, 'messages', d.id), { isRead: true });
+          updateDoc(doc(db, 'messages', d.id), { isRead: true }).catch(() => {});
         }
       });
     }, (error) => {
@@ -70,36 +78,39 @@ export default function Chat({ currentUser, otherUser, onClose }: ChatProps) {
     }
   }, [messages]);
 
-  const sendMessage = async (type: 'chat' | 'motivation' | 'reminder' = 'chat') => {
-    if (!newMessage.trim()) return;
+  const sendMessage = async (textOverride?: string, type: 'chat' | 'motivation' | 'reminder' | 'general' = 'chat') => {
+    const text = textOverride || newMessage;
+    if (!text.trim()) return;
 
-    const text = newMessage;
-    setNewMessage('');
+    if (!textOverride) setNewMessage('');
 
     try {
       await addDoc(collection(db, 'messages'), {
         senderId: currentUser.uid,
         receiverId: otherUser.uid,
-        participants: [currentUser.uid, otherUser.uid], // Add for better querying in future
+        participants: [currentUser.uid, otherUser.uid],
         text,
         type,
         isRead: false,
         createdAt: serverTimestamp()
       }).catch(err => handleFirestoreError(err, OperationType.CREATE, 'messages'));
 
-      // Trigger Push Notification if sender is admin and receiver is client
       if (currentUser.role === 'admin') {
         const title = `Message from Coach Nik`;
         triggerPushNotification(otherUser.uid, title, text, { type: 'chat', senderId: currentUser.uid });
       } else if (otherUser.role === 'admin') {
-        // Optional: Notify coach of client messages
-        const title = `New message from ${currentUser.uid === otherUser.uid ? 'Client' : 'Client'}`; // Needs proper display name if available
+        const title = `New message from ${currentUser.uid === otherUser.uid ? 'Client' : 'Client'}`;
         triggerPushNotification(otherUser.uid, `Message from client`, text, { type: 'chat', senderId: currentUser.uid });
       }
 
     } catch (error) {
       console.error('Error sending message:', error);
     }
+  };
+
+  const useTemplate = (template: MessageTemplate) => {
+    sendMessage(template.content, template.category);
+    setShowTemplates(false);
   };
 
   return (
@@ -204,23 +215,76 @@ export default function Chat({ currentUser, otherUser, onClose }: ChatProps) {
         </div>
         
         {currentUser.role === 'admin' && (
-          <div className="flex items-center gap-2 mt-3">
-            <button
-              onClick={() => sendMessage('motivation')}
-              disabled={!newMessage.trim()}
-              className="flex-1 flex items-center justify-center gap-1.5 py-1.5 bg-purple-500/10 border border-purple-500/20 text-purple-400 rounded-lg text-[10px] font-bold uppercase hover:bg-purple-500/20 transition-all"
-            >
-              <Sparkles className="w-3 h-3" />
-              Motivation
-            </button>
-            <button
-              onClick={() => sendMessage('reminder')}
-              disabled={!newMessage.trim()}
-              className="flex-1 flex items-center justify-center gap-1.5 py-1.5 bg-blue-500/10 border border-blue-500/20 text-blue-400 rounded-lg text-[10px] font-bold uppercase hover:bg-blue-500/20 transition-all"
-            >
-              <Bell className="w-3 h-3" />
-              Reminder
-            </button>
+          <div className="space-y-2 mt-3">
+            <div className="relative">
+              <AnimatePresence>
+                {showTemplates && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                    className="absolute bottom-full left-0 right-0 mb-2 bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden z-50 max-h-[300px] flex flex-col"
+                  >
+                    <div className="p-3 border-b border-zinc-800 bg-zinc-950 flex items-center justify-between">
+                      <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Select Template</span>
+                      <button onClick={() => setShowTemplates(false)} className="text-zinc-500 hover:text-white">
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                    <div className="overflow-y-auto custom-scrollbar p-2 space-y-2">
+                      {templates.map(t => (
+                        <button
+                          key={t.id}
+                          onClick={() => useTemplate(t)}
+                          className="w-full text-left p-3 rounded-xl bg-zinc-950 border border-white/5 hover:border-orange-500/50 transition-all group"
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-[10px] font-black uppercase tracking-widest text-orange-500 italic">{t.title}</span>
+                            <span className="text-[8px] font-black uppercase tracking-widest text-zinc-600 bg-zinc-900 px-1.5 py-0.5 rounded border border-white/5">{t.category}</span>
+                          </div>
+                          <p className="text-xs text-zinc-400 group-hover:text-zinc-300 line-clamp-2 italic">"{t.content}"</p>
+                        </button>
+                      ))}
+                      {templates.length === 0 && (
+                        <div className="p-8 text-center text-zinc-600">
+                          <p className="text-xs italic">No templates available. Create some in the dashboard.</p>
+                        </div>
+                      )}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+              
+              <button
+                onClick={() => setShowTemplates(!showTemplates)}
+                className="w-full flex items-center justify-between px-4 py-2 bg-zinc-950 border border-zinc-800 rounded-xl text-[10px] font-bold uppercase tracking-widest text-zinc-400 hover:text-white transition-all group"
+              >
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-3 h-3 text-orange-500" />
+                  Quick Templates
+                </div>
+                {showTemplates ? <ChevronDown className="w-3 h-3" /> : <ChevronUp className="w-3 h-3" />}
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => sendMessage(undefined, 'motivation')}
+                disabled={!newMessage.trim()}
+                className="flex-1 flex items-center justify-center gap-1.5 py-1.5 bg-purple-500/10 border border-purple-500/20 text-purple-400 rounded-lg text-[10px] font-bold uppercase hover:bg-purple-500/20 transition-all"
+              >
+                <Sparkles className="w-3 h-3" />
+                Motivation
+              </button>
+              <button
+                onClick={() => sendMessage(undefined, 'reminder')}
+                disabled={!newMessage.trim()}
+                className="flex-1 flex items-center justify-center gap-1.5 py-1.5 bg-blue-500/10 border border-blue-500/20 text-blue-400 rounded-lg text-[10px] font-bold uppercase hover:bg-blue-500/20 transition-all"
+              >
+                <Bell className="w-3 h-3" />
+                Reminder
+              </button>
+            </div>
           </div>
         )}
       </div>

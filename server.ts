@@ -209,12 +209,40 @@ async function startServer() {
             // Save steps to a metrics collection or directly to user
             const dateStr = format(today, 'yyyy-MM-dd');
             const stepDocId = `${client.uid}_${dateStr}`;
+            
+            // 1. Save to dedicated daily_steps
             await firestore.collection('daily_steps').doc(stepDocId).set({
               clientId: client.uid,
               steps: totalSteps,
               date: dateStr,
               updatedAt: admin.firestore.FieldValue.serverTimestamp()
             }, { merge: true });
+
+            // 2. Sync to metrics collection for the app's existing tracking system
+            const metricsQuery = await firestore.collection('metrics')
+              .where('clientId', '==', client.uid)
+              .where('date', '==', dateStr)
+              .limit(1)
+              .get();
+
+            if (!metricsQuery.empty) {
+              await firestore.collection('metrics').doc(metricsQuery.docs[0].id).update({
+                stepCount: totalSteps,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp()
+              });
+            } else {
+              // Create default metrics for today if they don't exist
+              await firestore.collection('metrics').add({
+                clientId: client.uid,
+                date: dateStr,
+                stepCount: totalSteps,
+                waterIntake: 0,
+                calories: 0,
+                weight: Number((client as any).weight) || 0,
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                updatedAt: admin.firestore.FieldValue.serverTimestamp()
+              });
+            }
 
             syncResults.push({ uid: client.uid, steps: totalSteps, status: 'success' });
           } else {

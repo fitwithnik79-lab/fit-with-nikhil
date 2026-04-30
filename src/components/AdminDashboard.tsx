@@ -2,14 +2,14 @@ import { useState, useEffect, useMemo } from 'react';
 import { User } from 'firebase/auth';
 import { collection, query, where, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, getDocs, orderBy, deleteDoc, limit } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { UserProfile, Workout, Exercise, Feedback, WorkoutTemplate, BodyMetrics, Message } from '../types';
+import { UserProfile, Workout, Exercise, Feedback, WorkoutTemplate, BodyMetrics, Message, Habit, HabitLog, Goal, MessageTemplate } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { searchExerciseVideos, parseWorkoutFile, analyzeNutritionFile } from '../lib/gemini';
 import { triggerPushNotification } from '../lib/notifications';
 import { SAMPLE_PROGRAMS, WEEKLY_PROGRAMS, WORKOUT_TEMPLATES } from '../constants/workoutTemplates';
 import { NUTRITION_TEMPLATES } from '../constants/nutritionTemplates';
 import { NutritionPlan, NutritionTemplate } from '../types';
-import { Plus, Users, Calendar, CheckCircle, ExternalLink, ChevronRight, Search, Activity, Clock, MessageSquare, Trash2, Edit2, ChevronDown, ChevronUp, Save, Download, Layout, Copy, ChevronLeft, Play, Sparkles, Loader2, Droplets, Footprints, Flame, Scale, LayoutDashboard, X, Bell, Send, BookOpen, Layers, Upload, Youtube, Utensils, Shield, Zap, ArrowRight, Check, Target, RefreshCcw } from 'lucide-react';
+import { Plus, Users, Calendar, CheckCircle, ExternalLink, ChevronRight, Search, Activity, Clock, MessageSquare, Trash2, Edit2, ChevronDown, ChevronUp, Save, Download, Layout, Copy, ChevronLeft, Play, Sparkles, Loader2, Droplets, Footprints, Flame, Scale, LayoutDashboard, X, Bell, Send, BookOpen, Layers, Upload, Youtube, Utensils, Shield, Zap, ArrowRight, Check, Target, RefreshCcw, Circle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, playNotificationSound, getAvatarUrl } from '../lib/utils';
 import Chat from './Chat';
@@ -51,6 +51,9 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
   const [confirmModal, setConfirmModal] = useState<{ title: string, message: string, onConfirm: () => void } | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [dailySteps, setDailySteps] = useState<Record<string, number>>({});
+  const [clientHabits, setClientHabits] = useState<Habit[]>([]);
+  const [clientGoals, setClientGoals] = useState<Goal[]>([]);
+  const [clientHabitLogs, setClientHabitLogs] = useState<HabitLog[]>([]);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
@@ -129,7 +132,7 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
       }
       isInitialLoad = false;
     }, (error) => {
-      console.error("Error fetching messages:", error);
+      handleFirestoreError(error, OperationType.LIST, 'messages');
     });
     return () => unsubscribe();
   }, [user.uid, clients]);
@@ -145,9 +148,42 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
         stepsMap[data.clientId] = data.steps;
       });
       setDailySteps(stepsMap);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'daily_steps');
     });
     return () => unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (!selectedClient?.uid) {
+      setClientHabits([]);
+      setClientGoals([]);
+      setClientHabitLogs([]);
+      return;
+    }
+
+    const qHabits = query(collection(db, 'habits'), where('clientId', '==', selectedClient.uid));
+    const unsubHabits = onSnapshot(qHabits, (snap) => {
+      setClientHabits(snap.docs.map(doc => ({ id: doc.id, ...doc.data() }) as Habit));
+    });
+
+    const qGoals = query(collection(db, 'goals'), where('clientId', '==', selectedClient.uid));
+    const unsubGoals = onSnapshot(qGoals, (snap) => {
+      setClientGoals(snap.docs.map(doc => ({ id: doc.id, ...doc.data() }) as Goal));
+    });
+
+    const sevenDaysAgo = format(subDays(new Date(), 7), 'yyyy-MM-dd');
+    const qLogs = query(collection(db, 'habitLogs'), where('clientId', '==', selectedClient.uid), where('date', '>=', sevenDaysAgo));
+    const unsubLogs = onSnapshot(qLogs, (snap) => {
+      setClientHabitLogs(snap.docs.map(doc => ({ id: doc.id, ...doc.data() }) as HabitLog));
+    });
+
+    return () => {
+      unsubHabits();
+      unsubGoals();
+      unsubLogs();
+    };
+  }, [selectedClient?.uid]);
 
   const syncAthleteData = async () => {
     setIsSyncing(true);
@@ -605,6 +641,15 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
                       >
                         Chat
                       </button>
+                      <button
+                        onClick={() => setClientViewTab('goals' as any)}
+                        className={cn(
+                          "px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all",
+                          clientViewTab === ('goals' as any) ? "bg-orange-500 text-white" : "text-zinc-500 hover:text-white"
+                        )}
+                      >
+                        Goals
+                      </button>
                     </div>
                   </div>
 
@@ -661,6 +706,22 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
                         className="h-[700px]"
                       >
                         <Chat currentUser={{ uid: user.uid, role: profile.role }} otherUser={selectedClient} />
+                      </motion.div>
+                    )}
+
+                    {clientViewTab === ('goals' as any) && (
+                      <motion.div
+                        key="goals"
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -10 }}
+                      >
+                        <GoalsManager 
+                          client={selectedClient} 
+                          habits={clientHabits} 
+                          goals={clientGoals} 
+                          logs={clientHabitLogs} 
+                        />
                       </motion.div>
                     )}
                   </AnimatePresence>
@@ -1373,6 +1434,11 @@ function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToa
         </div>
       </section>
 
+      {/* Message Templates Section */}
+      <section className="space-y-6 pt-12 border-t border-zinc-800">
+        <MessageTemplatesManager showToast={showToast} />
+      </section>
+
       {/* Program Assignment Modal */}
       <AnimatePresence>
         {showProgramModal && selectedProgram && (
@@ -1840,6 +1906,15 @@ function RemindersView({ clients, showToast, currentUser }: { clients: UserProfi
   const [messageType, setMessageType] = useState<'motivation' | 'reminder'>('motivation');
   const [messageText, setMessageText] = useState('');
   const [sending, setSending] = useState(false);
+  const [dbTemplates, setDbTemplates] = useState<MessageTemplate[]>([]);
+
+  useEffect(() => {
+    const q = query(collection(db, 'messageTemplates'), orderBy('createdAt', 'desc'));
+    const unsubscribe = onSnapshot(q, (snap) => {
+      setDbTemplates(snap.docs.map(doc => ({ id: doc.id, ...doc.data() }) as MessageTemplate));
+    });
+    return () => unsubscribe();
+  }, []);
 
   const toggleClient = (uid: string) => {
     setSelectedClients(prev => 
@@ -1876,15 +1951,13 @@ function RemindersView({ clients, showToast, currentUser }: { clients: UserProfi
   const motivationTemplates = [
     "Keep pushing! You're doing amazing work this week. 🔥",
     "Consistency is key. I see you logging those workouts, keep it up! 👏",
-    "Don't stop now. You're closer to your goals than you were yesterday.",
-    "Nik's tip: Focus on your form today. Quality over quantity! 💪"
+    ...dbTemplates.filter(t => t.category === 'motivation').map(t => t.content)
   ];
 
   const reminderTemplates = [
     "Don't forget to log your water intake today! 💧",
     "Time to hit those steps! A quick walk makes a big difference. 🚶‍♂️",
-    "Reminder: Your scheduled workout is waiting for you. Let's get it done!",
-    "Nik's reminder: Make sure you're hitting your protein targets today. 🥩"
+    ...dbTemplates.filter(t => t.category === 'reminder').map(t => t.content)
   ];
 
   return (
@@ -3643,6 +3716,267 @@ function WorkoutManager({ client, initialDate, initialWorkout, onSave, showToast
   );
 }
 
+const GoalsManager = ({ client, habits, goals, logs }: { client: UserProfile, habits: Habit[], goals: Goal[], logs: HabitLog[] }) => {
+  const [showAddHabit, setShowAddHabit] = useState(false);
+  const [newHabit, setNewHabit] = useState({ title: '', frequency: 'daily', category: 'health' });
+  const [newGoal, setNewGoal] = useState({ title: '', targetValue: 0, unit: '', deadline: '', category: 'fitness' });
+  const [showAddGoal, setShowAddGoal] = useState(false);
+
+  const handleAddHabit = async () => {
+    if (!newHabit.title) return;
+    try {
+      await addDoc(collection(db, 'habits'), {
+        clientId: client.uid,
+        ...newHabit,
+        active: true,
+        createdAt: serverTimestamp()
+      });
+      setNewHabit({ title: '', frequency: 'daily', category: 'health' });
+      setShowAddHabit(false);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleAddGoal = async () => {
+    if (!newGoal.title) return;
+    try {
+      await addDoc(collection(db, 'goals'), {
+        clientId: client.uid,
+        ...newGoal,
+        currentValue: 0,
+        status: 'in-progress',
+        createdAt: serverTimestamp()
+      });
+      setNewGoal({ title: '', targetValue: 0, unit: '', deadline: '', category: 'fitness' });
+      setShowAddGoal(false);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const toggleHabitActive = async (habitId: string, currentStatus: boolean) => {
+    try {
+      await updateDoc(doc(db, 'habits', habitId), { active: !currentStatus });
+    } catch (e) {
+       console.error(e);
+    }
+  };
+
+  const deleteGoal = async (goalId: string) => {
+    try {
+      await deleteDoc(doc(db, 'goals', goalId));
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  return (
+    <div className="space-y-8 pb-12">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        {/* Habits Section */}
+        <section className="bg-zinc-900/50 border border-zinc-800 rounded-[40px] p-8 space-y-8">
+          <div className="flex items-center justify-between">
+            <div className="space-y-1">
+              <h3 className="text-xl font-bold flex items-center gap-2">
+                <Zap className="w-5 h-5 text-orange-500" />
+                Athlete Rituals
+              </h3>
+              <p className="text-zinc-500 text-xs font-medium uppercase tracking-widest">Defined Consistency Patterns</p>
+            </div>
+            <button onClick={() => setShowAddHabit(true)} className="p-3 bg-zinc-800 hover:bg-zinc-700 rounded-2xl text-zinc-400 transition-all">
+              <Plus className="w-5 h-5" />
+            </button>
+          </div>
+
+          <div className="space-y-4">
+            {habits.map(h => (
+              <div key={h.id} className="flex items-center justify-between p-5 bg-zinc-900 border border-white/5 rounded-3xl group">
+                <div className="flex items-center gap-4">
+                  <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center", h.active ? "bg-orange-500/10 text-orange-500" : "bg-zinc-800 text-zinc-600")}>
+                    <Circle className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <p className="font-bold">{h.title}</p>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500">{h.frequency}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                   <button 
+                    onClick={() => toggleHabitActive(h.id!, h.active)}
+                    className={cn(
+                      "px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
+                      h.active ? "bg-green-500/10 text-green-500" : "bg-red-500/10 text-red-500"
+                    )}
+                   >
+                     {h.active ? 'Active' : 'Paused'}
+                   </button>
+                </div>
+              </div>
+            ))}
+            {habits.length === 0 && <p className="text-center py-8 text-zinc-600 italic font-medium">No rituals defined for this athlete.</p>}
+          </div>
+        </section>
+
+        {/* Goals Section */}
+        <section className="bg-zinc-900/50 border border-zinc-800 rounded-[40px] p-8 space-y-8">
+          <div className="flex items-center justify-between">
+            <div className="space-y-1">
+              <h3 className="text-xl font-bold flex items-center gap-2">
+                <Target className="w-5 h-5 text-blue-500" />
+                Performance Milestones
+              </h3>
+              <p className="text-zinc-500 text-xs font-medium uppercase tracking-widest">High-Impact Objectives</p>
+            </div>
+            <button onClick={() => setShowAddGoal(true)} className="p-3 bg-zinc-800 hover:bg-zinc-700 rounded-2xl text-zinc-400 transition-all">
+              <Plus className="w-5 h-5" />
+            </button>
+          </div>
+
+          <div className="space-y-6">
+            {goals.map(g => (
+              <div key={g.id} className="p-6 bg-zinc-900 border border-white/5 rounded-3xl space-y-4">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h4 className="font-bold text-lg">{g.title}</h4>
+                    <div className="flex gap-2 mt-1">
+                      <span className="text-[9px] font-black uppercase tracking-widest bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800 text-zinc-500">{g.category}</span>
+                      {g.deadline && <span className="text-[9px] font-black uppercase tracking-widest text-zinc-500 flex items-center gap-1"><Clock className="w-3 h-3" /> {g.deadline}</span>}
+                    </div>
+                  </div>
+                  <button onClick={() => deleteGoal(g.id!)} className="p-2 text-zinc-700 hover:text-red-500 transition-colors">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+                
+                <div className="space-y-2">
+                  <div className="flex justify-between text-[10px] font-black uppercase text-zinc-500">
+                    <span>Performance</span>
+                    <span>{Math.round(((g.currentValue || 0) / (g.targetValue || 1)) * 100)}%</span>
+                  </div>
+                  <div className="h-2 bg-zinc-950 rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-blue-500 rounded-full transition-all" 
+                      style={{ width: `${Math.min(((g.currentValue || 0) / (g.targetValue || 1)) * 100, 100)}%` }} 
+                    />
+                  </div>
+                </div>
+                <div className="flex justify-between items-end">
+                   <p className="text-xs font-bold text-zinc-500">Current: <span className="text-white">{g.currentValue || 0} {g.unit}</span></p>
+                   <p className="text-xs font-bold text-zinc-500">Target: <span className="text-white">{g.targetValue} {g.unit}</span></p>
+                </div>
+              </div>
+            ))}
+            {goals.length === 0 && <p className="text-center py-8 text-zinc-600 italic font-medium">No performance milestones set.</p>}
+          </div>
+        </section>
+      </div>
+
+      {/* Add Habit Modal */}
+      {showAddHabit && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowAddHabit(false)} />
+          <div className="relative w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-[40px] p-8 space-y-6">
+            <h3 className="text-2xl font-black uppercase tracking-tighter italic text-orange-500">Define Ritual</h3>
+            <div className="space-y-4">
+              <div>
+                <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2 block">Habit Title</label>
+                <input 
+                  value={newHabit.title}
+                  onChange={e => setNewHabit({...newHabit, title: e.target.value})}
+                  className="w-full bg-black border border-white/5 rounded-2xl px-6 py-4 focus:outline-none focus:border-orange-500/50"
+                  placeholder="e.g. 5am Wake Up"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                 <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2 block">Frequency</label>
+                  <select 
+                    value={newHabit.frequency}
+                    onChange={e => setNewHabit({ ...newHabit, frequency: e.target.value })}
+                    className="w-full bg-black border border-white/5 rounded-2xl px-6 py-4 focus:outline-none focus:border-orange-500/50 appearance-none"
+                  >
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2 block">Category</label>
+                  <select 
+                    value={newHabit.category}
+                    onChange={e => setNewHabit({ ...newHabit, category: e.target.value })}
+                    className="w-full bg-black border border-white/5 rounded-2xl px-6 py-4 focus:outline-none focus:border-orange-500/50 appearance-none"
+                  >
+                    <option value="health">Health</option>
+                    <option value="fitness">Fitness</option>
+                    <option value="performance">Performance</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            <button onClick={handleAddHabit} className="w-full py-5 bg-orange-500 text-white font-black uppercase tracking-widest rounded-2xl hover:scale-[1.02] transition-all shadow-2xl shadow-orange-500/20">
+              Inject Ritual
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Add Goal Modal */}
+      {showAddGoal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowAddGoal(false)} />
+          <div className="relative w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-[40px] p-8 space-y-6">
+            <h3 className="text-2xl font-black uppercase tracking-tighter italic text-blue-500">Set Milestone</h3>
+            <div className="space-y-4">
+              <div>
+                <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2 block">Objective</label>
+                <input 
+                  value={newGoal.title}
+                  onChange={e => setNewGoal({...newGoal, title: e.target.value})}
+                  className="w-full bg-black border border-white/5 rounded-2xl px-6 py-4 focus:outline-none focus:border-blue-500/50"
+                  placeholder="e.g. Total Deadlift Volume"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                 <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2 block">Target</label>
+                  <input 
+                    type="number"
+                    value={newGoal.targetValue}
+                    onChange={e => setNewGoal({...newGoal, targetValue: Number(e.target.value)})}
+                    className="w-full bg-black border border-white/5 rounded-2xl px-6 py-4 focus:outline-none focus:border-blue-500/50"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2 block">Unit</label>
+                  <input 
+                    value={newGoal.unit}
+                    onChange={e => setNewGoal({...newGoal, unit: e.target.value})}
+                    className="w-full bg-black border border-white/5 rounded-2xl px-6 py-4 focus:outline-none focus:border-blue-500/50"
+                    placeholder="kg / km / etc"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2 block">Deadline</label>
+                <input 
+                  type="date"
+                  value={newGoal.deadline}
+                  onChange={e => setNewGoal({...newGoal, deadline: e.target.value})}
+                  className="w-full bg-black border border-white/5 rounded-2xl px-6 py-4 focus:outline-none focus:border-blue-500/50"
+                />
+              </div>
+            </div>
+            <button onClick={handleAddGoal} className="w-full py-5 bg-blue-600 text-white font-black uppercase tracking-widest rounded-2xl hover:scale-[1.02] transition-all shadow-2xl shadow-blue-500/20">
+              Establish Milestone
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 function ClientDashboardView({ client }: { client: UserProfile }) {
   const [metrics, setMetrics] = useState<BodyMetrics[]>([]);
   const [meals, setMeals] = useState<any[]>([]);
@@ -3711,21 +4045,30 @@ function ClientDashboardView({ client }: { client: UserProfile }) {
     const unsubscribeMetrics = onSnapshot(qMetrics, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as BodyMetrics);
       setMetrics(data.reverse());
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'metrics');
     });
 
     const unsubscribeMeals = onSnapshot(qMeals, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setMeals(data);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'meals');
     });
 
     const unsubscribeWorkouts = onSnapshot(qWorkouts, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as Workout);
       setWorkouts(data);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'workouts');
     });
 
     const unsubscribeFeedback = onSnapshot(qFeedback, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as Feedback);
       setFeedback(data);
+      setLoading(false);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'feedback');
       setLoading(false);
     });
 
@@ -3992,4 +4335,199 @@ function ClientDashboardView({ client }: { client: UserProfile }) {
     </div>
   );
 }
+
+const MessageTemplatesManager = ({ showToast }: { showToast: (m: string, t?: 'success' | 'error') => void }) => {
+  const [templates, setTemplates] = useState<MessageTemplate[]>([]);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [newTemplate, setNewTemplate] = useState<{ title: string; content: string; category: MessageTemplate['category'] }>({ title: '', content: '', category: 'motivation' });
+  const [editingTemplate, setEditingTemplate] = useState<MessageTemplate | null>(null);
+
+  useEffect(() => {
+    const q = query(collection(db, 'messageTemplates'), orderBy('createdAt', 'desc'));
+    const unsubscribe = onSnapshot(q, (snap) => {
+      setTemplates(snap.docs.map(doc => ({ id: doc.id, ...doc.data() }) as MessageTemplate));
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleSaveTemplate = async () => {
+    if (!newTemplate.title || !newTemplate.content) return;
+    try {
+      if (editingTemplate) {
+        await updateDoc(doc(db, 'messageTemplates', editingTemplate.id!), {
+          ...newTemplate,
+          updatedAt: serverTimestamp()
+        });
+        showToast('Template updated successfully');
+      } else {
+        await addDoc(collection(db, 'messageTemplates'), {
+          ...newTemplate,
+          createdAt: serverTimestamp()
+        });
+        showToast('Template created successfully');
+      }
+      setNewTemplate({ title: '', content: '', category: 'motivation' });
+      setEditingTemplate(null);
+      setShowAddModal(false);
+    } catch (e) {
+      console.error(e);
+      showToast('Error saving template', 'error');
+    }
+  };
+
+  const deleteTemplate = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'messageTemplates', id));
+      showToast('Template deleted');
+    } catch (e) {
+      console.error(e);
+      showToast('Error deleting template', 'error');
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div className="space-y-1">
+          <h3 className="text-xl font-bold flex items-center gap-2">
+            <MessageSquare className="w-5 h-5 text-orange-500" />
+            Communication Templates
+          </h3>
+          <p className="text-zinc-500 text-[10px] font-black uppercase tracking-widest">Motivational Assets & Reminders</p>
+        </div>
+        <button 
+          onClick={() => {
+            setEditingTemplate(null);
+            setNewTemplate({ title: '', content: '', category: 'motivation' });
+            setShowAddModal(true);
+          }}
+          className="px-4 py-2 bg-zinc-950 border border-white/5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:border-orange-500/50 transition-all flex items-center gap-2"
+        >
+          <Plus className="w-4 h-4" />
+          New Template
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {templates.map(t => (
+          <div key={t.id} className="bg-zinc-900 border border-white/5 rounded-[32px] p-6 hover:border-orange-500/30 transition-all group relative overflow-hidden">
+            <div className="flex justify-between items-start mb-4">
+              <div>
+                <span className={cn(
+                  "text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded border mb-2 inline-block",
+                  t.category === 'motivation' ? "bg-orange-500/10 text-orange-500 border-orange-500/20" :
+                  t.category === 'reminder' ? "bg-blue-500/10 text-blue-500 border-blue-500/20" :
+                  "bg-zinc-800 text-zinc-500 border-white/5"
+                )}>
+                  {t.category}
+                </span>
+                <h4 className="font-black text-lg text-white group-hover:text-orange-500 transition-colors uppercase italic">{t.title}</h4>
+              </div>
+              <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-all">
+                <button 
+                  onClick={() => {
+                    setEditingTemplate(t);
+                    setNewTemplate({ title: t.title, content: t.content, category: t.category });
+                    setShowAddModal(true);
+                  }}
+                  className="p-2 text-zinc-500 hover:text-white transition-colors"
+                >
+                  <Edit2 className="w-4 h-4" />
+                </button>
+                <button 
+                  onClick={() => deleteTemplate(t.id!)}
+                  className="p-2 text-zinc-500 hover:text-red-500 transition-colors"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            <p className="text-zinc-400 text-sm line-clamp-3 italic">"{t.content}"</p>
+          </div>
+        ))}
+        {templates.length === 0 && (
+          <div className="col-span-full py-12 text-center bg-zinc-950/50 border border-dashed border-zinc-800 rounded-3xl">
+            <MessageSquare className="w-8 h-8 text-zinc-800 mx-auto mb-4" />
+            <p className="text-zinc-500 text-sm italic font-medium">No templates found in your arsenal.</p>
+          </div>
+        )}
+      </div>
+
+      <AnimatePresence>
+        {showAddModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowAddModal(false)}
+              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="relative w-full max-w-lg bg-zinc-900 border border-zinc-800 rounded-[40px] p-8 space-y-6"
+            >
+              <h3 className="text-3xl font-black uppercase italic tracking-tighter text-orange-500">
+                {editingTemplate ? 'Refine Template' : 'Forging Template'}
+              </h3>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2 block">Internal Title</label>
+                  <input 
+                    value={newTemplate.title}
+                    onChange={e => setNewTemplate({...newTemplate, title: e.target.value})}
+                    className="w-full bg-black border border-white/5 rounded-2xl px-6 py-4 focus:outline-none focus:border-orange-500/50"
+                    placeholder="e.g. Post-Workout Encouragement"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2 block">Template Category</label>
+                  <div className="flex gap-2">
+                    {['motivation', 'reminder', 'general'].map(cat => (
+                      <button
+                        key={cat}
+                        onClick={() => setNewTemplate({...newTemplate, category: cat as any})}
+                        className={cn(
+                          "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
+                          newTemplate.category === cat ? "bg-orange-500 text-white" : "bg-black text-zinc-500 border border-white/5 hover:border-zinc-700"
+                        )}
+                      >
+                        {cat}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2 block">Message Content</label>
+                  <textarea 
+                    value={newTemplate.content}
+                    onChange={e => setNewTemplate({...newTemplate, content: e.target.value})}
+                    rows={5}
+                    className="w-full bg-black border border-white/5 rounded-2xl px-6 py-4 focus:outline-none focus:border-orange-500/50 resize-none"
+                    placeholder="Enter your polished message template here..."
+                  />
+                  <p className="mt-2 text-[9px] text-zinc-600 font-bold uppercase tracking-widest flex items-center gap-2">
+                    <Sparkles className="w-3 h-3" />
+                    Pro tip: Make it personal and high-energy.
+                  </p>
+                </div>
+              </div>
+              
+              <button 
+                onClick={handleSaveTemplate}
+                className="w-full py-5 bg-orange-600 text-white font-black uppercase tracking-widest rounded-2xl hover:scale-[1.02] transition-all shadow-2xl shadow-orange-500/20"
+              >
+                {editingTemplate ? 'Update Asset' : 'Activate Template'}
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
+
 
