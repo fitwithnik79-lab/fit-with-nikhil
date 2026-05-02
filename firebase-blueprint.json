@@ -169,6 +169,25 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["title", "content", "category"]
+    },
+    "Reminder": {
+      "title": "Reminder",
+      "description": "A personal reminder for habits or tasks.",
+      "type": "object",
+      "properties": {
+        "clientId": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "time": { "type": "string", "description": "HH:mm format" },
+        "days": { "type": "array", "items": { "type": "integer" } },
+        "habitId": { "type": "string" },
+        "goalId": { "type": "string" },
+        "active": { "type": "boolean" },
+        "type": { "type": "string", "enum": ["habit", "goal", "task"] },
+        "lastNotified": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["clientId", "title", "time", "active", "type"]
     }
   },
   "firestore": {
@@ -211,6 +230,10 @@
     "/messageTemplates/{templateId}": {
       "schema": "MessageTemplate",
       "description": "Reusable message templates for admins"
+    },
+    "/reminders/{reminderId}": {
+      "schema": "Reminder",
+      "description": "Personal reminders for habits and tasks"
     }
   }
 }

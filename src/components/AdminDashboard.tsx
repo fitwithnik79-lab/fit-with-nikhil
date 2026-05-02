@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { User } from 'firebase/auth';
-import { collection, query, where, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, getDocs, orderBy, deleteDoc, limit } from 'firebase/firestore';
-import { db, storage } from '../lib/firebase';
+import { collection, query, where, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, getDocs, orderBy, deleteDoc, limit, increment } from 'firebase/firestore';
+import { db, storage, auth } from '../lib/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { UserProfile, Workout, Exercise, Feedback, WorkoutTemplate, BodyMetrics, Message, Habit, HabitLog, Goal, MessageTemplate } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
@@ -10,7 +10,7 @@ import { triggerPushNotification } from '../lib/notifications';
 import { SAMPLE_PROGRAMS, WEEKLY_PROGRAMS, WORKOUT_TEMPLATES } from '../constants/workoutTemplates';
 import { NUTRITION_TEMPLATES } from '../constants/nutritionTemplates';
 import { NutritionPlan, NutritionTemplate } from '../types';
-import { Plus, Users, Calendar, CheckCircle, ExternalLink, ChevronRight, Search, Activity, Clock, MessageSquare, Trash2, Edit2, ChevronDown, ChevronUp, Save, Download, Layout, Copy, ChevronLeft, Play, Sparkles, Loader2, Droplets, Footprints, Flame, Scale, LayoutDashboard, X, Bell, Send, BookOpen, Layers, Upload, Youtube, Utensils, Shield, Zap, ArrowRight, Check, Target, RefreshCcw, Circle, Settings, Camera } from 'lucide-react';
+import { Plus, Users, Calendar, CheckCircle, ExternalLink, ChevronRight, Search, Activity, Clock, MessageSquare, Trash2, Edit2, ChevronDown, ChevronUp, Save, Download, Layout, Copy, ChevronLeft, Play, Sparkles, Loader2, Droplets, Footprints, Flame, Scale, LayoutDashboard, X, Bell, Send, BookOpen, Layers, Upload, Youtube, Utensils, Shield, Zap, ArrowRight, Check, Target, RefreshCcw, Circle, Settings, Camera, TrendingUp, Calculator } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, playNotificationSound, getAvatarUrl } from '../lib/utils';
 import Chat from './Chat';
@@ -55,6 +55,12 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
   const [clientHabits, setClientHabits] = useState<Habit[]>([]);
   const [clientGoals, setClientGoals] = useState<Goal[]>([]);
   const [clientHabitLogs, setClientHabitLogs] = useState<HabitLog[]>([]);
+  
+  // New states for intelligence logic
+  const [allWorkouts, setAllWorkouts] = useState<Workout[]>([]);
+  const [allNutritionPlans, setAllNutritionPlans] = useState<NutritionPlan[]>([]);
+  const [allGoals, setAllGoals] = useState<Goal[]>([]);
+  const [allHabitLogs, setAllHabitLogs] = useState<HabitLog[]>([]);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
@@ -78,6 +84,135 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
     });
     return () => unsubscribe();
   }, []);
+
+  useEffect(() => {
+    // Global fetch for intelligence feed
+    const qWorkouts = query(collection(db, 'workouts'), orderBy('createdAt', 'desc'));
+    const unsubWorkouts = onSnapshot(qWorkouts, (snap) => {
+      setAllWorkouts(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Workout)));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'workouts_intelligence');
+    });
+
+    const qNutrition = query(collection(db, 'nutritionPlans'));
+    const unsubNutrition = onSnapshot(qNutrition, (snap) => {
+      setAllNutritionPlans(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as NutritionPlan)));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'nutritionPlans_intelligence');
+    });
+
+    const qGoals = query(collection(db, 'goals'));
+    const unsubGoals = onSnapshot(qGoals, (snap) => {
+      setAllGoals(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Goal)));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'goals_intelligence');
+    });
+
+    const qHabitLogs = query(collection(db, 'habitLogs'));
+    const unsubHabitLogs = onSnapshot(qHabitLogs, (snap) => {
+      setAllHabitLogs(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as HabitLog)));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'habitLogs_intelligence');
+    });
+
+    return () => {
+      unsubWorkouts();
+      unsubNutrition();
+      unsubGoals();
+      unsubHabitLogs();
+    };
+  }, []);
+
+  const expiringPlans = useMemo(() => {
+    return clients.map(client => {
+      const clientWorkouts = allWorkouts.filter(w => w.clientId === client.uid);
+      const latestWorkout = clientWorkouts[0]; // Ordered by createdAt desc
+      const nutritionPlan = allNutritionPlans.find(np => np.clientId === client.uid && np.isActive);
+      
+      const reasons = [];
+      if (latestWorkout && latestWorkout.weekNumber >= 4) {
+        reasons.push({ type: 'workout', label: `Final Week (${latestWorkout.weekNumber})` });
+      }
+      
+      const clientGoals = allGoals.filter(g => g.clientId === client.uid && g.status === 'in-progress');
+      const upcomingGoal = clientGoals.find(g => g.deadline && differenceInDays(new Date(g.deadline), new Date()) <= 3);
+      if (upcomingGoal) {
+        reasons.push({ type: 'goal', label: `Goal Deadline Soon: ${upcomingGoal.title}` });
+      }
+
+      if (reasons.length > 0) {
+        return { client, reasons };
+      }
+      return null;
+    }).filter(Boolean);
+  }, [clients, allWorkouts, allNutritionPlans, allGoals]);
+
+  const milestones = useMemo(() => {
+    return clients.map(client => {
+      const goals = allGoals.filter(g => g.clientId === client.uid);
+      const completedRecentGoal = goals.find(g => g.status === 'completed' && g.createdAt && differenceInDays(new Date(), g.createdAt.toDate ? g.createdAt.toDate() : new Date()) <= 7);
+      
+      const clientLogs = allHabitLogs.filter(l => l.clientId === client.uid && l.completed);
+      const recentLogs = clientLogs.filter(l => differenceInDays(new Date(), new Date(l.date)) <= 7);
+      
+      const achievements = [];
+      if (client.streak && client.streak >= 7) {
+        achievements.push({ type: 'streak', label: `${client.streak} Day Streak!` });
+      }
+      if (completedRecentGoal) {
+        achievements.push({ type: 'goal', label: `Target Hit: ${completedRecentGoal.title}` });
+      }
+      if (recentLogs.length >= 5) {
+        achievements.push({ type: 'consistency', label: 'Consistency Elite (5+ Habits/Week)' });
+      }
+
+      if (achievements.length > 0) {
+        return { client, achievements };
+      }
+      return null;
+    }).filter(Boolean);
+  }, [clients, allGoals, allHabitLogs]);
+
+  const programmingLeads = useMemo(() => {
+    return clients.filter(client => {
+      const hasWorkouts = allWorkouts.some(w => w.clientId === client.uid);
+      return !hasWorkouts;
+    }).map(client => {
+      const signupDate = client.createdAt?.toDate ? client.createdAt.toDate() : new Date();
+      const daysSinceSignup = differenceInDays(new Date(), signupDate);
+      return { client, daysSinceSignup };
+    }).sort((a, b) => b.daysSinceSignup - a.daysSinceSignup);
+  }, [clients, allWorkouts]);
+
+  useEffect(() => {
+    if (loading || clients.length === 0) return;
+
+    const nudgeUsers = async () => {
+      for (const item of programmingLeads) {
+        // Condition: 3+ days since signup, no workouts, and nudge not yet sent
+        if (item.daysSinceSignup >= 3 && !(item.client as any).welcomeNudgeSent) {
+          try {
+            await addDoc(collection(db, 'messages'), {
+              senderId: user.uid,
+              receiverId: item.client.uid,
+              text: `Hey ${item.client.displayName?.split(' ')[0] || 'there'}! I noticed you signed up but haven't started a workout protocol yet. Feel free to ask me for a custom workout plan—I'm here to help you achieve your elite goals!`,
+              createdAt: serverTimestamp(),
+              type: 'motivation',
+              isRead: false
+            });
+            
+            await updateDoc(doc(db, 'users', item.client.uid), {
+              welcomeNudgeSent: true
+            });
+          } catch (e) {
+            console.error('Error sending auto-nudge:', e);
+          }
+        }
+      }
+    };
+
+    nudgeUsers();
+  }, [programmingLeads, loading]);
 
   useEffect(() => {
     const q = query(collection(db, 'feedback'), orderBy('createdAt', 'desc'));
@@ -348,6 +483,202 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
                    </div>
                  </motion.div>
                ))}
+            </div>
+
+            {/* Strategic Awareness: Expiring, Milestones & Programming Leads */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              {/* Critical Transitions (Expiring Plans) */}
+              <div className="space-y-6">
+                <div className="flex items-center justify-between px-2">
+                  <h3 className="text-xl font-black uppercase italic tracking-tighter flex items-center gap-3">
+                    <Clock className="w-5 h-5 text-red-500" />
+                    Critical <span className="text-zinc-700">Transitions</span>
+                  </h3>
+                  <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest bg-zinc-900 px-3 py-1 rounded-full">
+                    {expiringPlans.length} Action Items
+                  </span>
+                </div>
+                
+                <div className="space-y-3">
+                  {expiringPlans.length > 0 ? (
+                    expiringPlans.map((item: any, i) => (
+                      <motion.div 
+                        key={item.client.uid}
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0, transition: { delay: i * 0.1 } }}
+                        className="bg-zinc-950 border border-white/5 p-6 rounded-[32px] flex items-center justify-between group hover:border-red-500/30 transition-all"
+                      >
+                        <div className="flex items-center gap-4">
+                          <div className="relative">
+                            <div className="w-12 h-12 rounded-2xl overflow-hidden border border-white/10 shadow-xl group-hover:scale-110 transition-transform">
+                              <img 
+                                src={getAvatarUrl(item.client.email, item.client.gender, item.client.photoURL)} 
+                                alt={item.client.displayName} 
+                                className="w-full h-full object-cover"
+                              />
+                            </div>
+                            <div className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full border-2 border-zinc-950 animate-pulse" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-black text-white group-hover:text-red-500 transition-colors uppercase">{item.client.displayName}</p>
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {item.reasons.map((r: any, idx: number) => (
+                                <span key={idx} className="text-[9px] font-black uppercase bg-red-500/10 text-red-400 px-2 py-0.5 rounded">
+                                  {r.label}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                        <button 
+                          onClick={() => {
+                            setSelectedClient(item.client);
+                            setActiveTab('clients');
+                            setClientViewTab('chat');
+                          }}
+                          className="px-4 py-2 bg-zinc-900 border border-white/5 rounded-xl text-[10px] font-black uppercase text-zinc-500 hover:text-white hover:border-red-500/30 transition-all"
+                        >
+                          Intervene
+                        </button>
+                      </motion.div>
+                    ))
+                  ) : (
+                    <div className="bg-zinc-900/30 border border-dashed border-zinc-800 p-8 rounded-[32px] text-center">
+                      <CheckCircle className="w-8 h-8 text-zinc-800 mx-auto mb-2 opacity-50" />
+                      <p className="text-xs font-black text-zinc-600 uppercase">All athlete programs are locked in.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Peak Performance (Milestones) */}
+              <div className="space-y-6">
+                <div className="flex items-center justify-between px-2">
+                  <h3 className="text-xl font-black uppercase italic tracking-tighter flex items-center gap-3">
+                    <Sparkles className="w-5 h-5 text-yellow-500" />
+                    Peak <span className="text-zinc-700">Performance</span>
+                  </h3>
+                  <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest bg-zinc-900 px-3 py-1 rounded-full">
+                    {milestones.length} Spotlights
+                  </span>
+                </div>
+                
+                <div className="space-y-3">
+                  {milestones.length > 0 ? (
+                    milestones.map((item: any, i) => (
+                      <motion.div 
+                        key={item.client.uid}
+                        initial={{ opacity: 0, x: 20 }}
+                        animate={{ opacity: 1, x: 0, transition: { delay: i * 0.1 } }}
+                        className="bg-zinc-950 border border-white/5 p-6 rounded-[32px] flex items-center justify-between group hover:border-yellow-500/30 transition-all"
+                      >
+                        <div className="flex items-center gap-4">
+                          <div className="relative">
+                            <div className="w-12 h-12 rounded-2xl overflow-hidden border border-white/10 shadow-xl group-hover:scale-110 transition-transform">
+                              <img 
+                                src={getAvatarUrl(item.client.email, item.client.gender, item.client.photoURL)} 
+                                alt={item.client.displayName} 
+                                className="w-full h-full object-cover"
+                              />
+                            </div>
+                            <div className="absolute -top-1 -right-1 w-4 h-4 bg-yellow-500 rounded-full border-2 border-zinc-950 shadow-lg" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-black text-white group-hover:text-yellow-500 transition-colors uppercase">{item.client.displayName}</p>
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {item.achievements.map((a: any, idx: number) => (
+                                <span key={idx} className="text-[9px] font-black uppercase bg-yellow-500/10 text-yellow-400 px-2 py-0.5 rounded">
+                                  {a.label}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                        <button 
+                          onClick={() => {
+                            setSelectedClient(item.client);
+                            setActiveTab('clients');
+                            setClientViewTab('chat');
+                          }}
+                          className="px-4 py-2 bg-zinc-900 border border-white/5 rounded-xl text-[10px] font-black uppercase text-zinc-500 hover:text-white hover:border-yellow-500/30 transition-all"
+                        >
+                          Motivate
+                        </button>
+                      </motion.div>
+                    ))
+                  ) : (
+                    <div className="bg-zinc-900/30 border border-dashed border-zinc-800 p-8 rounded-[32px] text-center">
+                      <Activity className="w-8 h-8 text-zinc-800 mx-auto mb-2 opacity-50" />
+                      <p className="text-xs font-black text-zinc-600 uppercase">Growth phases currently in progress.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Programming Leads (No Workouts) */}
+              <div className="space-y-6">
+                <div className="flex items-center justify-between px-2">
+                  <h3 className="text-xl font-black uppercase italic tracking-tighter flex items-center gap-3">
+                    <Layout className="w-5 h-5 text-blue-500" />
+                    Programming <span className="text-zinc-700">Leads</span>
+                  </h3>
+                  <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest bg-zinc-900 px-3 py-1 rounded-full">
+                    {programmingLeads.length} Awaiting Programs
+                  </span>
+                </div>
+                
+                <div className="space-y-3">
+                  {programmingLeads.length > 0 ? (
+                    programmingLeads.map((item: any, i) => (
+                      <motion.div 
+                        key={item.client.uid}
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0, transition: { delay: i * 0.1 } }}
+                        className="bg-zinc-950 border border-white/5 p-6 rounded-[32px] flex items-center justify-between group hover:border-blue-500/30 transition-all"
+                      >
+                        <div className="flex items-center gap-4">
+                          <div className="relative">
+                            <div className="w-12 h-12 rounded-2xl overflow-hidden border border-white/10 shadow-xl group-hover:scale-110 transition-transform">
+                              <img 
+                                src={getAvatarUrl(item.client.email, item.client.gender, item.client.photoURL)} 
+                                alt={item.client.displayName} 
+                                className="w-full h-full object-cover"
+                              />
+                            </div>
+                            <div className="absolute -top-1 -right-1 w-4 h-4 bg-blue-500 rounded-full border-2 border-zinc-950 shadow-lg" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-black text-white group-hover:text-blue-500 transition-colors uppercase">{item.client.displayName}</p>
+                            <p className="text-[9px] font-black uppercase text-zinc-500 mt-1">
+                              Joined {item.daysSinceSignup} days ago
+                            </p>
+                            {(item.client as any).welcomeNudgeSent && (
+                              <span className="text-[8px] font-black uppercase bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded mt-1 inline-block">
+                                Auto-Nudge Sent
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <button 
+                          onClick={() => {
+                            setSelectedClient(item.client);
+                            setActiveTab('clients');
+                            setClientViewTab('program');
+                          }}
+                          className="px-4 py-2 bg-zinc-900 border border-white/5 rounded-xl text-[10px] font-black uppercase text-zinc-500 hover:text-white hover:border-blue-500/30 transition-all"
+                        >
+                          Program
+                        </button>
+                      </motion.div>
+                    ))
+                  ) : (
+                    <div className="bg-zinc-900/30 border border-dashed border-zinc-800 p-8 rounded-[32px] text-center">
+                      <Users className="w-8 h-8 text-zinc-800 mx-auto mb-2 opacity-50" />
+                      <p className="text-xs font-black text-zinc-600 uppercase">Every client has a protocol.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -1039,13 +1370,18 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
 function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToast: (m: string, t?: 'success' | 'error') => void }) {
   const [selectedTemplate, setSelectedTemplate] = useState<WorkoutTemplate | null>(null);
   const [selectedProgram, setSelectedProgram] = useState<ProgramTemplate | null>(null);
+  const [selectedNutritionTemplate, setSelectedNutritionTemplate] = useState<NutritionTemplate | null>(null);
+  const [editingTemplate, setEditingTemplate] = useState<NutritionTemplate | null>(null);
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [showProgramModal, setShowProgramModal] = useState(false);
+  const [showNutritionModal, setShowNutritionModal] = useState(false);
   const [selectedClient, setSelectedClient] = useState<UserProfile | null>(null);
   const [assignDate, setAssignDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [assigning, setAssigning] = useState(false);
   const [parsingFile, setParsingFile] = useState(false);
   const [customPrograms, setCustomPrograms] = useState<ProgramTemplate[]>([]);
+  const [customNutrition, setCustomNutrition] = useState<NutritionTemplate[]>([]);
+  const [templateTab, setTemplateTab] = useState<'workout' | 'nutrition'>('workout');
   const [isEditingTemplate, setIsEditingTemplate] = useState(false);
   const [editingTemplateName, setEditingTemplateName] = useState('');
   const [editingTemplateCategory, setEditingTemplateCategory] = useState('');
@@ -1060,6 +1396,17 @@ function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToa
       setCustomPrograms(data);
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, 'templates');
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const q = query(collection(db, 'nutritionTemplates'), orderBy('createdAt', 'desc'));
+    const unsubscribe = onSnapshot(q, (snap) => {
+      const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as NutritionTemplate));
+      setCustomNutrition(data);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'nutritionTemplates');
     });
     return () => unsubscribe();
   }, []);
@@ -1271,6 +1618,46 @@ function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToa
     }
   };
 
+  const handleAssignNutrition = async () => {
+    if (!selectedNutritionTemplate || !selectedClient) return;
+    setAssigning(true);
+    try {
+      // 1. Deactivate old plans for this client
+      const q = query(collection(db, 'nutritionPlans'), where('clientId', '==', selectedClient.uid), where('isActive', '==', true));
+      const oldPlans = await getDocs(q);
+      for (const d of oldPlans.docs) {
+        await updateDoc(doc(db, 'nutritionPlans', d.id), { isActive: false });
+      }
+
+      // 2. Create new plan from template
+      const planData = {
+        clientId: selectedClient.uid,
+        name: selectedNutritionTemplate.name,
+        description: selectedNutritionTemplate.description,
+        targetMacros: selectedNutritionTemplate.targetMacros,
+        guidelines: selectedNutritionTemplate.guidelines,
+        plannedMeals: selectedNutritionTemplate.plannedMeals || [],
+        recommendedFoods: [],
+        restrictedFoods: [],
+        isActive: true,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        assignedFromTemplateId: selectedNutritionTemplate.id
+      };
+
+      await addDoc(collection(db, 'nutritionPlans'), planData);
+      showToast(`Nutrition Protocol "${selectedNutritionTemplate.name}" assigned to ${selectedClient.displayName}`);
+      setShowNutritionModal(false);
+      setSelectedNutritionTemplate(null);
+      setSelectedClient(null);
+    } catch (error) {
+      console.error('Error assigning nutrition:', error);
+      showToast('Failed to assign nutrition protocol', 'error');
+    } finally {
+      setAssigning(false);
+    }
+  };
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1303,209 +1690,522 @@ function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToa
     }
   };
 
+  const handleNutritionUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setParsingFile(true);
+    try {
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        const content = event.target?.result as string;
+        const analysis = await analyzeNutritionFile(content, file.name);
+        
+        if (analysis) {
+          // Save to Firestore 'nutritionTemplates'
+          await addDoc(collection(db, 'nutritionTemplates'), {
+            name: analysis.name || file.name.replace(/\.[^/.]+$/, ""),
+            description: analysis.description || 'AI analyzed nutrition plan',
+            targetMacros: analysis.targetMacros,
+            guidelines: analysis.guidelines,
+            plannedMeals: analysis.plannedMeals || [],
+            createdAt: serverTimestamp(),
+            isCustom: true
+          });
+          showToast(`Nutrition protocol "${analysis.name}" generated and saved to Vault!`);
+        } else {
+          showToast('Failed to parse nutrition file. Please try a different format.', 'error');
+        }
+        setParsingFile(false);
+      };
+      reader.readAsText(file);
+    } catch (error) {
+      console.error('Error uploading nutrition file:', error);
+      showToast('Error processing file', 'error');
+      setParsingFile(false);
+    }
+  };
+
+  const allNutrition = [...NUTRITION_TEMPLATES, ...customNutrition];
   const allPrograms = [...WEEKLY_PROGRAMS, ...customPrograms];
 
   return (
     <div className="space-y-12">
-      {/* Upload Section */}
-      <section className="bg-zinc-900 border border-zinc-800 rounded-[40px] p-10 relative overflow-hidden group">
-        <div className="absolute top-0 right-0 p-10 opacity-5 group-hover:opacity-10 transition-opacity">
-          <Upload className="w-32 h-32 text-orange-500" />
-        </div>
-        <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-8">
-          <div className="space-y-4 text-center md:text-left">
-            <div className="inline-flex p-3 bg-orange-500/10 rounded-2xl text-orange-500">
-              <Sparkles className="w-6 h-6" />
-            </div>
-            <h2 className="text-3xl font-black uppercase tracking-tight">AI Template Generator</h2>
-            <p className="text-zinc-400 max-w-md leading-relaxed">
-              Upload your workout splits in document or spreadsheet format. Nik's AI will analyze the content and generate a fully structured template for you.
-            </p>
-          </div>
-          
-          <label className={cn(
-            "flex flex-col items-center justify-center border-2 border-dashed border-zinc-800 rounded-[32px] p-10 cursor-pointer hover:border-orange-500/50 transition-all bg-zinc-950 min-w-[300px]",
-            parsingFile && "opacity-50 cursor-not-allowed"
-          )}>
-            {parsingFile ? (
-              <div className="flex flex-col items-center gap-4">
-                <Loader2 className="w-10 h-10 text-orange-500 animate-spin" />
-                <span className="text-sm font-bold text-zinc-500 uppercase tracking-widest">Nik is analyzing...</span>
-              </div>
-            ) : (
-              <div className="flex flex-col items-center gap-4">
-                <div className="p-4 bg-orange-500/10 rounded-2xl text-orange-500">
-                  <Upload className="w-8 h-8" />
-                </div>
-                <div className="text-center">
-                  <span className="block text-white font-bold">Upload Split File</span>
-                  <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mt-1">DOC, TXT, CSV, XLS</span>
-                </div>
-              </div>
-            )}
-            <input type="file" className="hidden" onChange={handleFileUpload} disabled={parsingFile} accept=".txt,.doc,.docx,.csv,.xls,.xlsx" />
-          </label>
-        </div>
-      </section>
+      {/* Sub-Tabs for Templates */}
+      <div className="flex gap-4 p-1 bg-zinc-900 border border-zinc-800 rounded-2xl w-fit mx-auto lg:mx-0">
+        <button
+          onClick={() => setTemplateTab('workout')}
+          className={cn(
+            "px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2",
+            templateTab === 'workout' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-zinc-500 hover:text-white"
+          )}
+        >
+          <Zap className="w-3 h-3" />
+          Workout Programs
+        </button>
+        <button
+          onClick={() => setTemplateTab('nutrition')}
+          className={cn(
+            "px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2",
+            templateTab === 'nutrition' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-zinc-500 hover:text-white"
+          )}
+        >
+          <Utensils className="w-3 h-3" />
+          Nutrition Protocols
+        </button>
+      </div>
 
-      {/* Weekly Programs Section */}
-      <section className="space-y-6">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-orange-500/10 rounded-lg text-orange-500">
-            <Layers className="w-5 h-5" />
-          </div>
-          <h2 className="text-2xl font-bold">Program Library</h2>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {allPrograms.map((program) => (
-            <div 
-              key={program.id || program.name} 
-              className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 flex flex-col hover:border-orange-500/30 transition-all group relative overflow-hidden"
-            >
-              <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 transition-opacity">
-                <Layers className="w-24 h-24 text-orange-500" />
+      {templateTab === 'workout' ? (
+        <>
+          {/* Upload Section */}
+          <section className="bg-zinc-900 border border-zinc-800 rounded-[40px] p-10 relative overflow-hidden group">
+            <div className="absolute top-0 right-0 p-10 opacity-5 group-hover:opacity-10 transition-opacity">
+              <Upload className="w-32 h-32 text-orange-500" />
+            </div>
+            <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-8">
+              <div className="space-y-4 text-center md:text-left">
+                <div className="inline-flex p-3 bg-orange-500/10 rounded-2xl text-orange-500">
+                  <Sparkles className="w-6 h-6" />
+                </div>
+                <h2 className="text-3xl font-black uppercase tracking-tight">AI Template Generator</h2>
+                <p className="text-zinc-400 max-w-md leading-relaxed">
+                  Upload your workout splits in document or spreadsheet format. Nik's AI will analyze the content and generate a fully structured template for you.
+                </p>
               </div>
-              <div className="flex items-start justify-between mb-6">
-                <div className="flex gap-2">
-                  <span className="text-[10px] font-bold text-orange-500 uppercase tracking-widest bg-orange-500/10 px-3 py-1 rounded-full border border-orange-500/20">
-                    {program.category}
-                  </span>
-                  {program.isCustom && (
-                    <span className="text-[10px] font-bold text-purple-500 uppercase tracking-widest bg-purple-500/10 px-3 py-1 rounded-full border border-purple-500/20 flex items-center gap-1">
-                      <Sparkles className="w-3 h-3" />
-                      AI Generated
+              
+              <label className={cn(
+                "flex flex-col items-center justify-center border-2 border-dashed border-zinc-800 rounded-[32px] p-10 cursor-pointer hover:border-orange-500/50 transition-all bg-zinc-950 min-w-[300px]",
+                parsingFile && "opacity-50 cursor-not-allowed"
+              )}>
+                {parsingFile ? (
+                  <div className="flex flex-col items-center gap-4">
+                    <Loader2 className="w-10 h-10 text-orange-500 animate-spin" />
+                    <span className="text-sm font-bold text-zinc-500 uppercase tracking-widest">Nik is analyzing...</span>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center gap-4">
+                    <div className="p-4 bg-orange-500/10 rounded-2xl text-orange-500">
+                      <Upload className="w-8 h-8" />
+                    </div>
+                    <div className="text-center">
+                      <span className="block text-white font-bold">Upload Split File</span>
+                      <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mt-1">DOC, TXT, CSV, XLS</span>
+                    </div>
+                  </div>
+                )}
+                <input type="file" className="hidden" onChange={handleFileUpload} disabled={parsingFile} accept=".txt,.doc,.docx,.csv,.xls,.xlsx" />
+              </label>
+            </div>
+          </section>
+
+          {/* Weekly Programs Section */}
+          <section className="space-y-6">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-orange-500/10 rounded-lg text-orange-500">
+                <Layers className="w-5 h-5" />
+              </div>
+              <h2 className="text-2xl font-bold">Program Library</h2>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {allPrograms.map((program) => (
+                <div 
+                  key={program.id || program.name} 
+                  className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 flex flex-col hover:border-orange-500/30 transition-all group relative overflow-hidden"
+                >
+                  <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 transition-opacity">
+                    <Layers className="w-24 h-24 text-orange-500" />
+                  </div>
+                  <div className="flex items-start justify-between mb-6">
+                    <div className="flex gap-2">
+                      <span className="text-[10px] font-bold text-orange-500 uppercase tracking-widest bg-orange-500/10 px-3 py-1 rounded-full border border-orange-500/20">
+                        {program.category}
+                      </span>
+                      {program.isCustom && (
+                        <span className="text-[10px] font-bold text-purple-500 uppercase tracking-widest bg-purple-500/10 px-3 py-1 rounded-full border border-purple-500/20 flex items-center gap-1">
+                          <Sparkles className="w-3 h-3" />
+                          AI Generated
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
+                      {program.weeks?.[0]?.days?.length || 0} Workouts
                     </span>
+                  </div>
+                  <h3 className="text-xl font-bold mb-3">{program.name}</h3>
+                  <p className="text-zinc-500 text-sm mb-8 flex-1 leading-relaxed line-clamp-3">{program.description}</p>
+                  
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={() => {
+                        setSelectedProgram(program);
+                        setIsEditingTemplate(false);
+                        setShowProgramModal(true);
+                      }}
+                      className="flex-1 py-4 bg-orange-500 text-white font-bold rounded-2xl hover:bg-orange-600 transition-all flex items-center justify-center gap-2 shadow-lg shadow-orange-500/20"
+                    >
+                      <Calendar className="w-5 h-5" />
+                      Schedule
+                    </button>
+                    <button 
+                      onClick={() => {
+                        setSelectedProgram(program);
+                        setIsEditingTemplate(true);
+                        setEditingTemplateName(program.name);
+                        setEditingTemplateCategory(program.category);
+                        setEditingTemplateDescription(program.description);
+                        setShowProgramModal(true);
+                      }}
+                      className="p-4 bg-zinc-800 text-zinc-400 hover:text-white rounded-2xl transition-all"
+                      title="Edit Template"
+                    >
+                      <Edit2 className="w-5 h-5" />
+                    </button>
+                    {program.isCustom && (
+                      <button 
+                        onClick={async () => {
+                          if (confirm('Are you sure you want to delete this custom template?')) {
+                            await deleteDoc(doc(db, 'templates', program.id!));
+                            showToast('Template deleted');
+                          }
+                        }}
+                        className="p-4 bg-zinc-800 text-zinc-500 hover:text-red-500 rounded-2xl transition-all"
+                      >
+                        <Trash2 className="w-5 h-5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          {/* Single Workout Templates Section */}
+          <section className="space-y-6">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-zinc-800 rounded-lg text-zinc-400">
+                <BookOpen className="w-5 h-5" />
+              </div>
+              <h2 className="text-2xl font-bold">Single Workouts</h2>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {WORKOUT_TEMPLATES.map((template) => (
+                <div 
+                  key={template.id} 
+                  className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 flex flex-col hover:border-orange-500/30 transition-all group"
+                >
+                  <div className="flex items-start justify-between mb-4">
+                    <div className="p-3 bg-zinc-950 rounded-2xl text-zinc-500 group-hover:text-orange-500 transition-colors">
+                      <BookOpen className="w-6 h-6" />
+                    </div>
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest bg-zinc-950 px-3 py-1 rounded-full border border-zinc-800">
+                      {template.category}
+                    </span>
+                  </div>
+                  <h3 className="text-lg font-bold mb-2">{template.name}</h3>
+                  <div className="flex-1" />
+                  <div className="space-y-3 mt-4">
+                    <div className="flex items-center justify-between text-xs text-zinc-400">
+                      <span>Exercises</span>
+                      <span className="font-bold">{template.exercises.length}</span>
+                    </div>
+                    <div className="flex gap-2">
+                      <button 
+                        onClick={() => {
+                          setSelectedTemplate(template);
+                          setShowAssignModal(true);
+                        }}
+                        className="flex-1 py-3 bg-zinc-800 text-white font-bold rounded-xl hover:bg-zinc-700 transition-all flex items-center justify-center gap-2"
+                      >
+                        <Plus className="w-4 h-4" />
+                        Assign
+                      </button>
+                      <button 
+                        onClick={() => {
+                          const tempProgram: ProgramTemplate = {
+                            name: template.name,
+                            category: template.category || 'General',
+                            description: template.description || '',
+                            weeks: [{
+                              weekNumber: 1,
+                              days: [{ dayNumber: 1, label: 'Workout', exercises: template.exercises }]
+                            }],
+                            isCustom: false
+                          };
+                          setSelectedProgram(tempProgram);
+                          setIsEditingTemplate(true);
+                          setEditingTemplateName(tempProgram.name);
+                          setEditingTemplateCategory(tempProgram.category);
+                          setEditingTemplateDescription(tempProgram.description);
+                          setShowProgramModal(true);
+                        }}
+                        className="p-3 bg-zinc-950 text-zinc-500 hover:text-white rounded-xl transition-all"
+                        title="Edit & Save to Library"
+                      >
+                        <Edit2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        </>
+      ) : (
+        <>
+          {/* Nutrition AI Upload Section */}
+          <section className="bg-zinc-900 border border-zinc-800 rounded-[40px] p-10 relative overflow-hidden group">
+            <div className="absolute top-0 right-0 p-10 opacity-5 group-hover:opacity-10 transition-opacity">
+              <Utensils className="w-32 h-32 text-orange-500" />
+            </div>
+            <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-8">
+              <div className="space-y-4 text-center md:text-left">
+                <div className="inline-flex p-3 bg-orange-500/10 rounded-2xl text-orange-500">
+                  <Sparkles className="w-6 h-6" />
+                </div>
+                <h2 className="text-3xl font-black uppercase tracking-tight">Protocol Digitizer</h2>
+                <p className="text-zinc-400 max-w-md leading-relaxed">
+                  Upload any nutrition plan (PDF, Doc, or Scan). Nik's system will extract the calories, macros, guidelines, and meal schedules directly into your Master Vault.
+                </p>
+              </div>
+              
+              <label className={cn(
+                "flex flex-col items-center justify-center border-2 border-dashed border-zinc-800 rounded-[32px] p-10 cursor-pointer hover:border-orange-500/50 transition-all bg-zinc-950 min-w-[300px]",
+                parsingFile && "opacity-50 cursor-not-allowed"
+              )}>
+                {parsingFile ? (
+                  <div className="flex flex-col items-center gap-4">
+                    <Loader2 className="w-10 h-10 text-orange-500 animate-spin" />
+                    <span className="text-sm font-bold text-zinc-500 uppercase tracking-widest">Digitizing Protocol...</span>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center gap-4">
+                    <div className="p-4 bg-orange-500/10 rounded-2xl text-orange-500">
+                      <Upload className="w-8 h-8" />
+                    </div>
+                    <div className="text-center">
+                      <span className="block text-white font-bold">Upload Nutrition Plan</span>
+                      <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mt-1">PDF, DOC, TXT, IMAGE</span>
+                    </div>
+                  </div>
+                )}
+                <input type="file" className="hidden" onChange={handleNutritionUpload} disabled={parsingFile} accept=".pdf,.doc,.docx,.txt,.jpg,.jpeg,.png" />
+              </label>
+            </div>
+          </section>
+
+          <section className="space-y-6">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-orange-500/10 rounded-lg text-orange-500">
+              <Utensils className="w-5 h-5" />
+            </div>
+            <h2 className="text-2xl font-bold">Nutrition Protocol Library (Vault)</h2>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {allNutrition.map((plan) => (
+              <div 
+                key={plan.id} 
+                className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 flex flex-col hover:border-orange-500/30 transition-all group relative overflow-hidden"
+              >
+                <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 transition-opacity">
+                  <Utensils className="w-24 h-24 text-orange-500" />
+                </div>
+                <div className="flex items-start justify-between mb-6">
+                  <h3 className="font-black text-xl uppercase italic group-hover:text-orange-500 transition-colors z-10">{plan.name}</h3>
+                  {(plan as any).isCustom && (
+                    <span className="text-[8px] font-black text-white bg-orange-500 px-2 py-1 rounded uppercase tracking-widest z-10">Vault</span>
                   )}
                 </div>
-                <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
-                  {program.weeks?.[0]?.days?.length || 0} Workouts
-                </span>
+                <p className="text-sm text-zinc-500 mb-6 italic leading-relaxed z-10 line-clamp-2">
+                  {plan.description}
+                </p>
+                <div className="mt-auto space-y-4 relative z-10">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-zinc-950 p-4 rounded-2xl border border-white/5">
+                      <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1">Cals</p>
+                      <p className="text-lg font-black text-white">{plan.targetMacros.calories}</p>
+                    </div>
+                    <div className="bg-zinc-950 p-4 rounded-2xl border border-white/5">
+                      <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1">Protein</p>
+                      <p className="text-lg font-black text-white">{plan.targetMacros.protein}g</p>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={() => {
+                        setSelectedNutritionTemplate(plan);
+                        setShowAssignModal(true);
+                      }}
+                      className="flex-1 px-4 py-3 bg-zinc-800 text-white rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-orange-500 transition-all"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Assign
+                    </button>
+                    <button 
+                      onClick={() => {
+                         // When they click edit, we toggle to the client tab but with a "template mode"? 
+                         // Or we just use a modal. Let's use the layout of the NutritionManager in a modal.
+                         setEditingTemplate(plan);
+                      }}
+                      className="p-3 bg-zinc-950 border border-white/5 text-zinc-500 hover:text-white transition-all rounded-xl"
+                      title="Edit Protocol in Vault"
+                    >
+                      <Edit2 className="w-4 h-4" />
+                    </button>
+                    {(plan as any).isCustom && (
+                      <button 
+                        onClick={async () => {
+                          if (confirm(`Are you sure you want to delete template "${plan.name}"?`)) {
+                            await deleteDoc(doc(db, 'nutritionTemplates', plan.id));
+                            showToast('Protocol deleted from Vault');
+                          }
+                        }}
+                        className="p-3 bg-zinc-950 border border-white/5 text-zinc-600 hover:text-red-500 transition-all rounded-xl"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                </div>
               </div>
-              <h3 className="text-xl font-bold mb-3">{program.name}</h3>
-              <p className="text-zinc-500 text-sm mb-8 flex-1 leading-relaxed line-clamp-3">{program.description}</p>
-              
-              <div className="flex gap-2">
-                <button 
-                  onClick={() => {
-                    setSelectedProgram(program);
-                    setIsEditingTemplate(false);
-                    setShowProgramModal(true);
-                  }}
-                  className="flex-1 py-4 bg-orange-500 text-white font-bold rounded-2xl hover:bg-orange-600 transition-all flex items-center justify-center gap-2 shadow-lg shadow-orange-500/20"
-                >
-                  <Calendar className="w-5 h-5" />
-                  Schedule
-                </button>
-                <button 
-                  onClick={() => {
-                    setSelectedProgram(program);
-                    setIsEditingTemplate(true);
-                    setEditingTemplateName(program.name);
-                    setEditingTemplateCategory(program.category);
-                    setEditingTemplateDescription(program.description);
-                    setShowProgramModal(true);
-                  }}
-                  className="p-4 bg-zinc-800 text-zinc-400 hover:text-white rounded-2xl transition-all"
-                  title="Edit Template"
-                >
-                  <Edit2 className="w-5 h-5" />
-                </button>
-                {program.isCustom && (
-                  <button 
-                    onClick={async () => {
-                      if (confirm('Are you sure you want to delete this custom template?')) {
-                        await deleteDoc(doc(db, 'templates', program.id!));
-                        showToast('Template deleted');
-                      }
-                    }}
-                    className="p-4 bg-zinc-800 text-zinc-500 hover:text-red-500 rounded-2xl transition-all"
-                  >
-                    <Trash2 className="w-5 h-5" />
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* Single Workout Templates Section */}
-      <section className="space-y-6">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-zinc-800 rounded-lg text-zinc-400">
-            <BookOpen className="w-5 h-5" />
+            ))}
           </div>
-          <h2 className="text-2xl font-bold">Single Workouts</h2>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {WORKOUT_TEMPLATES.map((template) => (
-            <div 
-              key={template.id} 
-              className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 flex flex-col hover:border-orange-500/30 transition-all group"
-            >
-              <div className="flex items-start justify-between mb-4">
-                <div className="p-3 bg-zinc-950 rounded-2xl text-zinc-500 group-hover:text-orange-500 transition-colors">
-                  <BookOpen className="w-6 h-6" />
-                </div>
-                <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest bg-zinc-950 px-3 py-1 rounded-full border border-zinc-800">
-                  {template.category}
-                </span>
-              </div>
-              <h3 className="text-lg font-bold mb-2">{template.name}</h3>
-              <div className="flex-1" />
-              <div className="space-y-3 mt-4">
-                <div className="flex items-center justify-between text-xs text-zinc-400">
-                  <span>Exercises</span>
-                  <span className="font-bold">{template.exercises.length}</span>
-                </div>
-                <div className="flex gap-2">
-                  <button 
-                    onClick={() => {
-                      setSelectedTemplate(template);
-                      setShowAssignModal(true);
-                    }}
-                    className="flex-1 py-3 bg-zinc-800 text-white font-bold rounded-xl hover:bg-zinc-700 transition-all flex items-center justify-center gap-2"
-                  >
-                    <Plus className="w-4 h-4" />
-                    Assign
-                  </button>
-                  <button 
-                    onClick={() => {
-                      const tempProgram: ProgramTemplate = {
-                        name: template.name,
-                        category: template.category || 'General',
-                        description: template.description || '',
-                        weeks: [{
-                          weekNumber: 1,
-                          days: [{ dayNumber: 1, label: 'Workout', exercises: template.exercises }]
-                        }],
-                        isCustom: false
-                      };
-                      setSelectedProgram(tempProgram);
-                      setIsEditingTemplate(true);
-                      setEditingTemplateName(tempProgram.name);
-                      setEditingTemplateCategory(tempProgram.category);
-                      setEditingTemplateDescription(tempProgram.description);
-                      setShowProgramModal(true);
-                    }}
-                    className="p-3 bg-zinc-950 text-zinc-500 hover:text-white rounded-xl transition-all"
-                    title="Edit & Save to Library"
-                  >
-                    <Edit2 className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
+        </section>
+      </>
+    )}
 
       {/* Message Templates Section */}
       <section className="space-y-6 pt-12 border-t border-zinc-800">
         <MessageTemplatesManager showToast={showToast} />
       </section>
 
-      {/* Program Assignment Modal */}
+      {/* Nutrition Plan Assignment Modal */}
+      <AnimatePresence>
+        {selectedNutritionTemplate && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSelectedNutritionTemplate(null)}
+              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="relative w-full max-w-2xl bg-zinc-900 border border-zinc-800 rounded-[40px] shadow-2xl p-10 space-y-8"
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-3xl font-black uppercase tracking-tight italic">Deploy Protocol</h3>
+                  <p className="text-zinc-400 font-medium mt-1">Assigning "{selectedNutritionTemplate.name}" to client.</p>
+                </div>
+                <button 
+                  onClick={() => setSelectedNutritionTemplate(null)}
+                  className="p-3 bg-zinc-950 border border-zinc-800 rounded-2xl hover:border-orange-500 transition-all group"
+                >
+                  <X className="w-5 h-5 text-zinc-500 group-hover:text-white" />
+                </button>
+              </div>
+
+              <div className="space-y-6">
+                <div className="space-y-3">
+                  <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest ml-2 italic">Target Athlete</label>
+                  <div className="relative">
+                    <Users className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-600" />
+                    <select 
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl pl-14 pr-5 py-5 text-sm outline-none focus:ring-2 focus:ring-orange-500 transition-all appearance-none cursor-pointer"
+                      onChange={(e) => setSelectedClient(clients.find(c => c.uid === e.target.value) || null)}
+                      value={selectedClient?.uid || ''}
+                    >
+                      <option value="">Select athlete from roster...</option>
+                      {clients.map(c => (
+                        <option key={c.uid} value={c.uid}>{c.displayName || c.email}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="bg-zinc-950 border border-zinc-800 rounded-[32px] p-6 space-y-4">
+                  <h4 className="text-xs font-black text-white uppercase tracking-widest italic flex items-center gap-2">
+                    <Utensils className="w-3.5 h-3.5 text-orange-500" />
+                    Protocol Summary
+                  </h4>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="p-4 bg-zinc-900 rounded-2xl border border-white/5">
+                      <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest mb-1 font-sans">Daily Goal</p>
+                      <p className="text-lg font-black text-white font-mono">{selectedNutritionTemplate.targetMacros.calories} kcal</p>
+                    </div>
+                    <div className="p-4 bg-zinc-900 rounded-2xl border border-white/5">
+                      <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest mb-1 font-sans">Protein Target</p>
+                      <p className="text-lg font-black text-white font-mono">{selectedNutritionTemplate.targetMacros.protein}g</p>
+                    </div>
+                  </div>
+                  <div className="px-2">
+                    <p className="text-xs text-zinc-500 italic leading-relaxed">
+                      This will replace the client's current active nutrition plan. All meal schedules and guidelines will be transferred automatically.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex gap-4 pt-4">
+                <button
+                  onClick={() => setSelectedNutritionTemplate(null)}
+                  className="flex-1 py-5 border border-zinc-800 rounded-2xl font-black text-[10px] uppercase tracking-widest text-zinc-500 hover:bg-zinc-800 transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleAssignNutrition}
+                  disabled={assigning || !selectedClient}
+                  className="flex-[2] py-5 bg-orange-500 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl shadow-orange-500/20 hover:bg-orange-600 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {assigning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  Confirm Deployment
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {editingTemplate && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setEditingTemplate(null)}
+              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="relative w-full max-w-5xl bg-zinc-900 border border-zinc-800 rounded-[40px] shadow-2xl p-10 space-y-8 overflow-y-auto max-h-[90vh] custom-scrollbar"
+            >
+               <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-3xl font-black uppercase tracking-tight italic">Vault Protocol Editor</h3>
+                  <p className="text-zinc-400 font-medium mt-1">Refining master nutrition strategy: {editingTemplate.name}</p>
+                </div>
+                <button 
+                  onClick={() => setEditingTemplate(null)}
+                  className="p-3 bg-zinc-950 border border-zinc-800 rounded-2xl hover:border-orange-500 transition-all group"
+                >
+                  <X className="w-5 h-5 text-zinc-500 group-hover:text-white" />
+                </button>
+              </div>
+
+              <NutritionManager 
+                template={editingTemplate} 
+                showToast={showToast}
+                onSaveTemplate={() => setEditingTemplate(null)}
+              />
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
       <AnimatePresence>
         {showProgramModal && selectedProgram && (
           <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
@@ -2747,12 +3447,164 @@ function getYouTubeId(url: string) {
   return (match && match[2].length === 11) ? match[2] : null;
 }
 
-function NutritionManager({ client, showToast }: { client: UserProfile, showToast: (m: string, t?: 'success' | 'error') => void }) {
+function MacroCalculatorTool({ onApply, currentWeight, currentHeight, currentGender }: { onApply: (macros: { calories: number, protein: number, carbs: number, fats: number }) => void, currentWeight?: string, currentHeight?: string, currentGender?: string }) {
+  const [weight, setWeight] = useState(currentWeight || '');
+  const [height, setHeight] = useState(currentHeight || '');
+  const [age, setAge] = useState('');
+  const [gender, setGender] = useState<'male' | 'female'>(currentGender === 'female' ? 'female' : 'male');
+  const [activityLevel, setActivityLevel] = useState(1.2);
+  const [goal, setGoal] = useState<'lose' | 'maintain' | 'gain'>('maintain');
+
+  const activities = [
+    { label: 'Sedentary (Office job, little exercise)', value: 1.2 },
+    { label: 'Lightly Active (1-3 days/week exercise)', value: 1.375 },
+    { label: 'Moderately Active (3-5 days/week exercise)', value: 1.55 },
+    { label: 'Very Active (6-7 days/week exercise)', value: 1.725 },
+    { label: 'Extra Active (Athletic training/Elite)', value: 1.9 },
+  ];
+
+  const calculate = () => {
+    const w = parseFloat(weight);
+    const h = parseFloat(height);
+    const a = parseInt(age);
+    if (isNaN(w) || isNaN(h) || isNaN(a)) return;
+
+    // Mifflin-St Jeor
+    let bmr = (10 * w) + (6.25 * h) - (5 * a);
+    bmr += (gender === 'male' ? 5 : -161);
+    
+    const tdee = bmr * activityLevel;
+    let targetCalories = tdee;
+    
+    if (goal === 'lose') targetCalories -= 500;
+    if (goal === 'gain') targetCalories += 500;
+
+    // Macros: Protein 2.2g/kg (High for athletes), Fat 25% of cals, rest Carbs
+    const protein = w * 2.2;
+    const proteinCals = protein * 4;
+    const fats = (targetCalories * 0.25) / 9;
+    const fatsCals = fats * 9;
+    const carbsCals = targetCalories - proteinCals - fatsCals;
+    const carbs = Math.max(0, carbsCals / 4);
+
+    onApply({
+      calories: Math.round(targetCalories),
+      protein: Math.round(protein),
+      carbs: Math.round(carbs),
+      fats: Math.round(fats)
+    });
+  };
+
+  return (
+    <div className="bg-zinc-950 border border-zinc-800 rounded-3xl p-6 space-y-4 shadow-2xl">
+      <div className="flex items-center gap-2 mb-2">
+        <Calculator className="w-4 h-4 text-orange-500" />
+        <h4 className="text-xs font-black uppercase tracking-[0.2em] text-zinc-500 italic">Scientific Macro Estimator</h4>
+      </div>
+      
+      <div className="grid grid-cols-3 gap-3">
+        <div className="space-y-1">
+          <label className="text-[9px] font-black uppercase text-zinc-600 ml-1">Weight (kg)</label>
+          <input 
+            type="number" 
+            className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs outline-none focus:border-orange-500"
+            value={weight}
+            onChange={(e) => setWeight(e.target.value)}
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-[9px] font-black uppercase text-zinc-600 ml-1">Height (cm)</label>
+          <input 
+            type="number" 
+            className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs outline-none focus:border-orange-500"
+            value={height}
+            onChange={(e) => setHeight(e.target.value)}
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-[9px] font-black uppercase text-zinc-600 ml-1">Age</label>
+          <input 
+            type="number" 
+            className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs outline-none focus:border-orange-500"
+            value={age}
+            onChange={(e) => setAge(e.target.value)}
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <label className={cn(
+          "flex-1 p-3 rounded-xl border border-zinc-800 text-center cursor-pointer transition-all",
+          gender === 'male' ? "bg-orange-500 text-white border-orange-500" : "bg-zinc-950 text-zinc-500"
+        )}>
+          <input type="radio" className="hidden" checked={gender === 'male'} onChange={() => setGender('male')} />
+          <span className="text-[10px] font-black uppercase tracking-widest">Male</span>
+        </label>
+        <label className={cn(
+          "flex-1 p-3 rounded-xl border border-zinc-800 text-center cursor-pointer transition-all",
+          gender === 'female' ? "bg-orange-500 text-white border-orange-500" : "bg-zinc-950 text-zinc-500"
+        )}>
+          <input type="radio" className="hidden" checked={gender === 'female'} onChange={() => setGender('female')} />
+          <span className="text-[10px] font-black uppercase tracking-widest">Female</span>
+        </label>
+      </div>
+
+      <div className="space-y-1">
+        <label className="text-[9px] font-black uppercase text-zinc-600 ml-1">Activity Tier</label>
+        <select 
+          className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-[10px] text-zinc-400 outline-none focus:border-orange-500"
+          value={activityLevel}
+          onChange={(e) => setActivityLevel(parseFloat(e.target.value))}
+        >
+          {activities.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
+        </select>
+      </div>
+
+      <div className="flex gap-2">
+        {['lose', 'maintain', 'gain'].map((g) => (
+          <button
+            key={g}
+            onClick={() => setGoal(g as any)}
+            className={cn(
+              "flex-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all",
+              goal === g ? "bg-white text-zinc-950" : "bg-zinc-900 text-zinc-600 border border-zinc-800"
+            )}
+          >
+            {g === 'lose' ? 'Cut' : g === 'maintain' ? 'Maintain' : 'Bulk'}
+          </button>
+        ))}
+      </div>
+
+      <button 
+        onClick={calculate}
+        className="w-full py-3 bg-orange-500 text-white rounded-xl font-bold text-[10px] uppercase tracking-widest hover:bg-orange-600 transition-all shadow-lg shadow-orange-500/20"
+      >
+        Analyze & Apply Targets
+      </button>
+    </div>
+  );
+}
+
+function NutritionManager({ client, template, onSaveTemplate, showToast }: { client?: UserProfile, template?: NutritionTemplate, onSaveTemplate?: (t: NutritionTemplate) => void, showToast: (m: string, t?: 'success' | 'error') => void }) {
+
   const [activePlan, setActivePlan] = useState<NutritionPlan | null>(null);
-  const [isEditing, setIsEditing] = useState(false);
+  const [isEditing, setIsEditing] = useState(template ? true : false);
   const [saving, setSaving] = useState(false);
   const [analyzingFile, setAnalyzingFile] = useState(false);
-  const [planDraft, setPlanDraft] = useState<Partial<NutritionPlan>>({
+  const [selectedDay, setSelectedDay] = useState(1);
+  const [customTemplates, setCustomTemplates] = useState<NutritionTemplate[]>([]);
+  const [isSavingTemplate, setIsSavingTemplate] = useState(false);
+  const [showMacroCalc, setShowMacroCalc] = useState(false);
+  const [frequentFoods, setFrequentFoods] = useState<{ id: string, name: string, notes: string }[]>([]);
+  const [deleting, setDeleting] = useState(false);
+  const [planDraft, setPlanDraft] = useState<Partial<NutritionPlan>>(template ? {
+    name: template.name,
+    description: template.description,
+    targetMacros: template.targetMacros,
+    guidelines: template.guidelines,
+    plannedMeals: template.plannedMeals,
+    isActive: true
+  } : {
     name: '',
     description: '',
     targetMacros: { calories: 2000, protein: 150, carbs: 200, fats: 70 },
@@ -2763,8 +3615,63 @@ function NutritionManager({ client, showToast }: { client: UserProfile, showToas
     isActive: true
   });
 
+  const scaleMeals = (factor: number) => {
+    if (!planDraft.plannedMeals) return;
+    
+    const newMeals = planDraft.plannedMeals.map(m => ({
+      ...m,
+      notes: m.notes.replace(/(\d+(\.\d+)?)\s*(g|ml|oz|cups|tbsp|tsp|pieces|eggs)/gi, (match, num, _, unit) => {
+        const scaled = (parseFloat(num) * factor).toFixed(1);
+        const finalVal = scaled.endsWith('.0') ? Math.round(parseFloat(scaled)) : scaled;
+        return `${finalVal} ${unit}`;
+      })
+    }));
+    
+    setPlanDraft({...planDraft, plannedMeals: newMeals});
+    showToast(`Quantities scaled by ${Math.round(factor * 100)}% to fit macro adjustments`);
+  };
+
   useEffect(() => {
-    if (!client.uid) return;
+    // Fetch frequent foods
+    const q = query(collection(db, 'frequentFoods'), orderBy('usageCount', 'desc'), limit(15));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setFrequentFoods(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any)));
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const updateFrequentFood = async (mealName: string, mealNotes: string) => {
+    if (!mealName || mealName.length < 3) return;
+    const q = query(collection(db, 'frequentFoods'), where('name', '==', mealName), limit(1));
+    const snap = await getDocs(q);
+    if (!snap.empty) {
+      const docRef = doc(db, 'frequentFoods', snap.docs[0].id);
+      await updateDoc(docRef, { usageCount: increment(1) });
+    } else {
+      await addDoc(collection(db, 'frequentFoods'), {
+        userId: auth.currentUser?.uid,
+        name: mealName,
+        notes: mealNotes,
+        usageCount: 1
+      });
+    }
+  };
+
+
+  useEffect(() => {
+    // Fetch custom nutrition templates from vault
+    const q = query(collection(db, 'nutritionTemplates'), orderBy('name', 'asc'));
+    const unsubscribe = onSnapshot(q, (snap) => {
+      const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as NutritionTemplate));
+      setCustomTemplates(data);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'nutritionTemplates');
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!client?.uid) return;
     const q = query(collection(db, 'nutritionPlans'), where('clientId', '==', client.uid), where('isActive', '==', true), limit(1));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       if (!snapshot.empty) {
@@ -2778,7 +3685,7 @@ function NutritionManager({ client, showToast }: { client: UserProfile, showToas
       handleFirestoreError(error, OperationType.GET, 'nutritionPlans');
     });
     return () => unsubscribe();
-  }, [client.uid]);
+  }, [client?.uid]);
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -2821,11 +3728,58 @@ function NutritionManager({ client, showToast }: { client: UserProfile, showToas
       description: template.description,
       targetMacros: { ...template.targetMacros },
       guidelines: [...template.guidelines],
-      plannedMeals: [],
+      plannedMeals: template.plannedMeals ? [...template.plannedMeals] : [],
       recommendedFoods: [],
       restrictedFoods: []
     });
     setIsEditing(true);
+  };
+
+  const handleSaveAsTemplate = async () => {
+    if (!planDraft.name) {
+      showToast('Please provide a name for the template', 'error');
+      return;
+    }
+    
+    setIsSavingTemplate(true);
+    try {
+      const templateData: any = {
+        name: planDraft.name,
+        description: planDraft.description || '',
+        targetMacros: planDraft.targetMacros,
+        guidelines: planDraft.guidelines || [],
+        plannedMeals: planDraft.plannedMeals?.map(m => ({
+          id: m.id,
+          dayNumber: m.dayNumber,
+          time: m.time,
+          name: m.name,
+          notes: m.notes
+        }))
+      };
+
+      if (template?.id && !client) {
+        // Update existing template in vault
+        await updateDoc(doc(db, 'nutritionTemplates', template.id), {
+          ...templateData,
+          updatedAt: serverTimestamp()
+        });
+        showToast('Nutrition protocol updated in Vault!');
+        onSaveTemplate?.(templateData);
+      } else {
+        // Save as new template
+        await addDoc(collection(db, 'nutritionTemplates'), {
+          ...templateData,
+          createdAt: serverTimestamp(),
+          isCustom: true
+        });
+        showToast('Nutrition plan saved to Vault as template!');
+      }
+    } catch (error) {
+      console.error("Error saving template:", error);
+      showToast('Failed to save template to Vault', 'error');
+    } finally {
+      setIsSavingTemplate(false);
+    }
   };
 
   const handleSavePlan = async () => {
@@ -2857,13 +3811,18 @@ function NutritionManager({ client, showToast }: { client: UserProfile, showToas
         createdAt: serverTimestamp()
       };
 
+      // Track frequent foods
+      for (const meal of (planDraft.plannedMeals || [])) {
+        updateFrequentFood(meal.name, meal.notes);
+      }
+
       try {
         await addDoc(collection(db, 'nutritionPlans'), planData);
       } catch (error) {
         handleFirestoreError(error, OperationType.CREATE, 'nutritionPlans');
       }
 
-      showToast('Nutrition plan updated successfully!');
+      showToast('Master Protocol assigned!');
       setIsEditing(false);
     } catch (error) {
       console.error("Error saving plan:", error);
@@ -2873,20 +3832,48 @@ function NutritionManager({ client, showToast }: { client: UserProfile, showToas
     }
   };
 
+  const handleDeletePlan = async () => {
+    if (!activePlan?.id || !window.confirm('Delete this athlete protocol?')) return;
+    setDeleting(true);
+    try {
+      await deleteDoc(doc(db, 'nutritionPlans', activePlan.id));
+      setActivePlan(null);
+      setIsEditing(false);
+      showToast('Protocol removed.');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `nutritionPlans/${activePlan.id}`);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-2xl font-bold">Nutrition Advisor</h3>
-          <p className="text-zinc-500 text-sm">Design a scientific nutrition framework for {client.displayName}.</p>
+          <h3 className="text-2xl font-bold">{client ? 'Protocol Architect' : 'Protocol Master'}</h3>
+          <p className="text-zinc-500 text-sm">
+            {client ? `Design a scientific nutrition framework for ${client.displayName}.` : 'Create a master nutrition protocol for your Vault.'}
+          </p>
         </div>
-        {!isEditing && (
-          <button 
-            onClick={() => setIsEditing(true)}
-            className="px-6 py-3 bg-orange-500 text-white rounded-2xl font-bold text-xs uppercase tracking-widest hover:bg-orange-600 transition-all shadow-lg shadow-orange-500/20"
-          >
-            {activePlan ? 'Update Plan' : 'Create New Plan'}
-          </button>
+        {!isEditing && client && (
+          <div className="flex gap-3">
+            {activePlan && (
+              <button 
+                onClick={handleDeletePlan}
+                className="px-6 py-3 border border-red-500/20 text-red-500/50 hover:bg-red-500/10 hover:text-red-500 rounded-2xl font-bold text-xs uppercase tracking-widest transition-all flex items-center gap-2"
+              >
+                <Trash2 className="w-4 h-4" />
+                Discard
+              </button>
+            )}
+            <button 
+              onClick={() => setIsEditing(true)}
+              className="px-6 py-3 bg-orange-500 text-white rounded-2xl font-bold text-xs uppercase tracking-widest hover:bg-orange-600 transition-all shadow-lg shadow-orange-500/20"
+            >
+              {activePlan ? 'Update Plan' : 'Create New Plan'}
+            </button>
+          </div>
         )}
       </div>
 
@@ -2944,18 +3931,18 @@ function NutritionManager({ client, showToast }: { client: UserProfile, showToas
                       </label>
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    {NUTRITION_TEMPLATES.map(t => (
-                      <button
-                        key={t.id}
-                        onClick={() => applyTemplate(t)}
-                        className="p-4 bg-zinc-950 border border-zinc-800 rounded-2xl text-left hover:border-orange-500 transition-all group"
-                      >
-                        <h4 className="font-bold text-xs group-hover:text-orange-500 transition-colors">{t.name}</h4>
-                        <p className="text-[10px] text-zinc-500 mt-1 line-clamp-1">{t.description}</p>
-                      </button>
-                    ))}
-                  </div>
+                    <div className="flex items-center gap-2 overflow-x-auto pb-2 -mx-1 px-1">
+                      {[...NUTRITION_TEMPLATES, ...customTemplates].map(t => (
+                        <button
+                          key={t.id}
+                          onClick={() => applyTemplate(t)}
+                          className="flex-shrink-0 p-3 bg-zinc-950 border border-zinc-800 rounded-2xl text-left hover:border-orange-500 transition-all group min-w-[160px]"
+                        >
+                          <h4 className="font-bold text-[11px] group-hover:text-orange-500 transition-colors truncate">{t.name}</h4>
+                          <p className="text-[9px] text-zinc-600 mt-0.5 line-clamp-1">{t.description}</p>
+                        </button>
+                      ))}
+                    </div>
                 </div>
 
                 <div className="space-y-4">
@@ -2980,68 +3967,184 @@ function NutritionManager({ client, showToast }: { client: UserProfile, showToas
                 </div>
 
                 <div className="space-y-2 pt-4 border-t border-zinc-800">
-                  <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest ml-1 flex items-center justify-between">
-                    Meal Schedule
-                    <button 
-                      onClick={() => setPlanDraft({...planDraft, plannedMeals: [...(planDraft.plannedMeals || []), { id: crypto.randomUUID(), time: '08:00', name: '', notes: '' }]})}
-                      className="text-[10px] text-orange-500 hover:text-orange-400 font-bold"
-                    >
-                      + Add Meal
-                    </button>
-                  </label>
-                  <div className="space-y-3">
-                    {planDraft.plannedMeals?.map((m, i) => (
-                      <div key={m.id} className="p-4 bg-zinc-950 border border-zinc-800 rounded-2xl space-y-3">
-                        <div className="flex gap-2">
-                          <input 
-                            type="time"
-                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-[10px] text-zinc-400"
-                            value={m.time}
-                            onChange={(e) => {
-                              const newM = [...planDraft.plannedMeals!];
-                              newM[i].time = e.target.value;
-                              setPlanDraft({...planDraft, plannedMeals: newM});
-                            }}
-                          />
-                          <input 
-                            placeholder="Meal Name"
-                            className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1 text-xs text-white"
-                            value={m.name}
-                            onChange={(e) => {
-                              const newM = [...planDraft.plannedMeals!];
-                              newM[i].name = e.target.value;
-                              setPlanDraft({...planDraft, plannedMeals: newM});
-                            }}
-                          />
-                          <button 
-                            onClick={() => {
-                              const newM = planDraft.plannedMeals!.filter(meal => meal.id !== m.id);
-                              setPlanDraft({...planDraft, plannedMeals: newM});
-                            }}
-                            className="text-zinc-600 hover:text-red-500 transition-colors"
+                  <div className="flex items-center justify-between ml-1">
+                    <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest flex items-center gap-2">
+                      <Calendar className="w-3.5 h-3.5" />
+                      Protocol Schedule
+                    </label>
+                    <div className="flex bg-zinc-950 p-1 rounded-xl border border-zinc-800">
+                      {[1, 2, 3, 4, 5, 6, 7].map(day => {
+                        const hasMealsForDay = planDraft.plannedMeals?.some(m => m.dayNumber === day);
+                        return (
+                          <button
+                            key={day}
+                            onClick={() => setSelectedDay(day)}
+                            className={cn(
+                              "w-8 h-8 rounded-lg text-[10px] font-black transition-all relative",
+                              selectedDay === day 
+                                ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" 
+                                : "text-zinc-600 hover:text-zinc-400"
+                            )}
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            D{day}
+                            {hasMealsForDay && (
+                              <div className="absolute top-1 right-1 w-1 h-1 bg-current rounded-full" />
+                            )}
                           </button>
-                        </div>
-                        <input 
-                          placeholder="Items/Notes (e.g. 3 eggs, 2 slices toast)"
-                          className="w-full bg-zinc-900/50 border border-zinc-800/50 rounded-lg px-3 py-1 text-[10px] text-zinc-500"
-                          value={m.notes}
-                          onChange={(e) => {
-                            const newM = [...planDraft.plannedMeals!];
-                            newM[i].notes = e.target.value;
-                            setPlanDraft({...planDraft, plannedMeals: newM});
-                          }}
-                        />
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between ml-1 pt-2">
+                    <span className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">Meals for Day {selectedDay}</span>
+                    <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-1 bg-zinc-950 p-1 rounded-xl border border-zinc-800">
+                        <button 
+                          onClick={() => scaleMeals(0.9)}
+                          className="px-2 py-0.5 rounded-lg bg-zinc-900 border border-zinc-800 text-[9px] font-black text-zinc-500 hover:text-red-500 transition-all"
+                          title="Reduce all portion sizes by 10%"
+                        >
+                          -10%
+                        </button>
+                        <button 
+                          onClick={() => scaleMeals(1.1)}
+                          className="px-2 py-0.5 rounded-lg bg-zinc-900 border border-zinc-800 text-[9px] font-black text-zinc-500 hover:text-green-500 transition-all"
+                          title="Increase all portion sizes by 10%"
+                        >
+                          +10%
+                        </button>
                       </div>
-                    ))}
+                      <button 
+                        onClick={() => setPlanDraft({...planDraft, plannedMeals: [...(planDraft.plannedMeals || []), { id: crypto.randomUUID(), dayNumber: selectedDay, time: '08:00', name: '', notes: '' }]})}
+                        className="text-[10px] text-orange-500 hover:text-orange-400 font-bold flex items-center gap-1"
+                      >
+                        <Plus className="w-3 h-3" />
+                        Add Meal
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    {(planDraft.plannedMeals || [])
+                      .filter(m => !m.dayNumber || m.dayNumber === selectedDay)
+                      .map((m, i) => {
+                        const originalIndex = planDraft.plannedMeals?.findIndex(meal => meal.id === m.id) ?? -1;
+                        return (
+                          <div key={m.id} className="p-4 bg-zinc-950 border border-zinc-800 rounded-2xl space-y-3 group hover:border-orange-500/30 transition-all">
+                            <div className="flex gap-2">
+                              <input 
+                                type="time"
+                                className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-[10px] text-zinc-400"
+                                value={m.time}
+                                onChange={(e) => {
+                                  const newM = [...planDraft.plannedMeals!];
+                                  newM[originalIndex].time = e.target.value;
+                                  setPlanDraft({...planDraft, plannedMeals: newM});
+                                }}
+                              />
+                              <input 
+                                placeholder="Meal Name"
+                                className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1 text-xs text-white outline-none focus:border-orange-500/50"
+                                value={m.name}
+                                onChange={(e) => {
+                                  const newM = [...planDraft.plannedMeals!];
+                                  newM[originalIndex].name = e.target.value;
+                                  setPlanDraft({...planDraft, plannedMeals: newM});
+                                }}
+                              />
+                              <button 
+                                onClick={() => {
+                                  const newM = planDraft.plannedMeals!.filter(meal => meal.id !== m.id);
+                                  setPlanDraft({...planDraft, plannedMeals: newM});
+                                }}
+                                className="text-zinc-600 hover:text-red-500 transition-colors"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                            
+                            {/* Frequent Food Suggestions */}
+                            {frequentFoods.length > 0 && !m.name && (
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                <span className="text-[8px] font-black text-zinc-700 uppercase tracking-widest mr-1 mt-1">Frequent:</span>
+                                {frequentFoods.map(ff => (
+                                  <button
+                                    key={ff.id}
+                                    onClick={() => {
+                                      const newM = [...planDraft.plannedMeals!];
+                                      newM[originalIndex].name = ff.name;
+                                      newM[originalIndex].notes = ff.notes;
+                                      setPlanDraft({...planDraft, plannedMeals: newM});
+                                    }}
+                                    className="px-2 py-0.5 rounded-lg bg-zinc-900 border border-zinc-800 text-[8px] font-bold text-zinc-500 hover:text-white hover:border-orange-500/50 transition-all"
+                                  >
+                                    {ff.name}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+
+                            <input 
+                              placeholder="Items/Notes (e.g. 3 eggs, 2 slices toast)"
+                              className="w-full bg-zinc-900/50 border border-zinc-800/50 rounded-lg px-3 py-1 text-[10px] text-zinc-500 outline-none focus:border-orange-500/30"
+                              value={m.notes}
+                              onChange={(e) => {
+                                const newM = [...planDraft.plannedMeals!];
+                                newM[originalIndex].notes = e.target.value;
+                                setPlanDraft({...planDraft, plannedMeals: newM});
+                              }}
+                            />
+                          </div>
+                      );
+                    })}
+                    {(planDraft.plannedMeals || []).filter(m => !m.dayNumber || m.dayNumber === selectedDay).length === 0 && (
+                      <div className="py-8 text-center border border-dashed border-zinc-800 rounded-[32px]">
+                        <p className="text-[10px] font-black text-zinc-700 uppercase tracking-widest italic">No meals configured for Day {selectedDay}</p>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
 
               <div className="space-y-6">
                 <div className="space-y-4">
-                  <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest ml-1">Daily Macro Targets</label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest ml-1">Daily Macro Targets</label>
+                    <button 
+                      onClick={() => setShowMacroCalc(!showMacroCalc)}
+                      className={cn(
+                        "flex items-center gap-2 px-3 py-1.5 rounded-xl text-[9px] font-black uppercase transition-all",
+                        showMacroCalc ? "bg-orange-500 text-white" : "bg-zinc-950 border border-zinc-800 text-zinc-500 hover:text-white"
+                      )}
+                    >
+                      <Calculator className="w-3 h-3" />
+                      {showMacroCalc ? 'Close Calculator' : 'Scientific Macro Calculator'}
+                    </button>
+                  </div>
+
+                  <AnimatePresence>
+                    {showMacroCalc && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        className="overflow-hidden mb-6"
+                      >
+                        <MacroCalculatorTool 
+                          currentWeight={client?.weight}
+                          currentHeight={client?.height}
+                          currentGender={client?.gender}
+                          onApply={(macros) => {
+                            setPlanDraft({...planDraft, targetMacros: macros});
+                            setShowMacroCalc(false);
+                            showToast('Precision targets updated!');
+                          }}
+                        />
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <span className="text-[10px] font-bold text-zinc-600 uppercase ml-1">Calories</span>
@@ -3119,21 +4222,62 @@ function NutritionManager({ client, showToast }: { client: UserProfile, showToas
               </div>
             </div>
 
-            <div className="flex gap-4 pt-8 border-t border-zinc-800">
+            <div className="flex flex-col sm:flex-row gap-4 pt-8 border-t border-zinc-800">
+              {!client && template?.id && (
+                <button
+                  onClick={async () => {
+                    if (window.confirm('Delete this master protocol from Vault permanently?')) {
+                      try {
+                        await deleteDoc(doc(db, 'nutritionTemplates', template.id));
+                        showToast('Protocol removed from Vault');
+                        onSaveTemplate?.(null as any);
+                      } catch (error) {
+                        handleFirestoreError(error, OperationType.DELETE, `nutritionTemplates/${template.id}`);
+                      }
+                    }
+                  }}
+                  className="flex-1 py-4 border border-red-500/20 text-red-500/50 hover:bg-red-500/10 hover:text-red-500 rounded-2xl font-bold uppercase text-[10px] tracking-widest transition-all flex items-center justify-center gap-2"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Delete from Vault
+                </button>
+              )}
+              {client && (
+                <button
+                  onClick={handleDeletePlan}
+                  disabled={deleting || !activePlan}
+                  className="flex-1 py-4 border border-red-500/20 text-red-500/50 hover:bg-red-500/10 hover:text-red-500 rounded-2xl font-bold uppercase text-[10px] tracking-widest transition-all flex items-center justify-center gap-2"
+                >
+                  {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                  Discard Current
+                </button>
+              )}
+              {client && (
+                <button
+                  onClick={() => setIsEditing(false)}
+                  className="flex-1 py-4 border border-zinc-800 rounded-2xl font-bold text-zinc-400 hover:bg-zinc-800 transition-all uppercase text-[10px] tracking-widest"
+                >
+                  Cancel
+                </button>
+              )}
               <button
-                onClick={() => setIsEditing(false)}
-                className="flex-1 py-4 border border-zinc-800 rounded-2xl font-bold text-zinc-400 hover:bg-zinc-800 transition-all"
+                onClick={handleSaveAsTemplate}
+                disabled={isSavingTemplate || saving}
+                className="flex-1 py-4 bg-zinc-800 text-white rounded-2xl font-bold hover:bg-zinc-700 transition-all uppercase text-[10px] tracking-widest disabled:opacity-50 flex items-center justify-center gap-2"
               >
-                Cancel
+                {isSavingTemplate ? <Loader2 className="w-4 h-4 animate-spin" /> : <Layers className="w-4 h-4" />}
+                {client ? 'Save to Vault' : 'Update Protocol'}
               </button>
-              <button
-                onClick={handleSavePlan}
-                disabled={saving || !planDraft.name}
-                className="flex-[2] bg-orange-500 text-white font-bold py-4 rounded-2xl hover:bg-orange-600 disabled:opacity-50 transition-all shadow-xl shadow-orange-500/20 flex items-center justify-center gap-2"
-              >
-                {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
-                Save Nutrition Plan
-              </button>
+              {client && (
+                <button
+                  onClick={handleSavePlan}
+                  disabled={saving || isSavingTemplate || !planDraft.name}
+                  className="flex-[2] py-4 bg-orange-500 text-white rounded-2xl font-bold hover:bg-orange-600 transition-all shadow-lg shadow-orange-500/20 uppercase text-[10px] tracking-widest flex items-center justify-center gap-2"
+                >
+                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  Assign to Athlete
+                </button>
+              )}
             </div>
           </motion.div>
         ) : (
@@ -3179,7 +4323,65 @@ function NutritionManager({ client, showToast }: { client: UserProfile, showToas
                     </div>
 
                     <div className="space-y-4">
-                      <h5 className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Client Guidelines</h5>
+                      <div className="flex items-center justify-between">
+                        <h5 className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Protocol Schedule</h5>
+                        <div className="flex bg-zinc-950 p-1 rounded-xl border border-zinc-800">
+                          {[1, 2, 3, 4, 5, 6, 7].map(day => {
+                            const hasMealsForDay = activePlan.plannedMeals?.some(m => m.dayNumber === day);
+                            return (
+                              <button
+                                key={day}
+                                onClick={() => setSelectedDay(day)}
+                                className={cn(
+                                  "w-8 h-8 rounded-lg text-[10px] font-black transition-all relative",
+                                  selectedDay === day 
+                                    ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" 
+                                    : "text-zinc-600 hover:text-zinc-400"
+                                )}
+                              >
+                                D{day}
+                                {hasMealsForDay && (
+                                  <div className="absolute top-1 right-1 w-1 h-1 bg-current rounded-full" />
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      
+                      <div className="space-y-3">
+                        {(activePlan.plannedMeals || [])
+                          .filter(m => !m.dayNumber || m.dayNumber === selectedDay)
+                          .sort((a, b) => a.time.localeCompare(b.time))
+                          .map((m) => (
+                            <div key={m.id} className="p-4 bg-zinc-950 border border-zinc-800 rounded-2xl flex items-center justify-between group">
+                              <div className="flex items-center gap-4">
+                                <div className="p-2 bg-zinc-900 rounded-lg text-[10px] font-mono text-orange-500">
+                                  {m.time}
+                                </div>
+                                <div>
+                                  <p className="text-sm font-bold text-white uppercase tracking-tight">{m.name}</p>
+                                  <p className="text-xs text-zinc-500 italic">{m.notes}</p>
+                                </div>
+                              </div>
+                              {m.isCompleted && (
+                                <div className="p-1 px-2 bg-green-500/10 text-green-500 text-[8px] font-black uppercase rounded border border-green-500/20">
+                                  Logged
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        {(activePlan.plannedMeals || []).filter(m => !m.dayNumber || m.dayNumber === selectedDay).length === 0 && (
+                          <div className="py-12 text-center border border-dashed border-zinc-800 rounded-[32px]">
+                            <Utensils className="w-8 h-8 text-zinc-800 mx-auto mb-2 opacity-30" />
+                            <p className="text-[10px] font-black text-zinc-700 uppercase tracking-widest italic">Rest phase or unconfigured Day {selectedDay}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      <h5 className="text-xs font-bold text-zinc-500 uppercase tracking-widest">General Guidelines</h5>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {activePlan.guidelines.map((g, i) => (
                           <div key={i} className="flex items-center gap-3 bg-zinc-950/50 p-3 rounded-xl border border-zinc-800">
@@ -4266,6 +5468,122 @@ const GoalsManager = ({ client, habits, goals, logs }: { client: UserProfile, ha
   );
 };
 
+function NutritionHistory({ metrics }: { metrics: BodyMetrics[] }) {
+  const sortedMetrics = useMemo(() => {
+    return [...metrics].sort((a, b) => b.date.localeCompare(a.date));
+  }, [metrics]);
+
+  return (
+    <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 space-y-8">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h3 className="text-xl font-bold flex items-center gap-2">
+            <TrendingUp className="w-5 h-5 text-orange-500" />
+            Athlete Nutrition Analytics
+          </h3>
+          <p className="text-zinc-500 text-xs">Day-wise caloric and macro-nutrient execution.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="flex items-center gap-1.5 px-3 py-1 bg-blue-500/10 border border-blue-500/20 rounded-full text-[10px] font-bold text-blue-500">
+            <div className="w-1.5 h-1.5 bg-blue-500 rounded-full" /> Protein
+          </span>
+          <span className="flex items-center gap-1.5 px-3 py-1 bg-green-500/10 border border-green-500/20 rounded-full text-[10px] font-bold text-green-500">
+            <div className="w-1.5 h-1.5 bg-green-500 rounded-full" /> Carbs
+          </span>
+          <span className="flex items-center gap-1.5 px-3 py-1 bg-yellow-500/10 border border-yellow-500/20 rounded-full text-[10px] font-bold text-yellow-500">
+            <div className="w-1.5 h-1.5 bg-yellow-500 rounded-full" /> Fats
+          </span>
+        </div>
+      </div>
+
+      <div className="h-[250px] w-full bg-zinc-950/50 rounded-2xl p-4 border border-zinc-800/10 shadow-inner">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={[...metrics].slice(-14)}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+            <XAxis 
+              dataKey="date" 
+              stroke="#71717a" 
+              fontSize={10} 
+              tickFormatter={(str) => {
+                try {
+                  return format(parseISO(str), 'MMM d');
+                } catch {
+                  return str;
+                }
+              }}
+              axisLine={false}
+              tickLine={false}
+            />
+            <YAxis 
+              stroke="#71717a" 
+              fontSize={10} 
+              axisLine={false}
+              tickLine={false}
+            />
+            <Tooltip 
+              contentStyle={{ backgroundColor: '#18181b', border: '1px solid #27272a', borderRadius: '16px' }}
+              itemStyle={{ fontSize: '11px', fontWeight: 'bold' }}
+              cursor={{ fill: 'white', opacity: 0.05 }}
+            />
+            <Bar dataKey="protein" name="Protein" fill="#3b82f6" stackId="a" radius={[0, 0, 0, 0]} barSize={20} />
+            <Bar dataKey="carbs" name="Carbs" fill="#22c55e" stackId="a" radius={[0, 0, 0, 0]} barSize={20} />
+            <Bar dataKey="fats" name="Fats" fill="#eab308" stackId="a" radius={[4, 4, 0, 0]} barSize={20} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="overflow-x-auto hide-scrollbar -mx-8 px-8">
+        <table className="w-full text-left border-collapse min-w-[600px]">
+          <thead>
+            <tr className="border-b border-zinc-800">
+              <th className="pb-4 text-[10px] font-black uppercase tracking-widest text-zinc-500">Date</th>
+              <th className="pb-4 text-[10px] font-black uppercase tracking-widest text-zinc-500 text-right">Calories</th>
+              <th className="pb-4 text-[10px] font-black uppercase tracking-widest text-zinc-500 text-right">Protein</th>
+              <th className="pb-4 text-[10px] font-black uppercase tracking-widest text-zinc-500 text-right">Carbs</th>
+              <th className="pb-4 text-[10px] font-black uppercase tracking-widest text-zinc-500 text-right">Fats</th>
+              <th className="pb-4 text-[10px] font-black uppercase tracking-widest text-zinc-500 text-right">Intensity</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-zinc-800/30">
+            {sortedMetrics.slice(0, 30).map((m) => (
+              <tr key={m.id || m.date} className="group hover:bg-white/5 transition-all">
+                <td className="py-4 text-xs font-bold text-zinc-400 group-hover:text-white transition-colors">
+                  {format(parseISO(m.date), 'EEEE, MMM d')}
+                </td>
+                <td className="py-4 text-sm font-black text-right text-orange-500 italic">
+                  {m.calories} <span className="text-[10px] not-italic text-zinc-600 font-bold ml-1">KCAL</span>
+                </td>
+                <td className="py-4 text-sm font-bold text-right text-blue-400">
+                  {m.protein || 0}g
+                </td>
+                <td className="py-4 text-sm font-bold text-right text-green-400">
+                  {m.carbs || 0}g
+                </td>
+                <td className="py-4 text-sm font-bold text-right text-yellow-400">
+                  {m.fats || 0}g
+                </td>
+                <td className="py-4 text-right">
+                  <div className="inline-flex h-1.5 w-12 bg-zinc-800 rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-orange-500" 
+                      style={{ width: `${Math.min((m.calories / 3000) * 100, 100)}%` }} 
+                    />
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {sortedMetrics.length === 0 && (
+              <tr>
+                <td colSpan={6} className="py-12 text-center text-zinc-600 italic text-sm">No nutrition logs detected for this athlete.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function ClientDashboardView({ client }: { client: UserProfile }) {
   const [metrics, setMetrics] = useState<BodyMetrics[]>([]);
   const [meals, setMeals] = useState<any[]>([]);
@@ -4490,6 +5808,9 @@ function ClientDashboardView({ client }: { client: UserProfile }) {
           </ResponsiveContainer>
         </div>
       </div>
+
+      {/* Day-wise Nutrition History */}
+      <NutritionHistory metrics={metrics} />
 
       {/* Workout Consistency Chart */}
       <div className="bg-zinc-900 p-6 rounded-2xl border border-zinc-800 space-y-6">

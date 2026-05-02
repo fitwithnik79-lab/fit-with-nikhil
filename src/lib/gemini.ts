@@ -309,20 +309,25 @@ export async function analyzeNutritionFile(fileContent: string, fileName: string
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: `You are an expert performance nutritionist. Parse the following nutrition plan content from a file named "${fileName}". 
-      Extact the structured data for a Nutrition Plan.
+      contents: `Analyze the performance nutrition plan from "${fileName}" as a professional sports nutritionist. 
       
-      Content:
+      EXTRACTION REQUIREMENTS:
+      1. FULL 7-DAY ROTATION: Extract exactly 7 days of scheduling if the plan is varied.
+      2. PRECISE TIMING: Use 24h format strings (e.g., "07:30", "13:00").
+      3. INGREDIENT SPECIFICS: Include full quantities and prep notes in the 'notes' field.
+      4. MACRO PRECISION: Extract target Calories, Protein, Carbs, and Fats.
+      
+      Content Source:
       ${fileContent}
       
-      Return a JSON object with:
-      1. name: string
-      2. description: string
-      3. targetMacros: { calories: number, protein: number, carbs: number, fats: number }
-      4. guidelines: string[] (Key nutritional instructions)
-      5. recommendedFoods: string[]
-      6. restrictedFoods: string[]
-      7. plannedMeals: array of { id: string, time: string, name: string, notes: string } (Typical meal schedule if present, else synthesize based on common protocols like 4 meals/day).`,
+      Format the scientific data as a JSON object:
+      - name: string (Professional protocol title)
+      - description: string (Systematic strategy summary)
+      - targetMacros: { calories: number, protein: number, carbs: number, fats: number }
+      - guidelines: string[] (The foundational rules of the system)
+      - recommendedFoods: string[]
+      - restrictedFoods: string[]
+      - plannedMeals: array of { id: string, dayNumber: number, time: string, name: string, notes: string }`,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -349,15 +354,16 @@ export async function analyzeNutritionFile(fileContent: string, fileName: string
                 type: Type.OBJECT,
                 properties: {
                   id: { type: Type.STRING },
+                  dayNumber: { type: Type.NUMBER },
                   time: { type: Type.STRING },
                   name: { type: Type.STRING },
                   notes: { type: Type.STRING }
                 },
-                required: ["id", "time", "name"]
+                required: ["id", "dayNumber", "time", "name", "notes"]
               }
             }
           },
-          required: ["name", "description", "targetMacros", "guidelines", "plannedMeals"]
+          required: ["name", "description", "targetMacros", "guidelines", "plannedMeals", "recommendedFoods", "restrictedFoods"]
         }
       }
     });

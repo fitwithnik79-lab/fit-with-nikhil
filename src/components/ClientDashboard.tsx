@@ -59,7 +59,8 @@ import {
   ChevronUp,
   MoreVertical,
   Flag,
-  Circle
+  Circle,
+  Bell
 } from 'lucide-react';
 import { GoogleFitService } from '../services/googleFitService';
 import { requestNotificationPermission, onForegroundMessage } from '../lib/notifications';
@@ -82,8 +83,12 @@ import {
   isToday,
   parseISO,
   startOfDay,
-  differenceInDays
+  differenceInDays,
+  parse,
+  isAfter,
+  set
 } from 'date-fns';
+import { Reminder } from '../types';
 
 const GoalsAndHabits = ({ habits, habitLogs, goals, user, profile, adminProfile, sendAutomatedCoachMessage }: { 
   habits: Habit[], 
@@ -456,6 +461,253 @@ const GoalsAndHabits = ({ habits, habitLogs, goals, user, profile, adminProfile,
     </div>
   );
 };
+const TasksAndReminders = ({ reminders, user, habits, goals }: { reminders: Reminder[], user: User, habits: Habit[], goals: Goal[] }) => {
+  const [showAdd, setShowAdd] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [newReminder, setNewReminder] = useState<Partial<Reminder>>({
+    title: '',
+    description: '',
+    time: '08:00',
+    days: [1, 2, 3, 4, 5],
+    type: 'task',
+    active: true
+  });
+
+  const handleAdd = async () => {
+    if (!newReminder.title || !newReminder.time) return;
+    setIsSaving(true);
+    try {
+      await addDoc(collection(db, 'reminders'), {
+        clientId: user.uid,
+        ...newReminder,
+        active: true,
+        createdAt: serverTimestamp()
+      });
+      setShowAdd(false);
+      setNewReminder({ title: '', description: '', time: '08:00', days: [1, 2, 3, 4, 5], type: 'task', active: true });
+    } catch (error) {
+      console.error('Error adding reminder:', error);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const deleteReminder = async (id: string) => {
+    try {
+      await updateDoc(doc(db, 'reminders', id), { active: false });
+    } catch (e) {
+       console.error(e);
+    }
+  };
+
+  return (
+    <div className="space-y-8 pb-20">
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
+        <div className="space-y-2">
+          <motion.div 
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            className="flex items-center gap-2 mb-2"
+          >
+            <div className="w-2 h-2 rounded-full bg-orange-500 animate-pulse" />
+            <span className="text-[10px] font-black uppercase tracking-[0.3em] text-zinc-500">Scheduled Awareness</span>
+          </motion.div>
+          <h2 className="text-5xl font-black tracking-tighter uppercase italic leading-[0.9]">Tasks & <br /><span className="text-orange-500">Reminders</span></h2>
+          <p className="text-zinc-500 font-medium text-lg max-w-sm">Strategic triggers for your daily performance rituals.</p>
+        </div>
+        <button 
+          onClick={() => setShowAdd(true)}
+          className="px-8 py-4 bg-orange-500 text-white rounded-[28px] text-[10px] font-black uppercase tracking-widest hover:scale-105 active:scale-95 transition-all flex items-center gap-2 shadow-2xl shadow-orange-500/30"
+        >
+          <Plus className="w-4 h-4" />
+          Define Task
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {reminders.filter(r => r.active).map((reminder) => (
+          <motion.div 
+            key={reminder.id}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            whileHover={{ y: -5 }}
+            className="bg-zinc-900 border border-zinc-800 rounded-[40px] p-8 space-y-6 group hover:border-orange-500/50 transition-all relative overflow-hidden"
+          >
+            <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:scale-110 transition-transform duration-700">
+               <Bell className="w-24 h-24 text-white" />
+            </div>
+
+            <div className="flex justify-between items-start relative z-10">
+              <div className={cn(
+                "w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-500",
+                reminder.type === 'habit' ? "bg-orange-500 text-white" : 
+                reminder.type === 'goal' ? "bg-blue-500 text-white" : 
+                "bg-zinc-800 text-zinc-500 group-hover:bg-orange-500 group-hover:text-white"
+              )}>
+                {reminder.type === 'habit' ? <Zap className="w-6 h-6" /> : 
+                 reminder.type === 'goal' ? <Target className="w-6 h-6" /> : 
+                 <Bell className="w-6 h-6" />}
+              </div>
+              <div className="flex gap-1">
+                 <button 
+                   onClick={() => deleteReminder(reminder.id!)}
+                   className="p-3 bg-zinc-950/50 border border-zinc-800 rounded-xl text-zinc-600 hover:text-red-500 hover:border-red-500/30 transition-all"
+                   title="Delete Reminder"
+                 >
+                    <Trash2 className="w-4 h-4" />
+                 </button>
+              </div>
+            </div>
+
+            <div className="relative z-10">
+              <h4 className="text-2xl font-black tracking-tight leading-tight mb-2">{reminder.title}</h4>
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-1.5 px-3 py-1 bg-zinc-950 border border-zinc-800 rounded-full text-[10px] font-black uppercase text-orange-500 italic">
+                  <Clock className="w-3 h-3" />
+                  {reminder.time}
+                </div>
+                <span className="text-[10px] font-black uppercase tracking-widest text-zinc-600">
+                  {reminder.days?.length === 7 ? 'ELITE DAILY' : 
+                   reminder.days?.length === 0 ? 'ONE-TIME' : 
+                   `${reminder.days?.length}x WEEKLY`}
+                </span>
+              </div>
+              {reminder.description && (
+                <p className="mt-4 text-sm text-zinc-500 font-medium leading-relaxed italic border-l-2 border-zinc-800 pl-4">
+                  "{reminder.description}"
+                </p>
+              )}
+            </div>
+
+            <div className="pt-4 flex justify-between items-center relative z-10 border-t border-zinc-800/50">
+              <div className="flex gap-1">
+                {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, i) => (
+                  <div 
+                    key={i} 
+                    className={cn(
+                      "w-7 h-7 rounded-lg flex items-center justify-center text-[10px] font-black transition-all",
+                      reminder.days?.includes(i) 
+                        ? "bg-orange-500 text-white shadow-lg shadow-orange-500/10 scale-110" 
+                        : "bg-zinc-950 text-zinc-700"
+                    )}
+                  >
+                    {day}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </motion.div>
+        ))}
+
+        {reminders.filter(r => r.active).length === 0 && (
+          <div className="md:col-span-2 lg:col-span-3 p-32 bg-zinc-950/50 border-2 border-dashed border-zinc-900 rounded-[64px] flex flex-col items-center justify-center text-center space-y-6">
+             <div className="w-24 h-24 bg-zinc-900 rounded-[32px] flex items-center justify-center border border-zinc-800 transform -rotate-6">
+                <Bell className="w-12 h-12 text-zinc-800" />
+             </div>
+             <div className="max-w-md mx-auto space-y-4">
+                <h3 className="text-3xl font-black uppercase text-zinc-600 tracking-tighter">Zero Scheduled Alerts</h3>
+                <p className="text-zinc-500 font-medium max-w-xs mx-auto">Mastery is built through consistent triggers. Define your reminders to ensure your execution is flawless.</p>
+                <button 
+                  onClick={() => setShowAdd(true)}
+                  className="mt-4 px-8 py-3 bg-zinc-800 hover:bg-zinc-700 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all"
+                >
+                  Schedule Your First Trigger
+                </button>
+             </div>
+          </div>
+        )}
+      </div>
+
+      <AnimatePresence>
+        {showAdd && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowAdd(false)} className="absolute inset-0 bg-black/98 backdrop-blur-2xl" />
+            <motion.div initial={{ opacity: 0, scale: 0.95, y: 30 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 30 }} className="relative w-full max-w-xl bg-zinc-900 border border-white/10 rounded-[56px] p-12 space-y-10 shadow-2xl">
+              <div className="space-y-4">
+                <div className="inline-flex items-center gap-2 px-3 py-1 bg-orange-500/10 border border-orange-500/20 rounded-full">
+                  <Bell className="w-3 h-3 text-orange-500" />
+                  <span className="text-[10px] font-black uppercase tracking-widest text-orange-500">Alert Configuration</span>
+                </div>
+                <h3 className="text-5xl font-black uppercase tracking-tighter italic leading-[0.8]">Master <br /><span className="text-orange-500">The Schedule</span></h3>
+                <p className="text-zinc-500 font-medium text-lg">Define exactly when and how you want to be reminded.</p>
+              </div>
+
+              <div className="space-y-8">
+                <div className="space-y-3">
+                  <label className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Task Definition</label>
+                  <input value={newReminder.title} onChange={e => setNewReminder({...newReminder, title: e.target.value})} placeholder="e.g. 5 AM Run, Protein Intake, Reflect" className="w-full bg-black border border-white/5 rounded-3xl px-8 py-5 focus:outline-none focus:border-orange-500/50 font-black text-xl placeholder:text-zinc-800" />
+                </div>
+
+                <div className="grid grid-cols-2 gap-6">
+                  <div className="space-y-3">
+                    <label className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Precision Time</label>
+                    <input type="time" value={newReminder.time} onChange={e => setNewReminder({...newReminder, time: e.target.value})} className="w-full bg-black border border-white/5 rounded-3xl px-8 py-5 focus:outline-none focus:border-orange-500/50 font-black text-xl" />
+                  </div>
+                  <div className="space-y-3">
+                    <label className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Category</label>
+                    <select value={newReminder.type} onChange={e => setNewReminder({...newReminder, type: e.target.value as any})} className="w-full bg-black border border-white/5 rounded-3xl px-8 py-5 focus:outline-none focus:border-orange-500/50 font-black appearance-none text-zinc-400">
+                      <option value="task">General Elite Task</option>
+                      <option value="habit">Habit Execution</option>
+                      <option value="goal">Goal Alignment</option>
+                    </select>
+                  </div>
+                </div>
+
+                {newReminder.type === 'habit' && habits.length > 0 && (
+                  <div className="space-y-3">
+                    <label className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Associate With Ritual</label>
+                    <select value={newReminder.habitId} onChange={e => setNewReminder({...newReminder, habitId: e.target.value})} className="w-full bg-black border border-white/5 rounded-3xl px-8 py-5 focus:outline-none focus:border-orange-500/50 font-black appearance-none text-zinc-400">
+                      <option value="">Select Ritual...</option>
+                      {habits.map(h => <option key={h.id} value={h.id}>{h.title}</option>)}
+                    </select>
+                  </div>
+                )}
+
+                <div className="space-y-4">
+                  <label className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Recurrence Days</label>
+                  <div className="flex justify-between gap-2">
+                    {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, i) => {
+                      const isActive = newReminder.days?.includes(i);
+                      return (
+                        <button 
+                          key={i}
+                          onClick={() => {
+                            const current = newReminder.days || [];
+                            const next = isActive ? current.filter(d => d !== i) : [...current, i];
+                            setNewReminder({...newReminder, days: next});
+                          }}
+                          className={cn(
+                            "w-12 h-12 rounded-2xl flex items-center justify-center text-xs font-black transition-all",
+                            isActive 
+                              ? "bg-orange-500 text-white shadow-xl shadow-orange-500/20 scale-110" 
+                              : "bg-black border border-white/5 text-zinc-700 hover:border-zinc-700"
+                          )}
+                        >
+                          {day}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <label className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Internal Dialogue / Notes</label>
+                  <textarea value={newReminder.description} onChange={e => setNewReminder({...newReminder, description: e.target.value})} placeholder="e.g. Remember why you started. No shortcuts today." className="w-full bg-black border border-white/5 rounded-3xl px-8 py-5 focus:outline-none focus:border-orange-500/50 resize-none h-28 italic font-medium text-zinc-400" />
+                </div>
+              </div>
+
+              <div className="flex gap-4 pt-4">
+                <button onClick={() => setShowAdd(false)} className="flex-1 py-5 bg-zinc-800 rounded-[32px] font-black uppercase tracking-widest text-[10px] hover:bg-zinc-700 transition-all opacity-50 hover:opacity-100 italic">Dismiss</button>
+                <button onClick={handleAdd} disabled={isSaving || !newReminder.title} className="flex-1 py-5 bg-orange-500 text-white rounded-[32px] font-black uppercase tracking-widest text-[10px] hover:scale-105 active:scale-95 transition-all shadow-2xl shadow-orange-500/40 disabled:opacity-50">Initialize Alert</button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
+
 const WorkoutHistoryList = ({ 
   workouts, 
   feedback, 
@@ -697,7 +949,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   const [showChat, setShowChat] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [adminProfile, setAdminProfile] = useState<UserProfile | null>(null);
-  const [activeTab, setActiveTab] = useState<'dash' | 'calendar' | 'goals' | 'program' | 'meal' | 'progress' | 'badges' | 'classes' | 'profile' | 'meal-ai' | 'nutrition'>('dash');
+  const [activeTab, setActiveTab] = useState<'dash' | 'calendar' | 'goals' | 'tasks' | 'program' | 'meal' | 'progress' | 'badges' | 'classes' | 'profile' | 'meal-ai' | 'nutrition'>('dash');
   const [selectedWorkout, setSelectedWorkout] = useState<Workout | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [metrics, setMetrics] = useState<BodyMetrics[]>([]);
@@ -709,6 +961,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   const [habits, setHabits] = useState<Habit[]>([]);
   const [habitLogs, setHabitLogs] = useState<HabitLog[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
+  const [reminders, setReminders] = useState<Reminder[]>([]);
   const [habitLoading, setHabitLoading] = useState(true);
   const [calendarViewDate, setCalendarViewDate] = useState(new Date());
 
@@ -1035,12 +1288,85 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
       handleFirestoreError(error, OperationType.LIST, 'goals');
     });
 
+    // Fetch Reminders
+    const qReminders = query(collection(db, 'reminders'), where('clientId', '==', user.uid));
+    const unsubscribeReminders = onSnapshot(qReminders, (snapshot) => {
+      setReminders(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Reminder)));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'reminders');
+    });
+
     return () => {
       unsubscribeHabits();
       unsubscribeLogs();
       unsubscribeGoals();
+      unsubscribeReminders();
     };
   }, [user.uid]);
+
+  const [toastNotification, setToastNotification] = useState<{title: string, message: string, type: string} | null>(null);
+
+  // Reminder Notification Logic
+  useEffect(() => {
+    if (!reminders.length) return;
+
+    const checkReminders = () => {
+      const now = new Date();
+      const currentDay = now.getDay();
+      const currentTime = format(now, 'HH:mm');
+      const todayKey = format(now, 'yyyy-MM-dd-HH-mm');
+
+      reminders.forEach(async (reminder) => {
+        if (!reminder.active) return;
+        
+        // Check days if specified (0-6)
+        if (reminder.days && reminder.days.length > 0 && !reminder.days.includes(currentDay)) return;
+
+        // Compare time
+        if (reminder.time === currentTime && reminder.lastNotified !== todayKey) {
+          // Trigger notification
+          try {
+            playNotificationSound();
+          } catch (e) {
+            console.warn('Audio play failed:', e);
+          }
+          
+          setToastNotification({
+            title: reminder.title,
+            message: reminder.description || 'Time for your scheduled task!',
+            type: reminder.type
+          });
+
+          // Native Browser Notification
+          if ("Notification" in window && Notification.permission === "granted") {
+            new Notification(`Coach Nik Reminder: ${reminder.title}`, {
+              body: reminder.description || 'Execution required. Keep the momentum high.',
+              icon: '/favicon.ico'
+            });
+          }
+
+          // Mark as notified for this minute to prevent multiple triggers
+          try {
+            await updateDoc(doc(db, 'reminders', reminder.id!), {
+              lastNotified: todayKey
+            });
+          } catch (error) {
+            console.error('Error updating lastNotified:', error);
+          }
+        }
+      });
+    };
+
+    const interval = setInterval(checkReminders, 30000); // Check every 30 seconds
+    return () => clearInterval(interval);
+  }, [reminders, user.uid]);
+
+  useEffect(() => {
+    if (toastNotification) {
+      const timer = setTimeout(() => setToastNotification(null), 8000);
+      return () => clearTimeout(timer);
+    }
+  }, [toastNotification]);
 
   useEffect(() => {
     // Fetch all workouts for calendar and program
@@ -1232,7 +1558,8 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   const sidebarItems = [
     { id: 'dash', label: 'Dash', icon: LayoutDashboard },
     { id: 'calendar', label: 'Calendar', icon: CalendarIcon },
-    { id: 'goals', label: 'Goals and Habits', icon: Target },
+    { id: 'tasks', label: 'Tasks & Reminders', icon: Bell },
+    { id: 'goals', label: 'Habits & Goals', icon: Target },
     { id: 'program', label: 'Training Program', icon: Folder },
     { id: 'meal-ai', label: 'Daily Nutrition', icon: Utensils },
     { id: 'nutrition', label: 'Nutrition Plan', icon: Sparkles },
@@ -2203,6 +2530,22 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
               </motion.div>
             )}
 
+            {activeTab === 'tasks' && (
+              <motion.div
+                key="tasks"
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="space-y-8"
+              >
+                <TasksAndReminders 
+                  reminders={reminders}
+                  user={user}
+                  habits={habits}
+                  goals={goals}
+                />
+              </motion.div>
+            )}
+
             {['meal', 'badges', 'classes'].includes(activeTab) && (
               <motion.div
                 key="placeholder"
@@ -2531,6 +2874,40 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                  </div>
               </div>
             </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Toast Notification for Reminders */}
+      <AnimatePresence>
+        {toastNotification && (
+          <motion.div
+            initial={{ opacity: 0, y: 50, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.9 }}
+            className="fixed bottom-10 left-1/2 -translate-x-1/2 z-[200] w-full max-w-sm"
+          >
+            <div className="mx-4 bg-zinc-900/90 backdrop-blur-2xl border border-orange-500/50 rounded-[32px] p-6 shadow-2xl shadow-orange-500/20 flex gap-4 items-center relative overflow-hidden">
+              <div className="absolute top-0 left-0 w-full h-1 bg-orange-500">
+                 <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/50 to-transparent animate-[shimmer_2s_infinite]" />
+              </div>
+              <div className="w-14 h-14 bg-orange-500 rounded-2xl flex items-center justify-center text-white flex-shrink-0">
+                <Bell className="w-7 h-7" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-orange-500 italic">Elite Notice</span>
+                  <button 
+                    onClick={() => setToastNotification(null)}
+                    className="p-1 hover:bg-white/5 rounded-lg text-zinc-500"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+                <h4 className="font-black text-lg text-white uppercase italic tracking-tighter leading-none mb-1">{toastNotification.title}</h4>
+                <p className="text-sm text-zinc-400 font-medium leading-tight">Ritual execution required now.</p>
+              </div>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -3266,6 +3643,130 @@ function WorkoutCard({
   );
 }
 
+function NutritionHistory({ metrics }: { metrics: BodyMetrics[] }) {
+  const sortedMetrics = useMemo(() => {
+    return [...metrics].sort((a, b) => b.date.localeCompare(a.date));
+  }, [metrics]);
+
+  return (
+    <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 space-y-8">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h3 className="text-xl font-bold flex items-center gap-2">
+            <TrendingUp className="w-5 h-5 text-orange-500" />
+            Nutrition Intelligence History
+          </h3>
+          <p className="text-zinc-500 text-xs">Day-wise caloric and macro-nutrient breakdown.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="flex items-center gap-1.5 px-3 py-1 bg-blue-500/10 border border-blue-500/20 rounded-full text-[10px] font-bold text-blue-500">
+            <div className="w-1.5 h-1.5 bg-blue-500 rounded-full" /> Protein
+          </span>
+          <span className="flex items-center gap-1.5 px-3 py-1 bg-green-500/10 border border-green-500/20 rounded-full text-[10px] font-bold text-green-500">
+            <div className="w-1.5 h-1.5 bg-green-500 rounded-full" /> Carbs
+          </span>
+          <span className="flex items-center gap-1.5 px-3 py-1 bg-yellow-500/10 border border-yellow-500/20 rounded-full text-[10px] font-bold text-yellow-500">
+            <div className="w-1.5 h-1.5 bg-yellow-500 rounded-full" /> Fats
+          </span>
+        </div>
+      </div>
+
+      <div className="h-[300px] w-full bg-zinc-950/50 rounded-2xl p-4 border border-zinc-800/50">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={[...metrics].slice(-14)}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+            <XAxis 
+              dataKey="date" 
+              stroke="#71717a" 
+              fontSize={10} 
+              tickFormatter={(str) => {
+                try {
+                  return format(parseISO(str), 'MMM d');
+                } catch {
+                  return str;
+                }
+              }}
+              axisLine={false}
+              tickLine={false}
+            />
+            <YAxis 
+              stroke="#71717a" 
+              fontSize={10} 
+              axisLine={false}
+              tickLine={false}
+              tickFormatter={(val) => `${val}g`}
+            />
+            <Tooltip 
+              contentStyle={{ backgroundColor: '#18181b', border: '1px solid #27272a', borderRadius: '16px', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+              itemStyle={{ fontSize: '11px', fontWeight: 'bold' }}
+              cursor={{ fill: 'rgba(255, 255, 255, 0.05)' }}
+            />
+            <Bar dataKey="protein" name="Protein" fill="#3b82f6" stackId="a" radius={[0, 0, 0, 0]} barSize={20} />
+            <Bar dataKey="carbs" name="Carbs" fill="#22c55e" stackId="a" radius={[0, 0, 0, 0]} barSize={20} />
+            <Bar dataKey="fats" name="Fats" fill="#eab308" stackId="a" radius={[4, 4, 0, 0]} barSize={20} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="overflow-x-auto hide-scrollbar -mx-8 px-8">
+        <table className="w-full text-left border-collapse min-w-[500px]">
+          <thead>
+            <tr className="border-b border-zinc-800">
+              <th className="pb-4 text-[10px] font-black uppercase tracking-widest text-zinc-500">Date</th>
+              <th className="pb-4 text-[10px] font-black uppercase tracking-widest text-zinc-500 text-right">Calories</th>
+              <th className="pb-4 text-[10px] font-black uppercase tracking-widest text-zinc-500 text-right">Protein</th>
+              <th className="pb-4 text-[10px] font-black uppercase tracking-widest text-zinc-500 text-right">Carbs</th>
+              <th className="pb-4 text-[10px] font-black uppercase tracking-widest text-zinc-500 text-right">Fats</th>
+              <th className="pb-4 text-[10px] font-black uppercase tracking-widest text-zinc-500 text-right">Trend</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-zinc-800/30">
+            {sortedMetrics.slice(0, 14).map((m, idx) => {
+              const prev = sortedMetrics[idx + 1];
+              const calDiff = prev ? m.calories - prev.calories : 0;
+              
+              return (
+                <tr key={m.id || m.date} className="group hover:bg-white/5 transition-colors">
+                  <td className="py-5 text-sm font-bold text-zinc-400 group-hover:text-white transition-colors">
+                    {format(parseISO(m.date), 'EEE, MMM d')}
+                  </td>
+                  <td className="py-5 text-lg font-black text-right text-orange-500 italic">
+                    {m.calories} <span className="text-[10px] not-italic text-zinc-600 tracking-normal ml-0.5">kcal</span>
+                  </td>
+                  <td className="py-5 text-sm font-bold text-right text-blue-400">
+                    {m.protein || 0}<span className="text-[10px] text-zinc-600 ml-0.5 uppercase">g</span>
+                  </td>
+                  <td className="py-5 text-sm font-bold text-right text-green-400">
+                    {m.carbs || 0}<span className="text-[10px] text-zinc-600 ml-0.5 uppercase">g</span>
+                  </td>
+                  <td className="py-5 text-sm font-bold text-right text-yellow-400">
+                    {m.fats || 0}<span className="text-[10px] text-zinc-600 ml-0.5 uppercase">g</span>
+                  </td>
+                  <td className="py-5 text-right">
+                    {calDiff !== 0 && (
+                      <span className={cn(
+                        "text-[10px] font-black px-2 py-1 rounded-md",
+                        calDiff > 0 ? "text-red-400 bg-red-400/10" : "text-green-400 bg-green-400/10"
+                      )}>
+                        {calDiff > 0 ? '+' : ''}{calDiff}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+            {sortedMetrics.length === 0 && (
+              <tr>
+                <td colSpan={6} className="py-12 text-center text-zinc-600 italic text-sm">No synchronized day-wise nutrition data found.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function MealAI({ 
   user, 
   profile,
@@ -3928,7 +4429,9 @@ function MealAI({
           </div>
 
       {/* Today's Logged Meals List */}
-      <div className="space-y-8 pt-8 border-t border-zinc-800">
+      <div className="space-y-8 pt-12 border-t border-zinc-800">
+        <NutritionHistory metrics={metrics} />
+
         <div className="flex items-center justify-between">
           <h3 className="text-2xl font-bold flex items-center gap-3">
             <TrendingUp className="w-6 h-6 text-orange-500" />

@@ -161,6 +161,7 @@ export interface NutritionPlan {
   };
   plannedMeals?: {
     id: string;
+    dayNumber?: number;
     time: string;
     name: string;
     notes: string;
@@ -185,6 +186,13 @@ export interface NutritionTemplate {
     fats: number;
   };
   guidelines: string[];
+  plannedMeals?: {
+    id: string;
+    dayNumber?: number;
+    time: string;
+    name: string;
+    notes: string;
+  }[];
 }
 
 export interface Habit {
@@ -205,6 +213,21 @@ export interface HabitLog {
   date: string; // YYYY-MM-DD
   completed: boolean;
   updatedAt: any;
+}
+
+export interface Reminder {
+  id?: string;
+  clientId: string;
+  title: string;
+  description?: string;
+  time: string; // HH:mm
+  days?: number[]; // [0, 1, 2, 3, 4, 5, 6] for Sunday-Saturday
+  habitId?: string; // Reference to a Habit
+  goalId?: string; // Reference to a Goal
+  active: boolean;
+  type: 'habit' | 'goal' | 'task';
+  lastNotified?: string; // Date string or YYYY-MM-DD-HH-mm
+  createdAt: any;
 }
 
 export interface Goal {
