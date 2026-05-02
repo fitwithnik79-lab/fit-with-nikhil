@@ -1299,6 +1299,7 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
             exit={{ opacity: 0, y: -10 }}
           >
             <AdminProfileSection user={user} profile={profile} showToast={showToast} />
+            <IntegrationSection showToast={showToast} />
           </motion.div>
         )}
       </AnimatePresence>
@@ -3687,6 +3688,38 @@ function NutritionManager({ client, template, onSaveTemplate, showToast }: { cli
     return () => unsubscribe();
   }, [client?.uid]);
 
+  const [isCopyingDay, setIsCopyingDay] = useState(false);
+
+  const copyDaySchedule = (targetDays: number[]) => {
+    if (!planDraft.plannedMeals) return;
+    
+    // Get meals for current selected day
+    const sourceMeals = planDraft.plannedMeals.filter(m => m.dayNumber === selectedDay);
+    
+    // Remote existing meals for target days
+    const otherMeals = planDraft.plannedMeals.filter(m => !targetDays.includes(m.dayNumber));
+    
+    // Generate new meals for target days
+    const replicatedMeals: any[] = [];
+    targetDays.forEach(dayNum => {
+      sourceMeals.forEach(m => {
+        replicatedMeals.push({
+          ...m,
+          id: crypto.randomUUID(),
+          dayNumber: dayNum
+        });
+      });
+    });
+
+    setPlanDraft({
+      ...planDraft,
+      plannedMeals: [...otherMeals, ...replicatedMeals]
+    });
+    
+    showToast(`Schedule copied to Day(s) ${targetDays.join(', ')}`);
+    setIsCopyingDay(false);
+  };
+
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -3702,14 +3735,30 @@ function NutritionManager({ client, template, onSaveTemplate, showToast }: { cli
 
       const analysis = await analyzeNutritionFile(content, file.name);
       if (analysis) {
-        setPlanDraft({
-          ...planDraft,
-          ...analysis,
-          isActive: true
-        });
-        showToast('Nutrition plan extracted successfully!');
+        // Option to merge into specific day if it's a 1-day plan
+        const isOneDayPlan = analysis.plannedMeals?.every(m => m.dayNumber === 1 || !m.dayNumber);
+        
+        if (isOneDayPlan && window.confirm(`This looks like a 1-day plan. Assign it specifically to Day ${selectedDay}?`)) {
+          const currentMeals = planDraft.plannedMeals || [];
+          const otherDaysMeals = currentMeals.filter(m => m.dayNumber !== selectedDay);
+          const newDayMeals = analysis.plannedMeals.map(m => ({ ...m, id: crypto.randomUUID(), dayNumber: selectedDay }));
+          
+          setPlanDraft({
+            ...planDraft,
+            plannedMeals: [...otherDaysMeals, ...newDayMeals],
+            targetMacros: analysis.targetMacros || planDraft.targetMacros,
+            guidelines: [...(planDraft.guidelines || []), ...(analysis.guidelines || [])].filter((v, i, a) => a.indexOf(v) === i)
+          });
+        } else {
+          setPlanDraft({
+            ...planDraft,
+            ...analysis,
+            isActive: true
+          });
+        }
+        showToast('Digitization complete!');
       } else {
-        showToast('Failed to extract and analyze plan', 'error');
+        showToast('Extraction failed', 'error');
       }
     } catch (error) {
       console.error("Error analyzing nutrition file:", error);
@@ -3996,8 +4045,50 @@ function NutritionManager({ client, template, onSaveTemplate, showToast }: { cli
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-between ml-1 pt-2">
-                    <span className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">Meals for Day {selectedDay}</span>
+                  <div className="flex items-center justify-between ml-1 pt-2 bg-zinc-950/50 p-3 rounded-2xl border border-zinc-800/50">
+                    <div className="flex items-center gap-3">
+                      <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Day {selectedDay} Actions</span>
+                      {selectedDay === 1 && (
+                        <button 
+                          onClick={() => {
+                            if(window.confirm('Repeat Day 1 schedule across the entire week?')) {
+                              copyDaySchedule([2, 3, 4, 5, 6, 7]);
+                            }
+                          }}
+                          className="text-[9px] font-bold text-orange-500 bg-orange-500/10 px-2 py-1 rounded-lg border border-orange-500/20 hover:bg-orange-500 hover:text-white transition-all flex items-center gap-1"
+                        >
+                          <RefreshCcw className="w-3 h-3" />
+                          Repeat Weekly
+                        </button>
+                      )}
+                      <div className="flex items-center gap-1">
+                        <button 
+                          onClick={() => setIsCopyingDay(!isCopyingDay)}
+                          className={cn(
+                            "text-[9px] font-bold px-2 py-1 rounded-lg border transition-all flex items-center gap-1",
+                            isCopyingDay 
+                              ? "bg-zinc-800 text-white border-zinc-700" 
+                              : "text-zinc-500 border-zinc-800 hover:bg-zinc-900"
+                          )}
+                        >
+                          <Copy className="w-3 h-3" />
+                          Copy to...
+                        </button>
+                        {isCopyingDay && (
+                          <div className="flex items-center gap-1 animate-in slide-in-from-left-2 duration-200">
+                             {[1, 2, 3, 4, 5, 6, 7].filter(d => d !== selectedDay).map(d => (
+                               <button
+                                 key={d}
+                                 onClick={() => copyDaySchedule([d])}
+                                 className="w-6 h-6 rounded-lg bg-zinc-900 border border-zinc-800 text-[8px] font-black text-zinc-500 hover:text-orange-500 hover:border-orange-500 transition-all"
+                               >
+                                 D{d}
+                               </button>
+                             ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
                     <div className="flex items-center gap-4">
                       <div className="flex items-center gap-1 bg-zinc-950 p-1 rounded-xl border border-zinc-800">
                         <button 
@@ -6136,6 +6227,95 @@ const MessageTemplatesManager = ({ showToast }: { showToast: (m: string, t?: 'su
           </div>
         )}
       </AnimatePresence>
+    </div>
+  );
+};
+
+const IntegrationSection = ({ showToast }: { showToast: (m: string) => void }) => {
+  const syncUrl = `${window.location.origin}/api/external/import-protocol`;
+  const apiKey = 'NIK_PROTOCOL_SYNC_v1';
+  
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    showToast('Copied to clipboard');
+  };
+
+  const curlExample = `curl -X POST "${syncUrl}" \\
+  -H "X-Api-Key: ${apiKey}" \\
+  -F "file=@/path/to/protocol.pdf" \\
+  -F "clientName=John Doe"`;
+
+  return (
+    <div className="mt-8 space-y-6">
+      <div className="bg-zinc-900 border border-white/5 rounded-[40px] p-8 md:p-12">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8">
+          <div className="space-y-2">
+            <h3 className="text-3xl font-black uppercase italic tracking-tighter text-orange-500 flex items-center gap-3">
+              <Zap className="w-8 h-8" />
+              External Sync API
+            </h3>
+            <p className="text-zinc-500 text-sm max-w-xl">
+              Connect your other apps directly to Nik's Master Vault. Use this endpoint to automatically synchronize nutrition protocols generated elsewhere.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          <div className="space-y-6">
+            <div className="bg-black/40 border border-white/5 rounded-3xl p-6 space-y-4">
+              <div>
+                <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2 block">Sync Endpoint</label>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 bg-black border border-white/10 rounded-xl px-4 py-3 text-xs font-mono text-orange-500 truncate">
+                    {syncUrl}
+                  </div>
+                  <button 
+                    onClick={() => copyToClipboard(syncUrl)}
+                    className="p-3 bg-zinc-900 border border-white/5 rounded-xl text-zinc-400 hover:text-white hover:border-orange-500/50 transition-all"
+                  >
+                    <Copy className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2 block">X-Api-Key</label>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 bg-black border border-white/10 rounded-xl px-4 py-3 text-xs font-mono text-orange-500">
+                    {apiKey}
+                  </div>
+                  <button 
+                    onClick={() => copyToClipboard(apiKey)}
+                    className="p-3 bg-zinc-900 border border-white/5 rounded-xl text-zinc-400 hover:text-white hover:border-orange-500/50 transition-all"
+                  >
+                    <Copy className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-orange-500/5 border border-orange-500/10 rounded-3xl p-6">
+              <h4 className="text-xs font-black uppercase tracking-widest text-orange-500 mb-3 flex items-center gap-2">
+                <Shield className="w-4 h-4" />
+                Integration Status
+              </h4>
+              <p className="text-xs text-zinc-400 leading-relaxed italic">
+                "Nik, this API allows your other PDF-generating app to push protocols directly into this system. Gemini will automatically extract the data upon arrival."
+              </p>
+            </div>
+          </div>
+
+          <div className="bg-black/60 rounded-3xl p-6 space-y-4 border border-white/5">
+            <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2 block">Quick Setup (cURL Example)</label>
+            <div className="bg-black rounded-xl p-4 font-mono text-[10px] text-zinc-400 leading-relaxed overflow-x-auto whitespace-pre">
+              {curlExample}
+            </div>
+            <p className="text-[10px] text-zinc-500">
+              Note: The <code className="text-orange-500">clientId</code> is optional. If excluded, the plan will be saved as a Master Protocol in your Vault.
+            </p>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };

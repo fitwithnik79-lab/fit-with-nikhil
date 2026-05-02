@@ -8,11 +8,19 @@ import dotenv from 'dotenv';
 import admin from 'firebase-admin';
 import { getFirestore as getAdminFirestore, FieldValue } from 'firebase-admin/firestore';
 import { format } from 'date-fns';
+import multer from 'multer';
+import { GoogleGenAI } from '@google/genai';
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Initialize Gemini
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+
+// Multer for file uploads
+const upload = multer({ storage: multer.memoryStorage() });
 
 // Load firebase config if it exists
 let firebaseConfig: any = {};
@@ -309,6 +317,89 @@ async function startServer() {
     } catch (error) {
       console.error('Error sending notification:', error);
       res.status(500).json({ error: 'Failed to send notification' });
+    }
+  });
+
+  /**
+   * EXTERNAL INTEGRATION API
+   * Endpoint for Nik's other apps to sync nutrition plans.
+   * Authentication: Bearer token in Authorization header
+   */
+  app.post('/api/external/import-protocol', upload.single('file'), async (req, res) => {
+    const apiKey = req.headers['x-api-key'] || req.headers['authorization']?.toString().replace('Bearer ', '');
+    const MASTER_KEY = process.env.SYNC_API_KEY || 'NIK_PROTOCOL_SYNC_v1';
+
+    if (apiKey !== MASTER_KEY) {
+      return res.status(401).json({ error: 'Unauthorized. Invalid API Key.' });
+    }
+
+    const { clientId, clientName } = req.body;
+    const file = req.file;
+
+    if (!file) {
+      return res.status(400).json({ error: 'No PDF protocol file provided' });
+    }
+
+    try {
+      // Analyze PDF with Gemini
+      const prompt = `Analyze this nutrition protocol. 
+      Extract:
+      1. Protocol Name
+      2. Summary/Description
+      3. Target Macros (Calories, Protein, Carbs, Fats)
+      4. Guidelines (Array of strings)
+      5. Recommended/Restricted Foods
+      6. Full meal schedule (Array of {id, dayNumber, time, name, notes})
+      
+      Return valid JSON only.`;
+
+      const result = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: {
+          parts: [
+            { text: prompt },
+            {
+              inlineData: {
+                data: file.buffer.toString('base64'),
+                mimeType: file.mimetype
+              }
+            }
+          ]
+        }
+      });
+
+      const text = result.text;
+      if (!text) throw new Error('No response from Gemini');
+      
+      const cleanJson = text.replace(/```json|```/g, '').trim();
+      const planData = JSON.parse(cleanJson);
+
+      const db = getFirestore();
+      const planPayload = {
+        ...planData,
+        clientId: clientId || null,
+        clientName: clientName || null,
+        isMaster: !clientId,
+        isActive: !!clientId,
+        createdAt: FieldValue.serverTimestamp(),
+        source: 'external_api'
+      };
+
+      const docRef = await db.collection('nutritionPlans').add(planPayload);
+
+      res.json({ 
+        success: true, 
+        message: 'Protocol synchronized successfully',
+        planId: docRef.id,
+        extracted: {
+          name: planData.name,
+          mealsFound: planData.plannedMeals?.length || 0
+        }
+      });
+
+    } catch (error: any) {
+      console.error('External Import Error:', error);
+      res.status(500).json({ error: 'Synchronization failed during extraction', details: error.message });
     }
   });
 
