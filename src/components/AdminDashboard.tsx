@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { User } from 'firebase/auth';
 import { collection, query, where, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, getDocs, orderBy, deleteDoc, limit } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { db, storage } from '../lib/firebase';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { UserProfile, Workout, Exercise, Feedback, WorkoutTemplate, BodyMetrics, Message, Habit, HabitLog, Goal, MessageTemplate } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { searchExerciseVideos, parseWorkoutFile, analyzeNutritionFile } from '../lib/gemini';
@@ -9,7 +10,7 @@ import { triggerPushNotification } from '../lib/notifications';
 import { SAMPLE_PROGRAMS, WEEKLY_PROGRAMS, WORKOUT_TEMPLATES } from '../constants/workoutTemplates';
 import { NUTRITION_TEMPLATES } from '../constants/nutritionTemplates';
 import { NutritionPlan, NutritionTemplate } from '../types';
-import { Plus, Users, Calendar, CheckCircle, ExternalLink, ChevronRight, Search, Activity, Clock, MessageSquare, Trash2, Edit2, ChevronDown, ChevronUp, Save, Download, Layout, Copy, ChevronLeft, Play, Sparkles, Loader2, Droplets, Footprints, Flame, Scale, LayoutDashboard, X, Bell, Send, BookOpen, Layers, Upload, Youtube, Utensils, Shield, Zap, ArrowRight, Check, Target, RefreshCcw, Circle } from 'lucide-react';
+import { Plus, Users, Calendar, CheckCircle, ExternalLink, ChevronRight, Search, Activity, Clock, MessageSquare, Trash2, Edit2, ChevronDown, ChevronUp, Save, Download, Layout, Copy, ChevronLeft, Play, Sparkles, Loader2, Droplets, Footprints, Flame, Scale, LayoutDashboard, X, Bell, Send, BookOpen, Layers, Upload, Youtube, Utensils, Shield, Zap, ArrowRight, Check, Target, RefreshCcw, Circle, Settings, Camera } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, playNotificationSound, getAvatarUrl } from '../lib/utils';
 import Chat from './Chat';
@@ -45,7 +46,7 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
   const [feedbacks, setFeedbacks] = useState<Feedback[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'dash' | 'clients' | 'tracker' | 'calendar' | 'broadcast' | 'templates'>('dash');
+  const [activeTab, setActiveTab] = useState<'dash' | 'clients' | 'tracker' | 'calendar' | 'broadcast' | 'templates' | 'settings'>('dash');
   const [showChat, setShowChat] = useState(false);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [confirmModal, setConfirmModal] = useState<{ title: string, message: string, onConfirm: () => void } | null>(null);
@@ -288,6 +289,7 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
             { id: 'calendar', label: 'Plan', icon: Calendar },
             { id: 'broadcast', label: 'Broadcast', icon: Send },
             { id: 'templates', label: 'Vault', icon: BookOpen },
+            { id: 'settings', label: 'Settings', icon: Settings },
           ].map((item) => (
             <button
               key={item.id}
@@ -955,6 +957,17 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
                 </div>
               </div>
             </div>
+          </motion.div>
+        )}
+
+        {activeTab === 'settings' && (
+          <motion.div
+            key="settings"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+          >
+            <AdminProfileSection user={user} profile={profile} showToast={showToast} />
           </motion.div>
         )}
       </AnimatePresence>
@@ -2407,15 +2420,181 @@ function CalendarView({ clients, showToast, confirmAction }: { clients: UserProf
   );
 }
 
+function AdminProfileSection({ user, profile, showToast }: { user: User, profile: UserProfile, showToast: (m: string, t?: 'success' | 'error') => void }) {
+  const [formData, setFormData] = useState({
+    displayName: profile.displayName || '',
+    photoURL: profile.photoURL || '',
+    gender: profile.gender || '',
+  });
+  const [isSaving, setIsSaving] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 2 * 1024 * 1024) {
+      showToast('Image too large (max 2MB)', 'error');
+      return;
+    }
+
+    setIsUploading(true);
+    try {
+      const storageRef = ref(storage, `profiles/${user.uid}/${file.name}_${Date.now()}`);
+      await uploadBytes(storageRef, file);
+      const downloadURL = await getDownloadURL(storageRef);
+      setFormData(prev => ({ ...prev, photoURL: downloadURL }));
+      showToast('Image uploaded! Save profile to apply.', 'success');
+    } catch (error) {
+      console.error('Error uploading image:', error);
+      showToast('Failed to upload image. Please ensure check storage settings.', 'error');
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      await updateDoc(doc(db, 'users', user.uid), formData)
+        .catch(err => handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}`));
+      showToast('Profile updated!');
+    } catch (error) {
+      console.error('Error updating profile:', error);
+      showToast('Failed to update profile', 'error');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="max-w-4xl mx-auto space-y-12">
+      <div className="flex items-center justify-between">
+        <h3 className="text-3xl font-black uppercase italic tracking-tighter">Coach <span className="text-orange-500">Settings</span></h3>
+        <button 
+          onClick={handleSave} 
+          disabled={isSaving}
+          className="px-8 py-3 bg-orange-500 text-white font-black text-xs uppercase tracking-widest rounded-2xl hover:shadow-[0_0_20px_rgba(249,115,22,0.4)] transition-all disabled:opacity-50"
+        >
+          {isSaving ? 'Synchronizing...' : 'Save Configuration'}
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="bg-zinc-900 border border-white/5 p-10 rounded-[48px] flex flex-col items-center text-center space-y-6">
+          <div className="relative group">
+            <div className="w-40 h-40 rounded-[48px] overflow-hidden border-4 border-orange-500 shadow-2xl relative">
+              {isUploading && (
+                <div className="absolute inset-0 bg-black/80 flex items-center justify-center z-10 rounded-[48px]">
+                  <Loader2 className="w-8 h-8 text-orange-500 animate-spin" />
+                </div>
+              )}
+              <img 
+                src={getAvatarUrl(user.email || undefined, formData.gender, formData.photoURL)} 
+                alt="Profile" 
+                className="w-full h-full object-cover"
+              />
+            </div>
+            <label className="absolute -bottom-4 -right-4 p-5 bg-orange-500 text-white rounded-[24px] shadow-2xl cursor-pointer hover:scale-110 active:scale-95 transition-all">
+              <Camera className="w-6 h-6" />
+              <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
+            </label>
+          </div>
+          <div>
+            <h4 className="text-2xl font-black uppercase tracking-tighter">{formData.displayName || 'Profile Name'}</h4>
+            <p className="text-zinc-500 text-sm font-bold uppercase tracking-widest">{profile.role}</p>
+          </div>
+          <div className="pt-6 border-t border-white/5 w-full">
+            <p className="text-[10px] text-zinc-600 font-bold uppercase tracking-[0.2em]">Profile Authorization</p>
+            <p className="text-zinc-400 text-xs font-mono mt-2 truncate w-full">{user.uid}</p>
+          </div>
+        </div>
+
+        <div className="lg:col-span-2 space-y-6">
+          <div className="bg-zinc-900 border border-white/5 p-10 rounded-[48px] space-y-8">
+            <div className="space-y-4">
+              <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Public Display Name</label>
+              <input 
+                type="text" 
+                value={formData.displayName}
+                onChange={(e) => setFormData({ ...formData, displayName: e.target.value })}
+                className="w-full bg-zinc-950 border border-white/10 rounded-2xl p-4 text-white focus:border-orange-500 outline-none transition-all"
+                placeholder="Coach Name"
+              />
+            </div>
+            <div className="space-y-4">
+              <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Avatar Resource URL</label>
+              <input 
+                type="text" 
+                value={formData.photoURL}
+                onChange={(e) => setFormData({ ...formData, photoURL: e.target.value })}
+                className="w-full bg-zinc-950 border border-white/10 rounded-2xl p-4 text-white focus:border-orange-500 outline-none transition-all"
+                placeholder="https://..."
+              />
+            </div>
+            <div className="space-y-4">
+              <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Identity Representation</label>
+              <select 
+                value={formData.gender}
+                onChange={(e) => setFormData({ ...formData, gender: e.target.value })}
+                className="w-full bg-zinc-950 border border-white/10 rounded-2xl p-4 text-white focus:border-orange-500 outline-none transition-all"
+              >
+                <option value="">Select Identity</option>
+                <option value="male">Male</option>
+                <option value="female">Female</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="bg-zinc-900 border border-white/5 p-10 rounded-[48px] space-y-6 opacity-50">
+             <div className="flex items-center gap-4 text-zinc-500">
+               <Shield className="w-5 h-5" />
+               <h4 className="text-xs font-black uppercase tracking-widest">Advanced Permissions</h4>
+             </div>
+             <p className="text-sm text-zinc-600 italic">Advanced administrative controls are locked to preserve system integrity.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ClientDetailsEditor({ client, showToast }: { client: UserProfile, showToast: (m: string, t?: 'success' | 'error') => void }) {
   const [goals, setGoals] = useState(client.programGoals || '');
   const [details, setDetails] = useState(client.programDetails || '');
+  const [photoURL, setPhotoURL] = useState(client.photoURL || '');
   const [saving, setSaving] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
 
   useEffect(() => {
     setGoals(client.programGoals || '');
     setDetails(client.programDetails || '');
+    setPhotoURL(client.photoURL || '');
   }, [client]);
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 2 * 1024 * 1024) {
+      showToast('Image too large (max 2MB)', 'error');
+      return;
+    }
+
+    setIsUploading(true);
+    try {
+      const storageRef = ref(storage, `profiles/${client.uid}/${file.name}_${Date.now()}`);
+      await uploadBytes(storageRef, file);
+      const downloadURL = await getDownloadURL(storageRef);
+      setPhotoURL(downloadURL);
+      showToast('Image uploaded!', 'success');
+    } catch (error) {
+      console.error('Error uploading image:', error);
+      showToast('Failed to upload image', 'error');
+    } finally {
+      setIsUploading(false);
+    }
+  };
 
   const handleUpdate = async () => {
     setSaving(true);
@@ -2423,9 +2602,10 @@ function ClientDetailsEditor({ client, showToast }: { client: UserProfile, showT
       const userDocRef = doc(db, 'users', client.uid);
       await updateDoc(userDocRef, {
         programGoals: goals,
-        programDetails: details
+        programDetails: details,
+        photoURL: photoURL
       }).catch(err => handleFirestoreError(err, OperationType.UPDATE, `users/${client.uid}`));
-      showToast('Client details updated!');
+      showToast('Client profile and program updated!');
     } catch (error) {
       console.error('Error updating client:', error);
     } finally {
@@ -2434,38 +2614,78 @@ function ClientDetailsEditor({ client, showToast }: { client: UserProfile, showT
   };
 
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 space-y-4">
+    <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 space-y-6">
       <div className="flex items-center justify-between">
         <h3 className="font-bold text-xl flex items-center gap-2">
           <Edit2 className="w-5 h-5 text-orange-500" />
-          Program Details
+          Athlete Profile
         </h3>
         <button
           onClick={handleUpdate}
           disabled={saving}
-          className="bg-orange-500 text-white text-xs font-bold px-4 py-2 rounded-lg hover:bg-orange-600 disabled:opacity-50 transition-all"
+          className="bg-orange-500 text-white text-xs font-bold px-6 py-2.5 rounded-xl hover:bg-orange-600 disabled:opacity-50 transition-all shadow-lg shadow-orange-500/20"
         >
-          {saving ? 'Saving...' : 'Update Program'}
+          {saving ? 'Saving...' : 'Sync Profile'}
         </button>
+      </div>
+
+      <div className="flex flex-col sm:flex-row gap-8 items-start">
+        <div className="relative group shrink-0">
+          <div className="w-24 h-24 rounded-3xl overflow-hidden border-2 border-zinc-800 relative shadow-xl">
+             {isUploading && (
+               <div className="absolute inset-0 bg-black/80 flex items-center justify-center z-10">
+                 <Loader2 className="w-6 h-6 text-orange-500 animate-spin" />
+               </div>
+             )}
+             <img 
+               src={getAvatarUrl(client.email || undefined, client.gender, photoURL)} 
+               alt={client.displayName} 
+               className="w-full h-full object-cover"
+             />
+          </div>
+          <label className="absolute -bottom-2 -right-2 p-2.5 bg-zinc-800 text-orange-500 rounded-xl border border-white/10 cursor-pointer hover:bg-orange-500 hover:text-white transition-all shadow-2xl">
+            <Camera className="w-3.5 h-3.5" />
+            <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
+          </label>
+        </div>
+
+        <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-4 w-full">
+          <div className="space-y-1">
+            <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest">Photo Resource Link</label>
+            <input 
+              type="text" 
+              value={photoURL}
+              onChange={(e) => setPhotoURL(e.target.value)}
+              placeholder="https://..."
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-xs focus:ring-1 focus:ring-orange-500 outline-none"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest">Athlete Program Status</label>
+            <div className="p-3 bg-zinc-950 border border-zinc-800 rounded-xl text-xs text-orange-500 font-bold uppercase">
+              Elite Access Active
+            </div>
+          </div>
+        </div>
       </div>
       
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div className="space-y-1">
-          <label className="text-[10px] text-zinc-500 uppercase font-bold">Program Goals</label>
+          <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest">Program Goals</label>
           <textarea
             value={goals}
             onChange={(e) => setGoals(e.target.value)}
             placeholder="e.g. Weight loss, Muscle gain..."
-            className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm focus:ring-1 focus:ring-orange-500 outline-none min-h-[80px]"
+            className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm focus:ring-1 focus:ring-orange-500 outline-none min-h-[100px]"
           />
         </div>
         <div className="space-y-1">
-          <label className="text-[10px] text-zinc-500 uppercase font-bold">Program Details</label>
+          <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest">Intelligence Details</label>
           <textarea
             value={details}
             onChange={(e) => setDetails(e.target.value)}
             placeholder="e.g. 12-week hypertrophy block..."
-            className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm focus:ring-1 focus:ring-orange-500 outline-none min-h-[80px]"
+            className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm focus:ring-1 focus:ring-orange-500 outline-none min-h-[100px]"
           />
         </div>
       </div>

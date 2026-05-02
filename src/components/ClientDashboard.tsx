@@ -4105,9 +4105,15 @@ function ProfileSection({ user, profile, setShowChat, onConnectGoogleFit, isGoog
       
       setFormData(prev => ({ ...prev, photoURL: downloadURL }));
       setMessage({ text: 'Image uploaded! Remember to save your profile changes.', type: 'success' });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error uploading image:', error);
-      setMessage({ text: 'Failed to upload image.', type: 'error' });
+      let errorMsg = 'Failed to upload image.';
+      if (error.code === 'storage/unauthorized') {
+        errorMsg = 'Upload denied. Please ensure your storage permissions are configured.';
+      } else if (error.code === 'storage/canceled') {
+        errorMsg = 'Upload canceled.';
+      }
+      setMessage({ text: errorMsg, type: 'error' });
     } finally {
       setIsUploading(false);
     }
