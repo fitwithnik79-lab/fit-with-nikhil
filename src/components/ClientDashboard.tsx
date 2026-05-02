@@ -1326,8 +1326,8 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
           {/* Top Bar */}
           <header className="h-20 flex items-center justify-between px-8 bg-black/50 backdrop-blur-md border-b border-white/5 shrink-0 z-20">
             <div className="flex items-center gap-4 md:hidden">
-               <button onClick={() => setIsMobileMenuOpen(true)} className="p-2 bg-zinc-900 rounded-xl">
-                 <LayoutDashboard className="w-6 h-6" />
+               <button onClick={() => setIsMobileMenuOpen(true)} className="p-2 bg-zinc-900 rounded-xl text-zinc-400 hover:text-orange-500 transition-colors">
+                 <Menu className="w-6 h-6" />
                </button>
                <h1 className="text-lg font-black tracking-tight italic">FIT WITH <span className="text-orange-500">NIK</span></h1>
             </div>
@@ -2424,6 +2424,112 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
               >
                 Let's Keep Going
               </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Mobile Menu Board */}
+      <AnimatePresence>
+        {isMobileMenuOpen && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] md:hidden"
+          >
+            {/* Backdrop */}
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/90 backdrop-blur-2xl" 
+              onClick={() => setIsMobileMenuOpen(false)}
+            />
+            
+            {/* Menu Board */}
+            <motion.div
+              initial={{ x: '-100%', opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: '-100%', opacity: 0 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+              className="absolute inset-y-0 left-0 w-[85%] max-w-sm bg-zinc-950 border-r border-white/5 p-8 flex flex-col shadow-2xl"
+            >
+              <div className="flex items-center justify-between mb-12">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-orange-500 rounded-2xl flex items-center justify-center shadow-lg shadow-orange-500/20 rotate-3">
+                    <Dumbbell className="w-6 h-6 text-white" />
+                  </div>
+                  <h1 className="text-xl font-black tracking-tighter uppercase italic">FIT WITH <span className="text-orange-500">NIK</span></h1>
+                </div>
+                <button 
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  className="p-2 bg-zinc-900 rounded-xl text-zinc-500"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              <nav className="flex-1 space-y-2 overflow-y-auto hide-scrollbar">
+                {sidebarItems.map((item) => (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      setActiveTab(item.id as any);
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={cn(
+                      "w-full flex items-center gap-5 px-5 py-4 rounded-3xl text-base font-black transition-all uppercase italic tracking-tighter text-left group",
+                      activeTab === item.id 
+                        ? "text-orange-500 bg-orange-500/10 border border-orange-500/20" 
+                        : "text-zinc-500 hover:text-white hover:bg-white/5"
+                    )}
+                  >
+                    <item.icon className={cn("w-5 h-5 transition-transform group-hover:scale-110", activeTab === item.id ? "text-orange-500" : "text-zinc-700")} />
+                    <span>{item.label}</span>
+                    {item.id === 'dash' && unreadCount > 0 && (
+                      <span className="ml-auto w-5 h-5 bg-orange-500 text-white text-[10px] font-black rounded-full flex items-center justify-center shadow-lg shadow-orange-500/40">
+                        {unreadCount}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </nav>
+
+              <div className="mt-8 pt-8 border-t border-white/5 space-y-4">
+                 <button 
+                   onClick={() => {
+                     setShowChat(true);
+                     setIsMobileMenuOpen(false);
+                   }}
+                   className="w-full relative group"
+                 >
+                   <div className="absolute inset-0 bg-orange-500 rounded-3xl blur-xl opacity-20" />
+                   <div className="relative bg-zinc-900 border border-white/10 p-4 rounded-3xl flex items-center gap-4">
+                     <div className="w-10 h-10 rounded-2xl bg-orange-500/10 flex items-center justify-center">
+                       <MessageCircle className="w-5 h-5 text-orange-500" />
+                     </div>
+                     <div className="text-left">
+                       <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Coach Chat</p>
+                       <p className="text-sm font-bold text-white">Message Nik</p>
+                     </div>
+                   </div>
+                 </button>
+                 
+                 <div className="flex items-center gap-4 p-4 bg-zinc-900/50 rounded-3xl border border-white/5">
+                    <div className="w-10 h-10 rounded-full overflow-hidden border border-white/10">
+                      <img 
+                        src={getAvatarUrl(user.email || undefined, profile.gender, profile.photoURL)} 
+                        alt="Profile" 
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-black uppercase truncate">{profile.displayName}</p>
+                      <p className="text-[10px] text-zinc-500 font-bold uppercase">{profile.role}</p>
+                    </div>
+                 </div>
+              </div>
             </motion.div>
           </motion.div>
         )}

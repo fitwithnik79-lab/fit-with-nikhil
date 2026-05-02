@@ -118,7 +118,7 @@ export default function App() {
                 <Dumbbell className="w-16 h-16 text-orange-500" />
               </div>
             </div>
-            <h1 className="text-4xl font-bold text-white tracking-tight">Fit with Nik</h1>
+            <h1 className="text-4xl font-bold text-white tracking-tight">Fit With Nik</h1>
             <p className="text-zinc-400">Your premium fitness coaching experience.</p>
           </div>
           
