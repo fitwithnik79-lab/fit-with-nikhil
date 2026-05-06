@@ -1,7 +1,23 @@
 import { getMessaging, getToken, onMessage } from 'firebase/messaging';
-import { doc, updateDoc, arrayUnion } from 'firebase/firestore';
+import { doc, updateDoc, arrayUnion, collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from './firebase';
 import app from './firebase';
+
+export async function sendInAppNotification(clientId: string, title: string, message: string, type: 'message' | 'workout' | 'feedback' | 'general', relatedId?: string) {
+  try {
+    await addDoc(collection(db, 'notifications'), {
+      clientId,
+      title,
+      message,
+      type,
+      relatedId: relatedId || null,
+      isRead: false,
+      createdAt: serverTimestamp()
+    });
+  } catch (error) {
+    console.error('Error sending in-app notification:', error);
+  }
+}
 
 export async function triggerPushNotification(userId: string, title: string, body: string, data?: any) {
   try {

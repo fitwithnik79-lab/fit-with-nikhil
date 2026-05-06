@@ -3,7 +3,7 @@ import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp,
 import { db } from '../lib/firebase';
 import { Message, UserProfile, MessageTemplate } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
-import { triggerPushNotification } from '../lib/notifications';
+import { triggerPushNotification, sendInAppNotification } from '../lib/notifications';
 import { Send, MessageSquare, Bell, Sparkles, X, ChevronUp, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
@@ -98,13 +98,16 @@ export default function Chat({ currentUser, otherUser, onClose }: ChatProps) {
       if (currentUser.role === 'admin') {
         const title = `Message from Coach Nik`;
         triggerPushNotification(otherUser.uid, title, text, { type: 'chat', senderId: currentUser.uid });
+        sendInAppNotification(otherUser.uid, title, text, 'message');
       } else if (otherUser.role === 'admin') {
         const title = `New message from ${currentUser.uid === otherUser.uid ? 'Client' : 'Client'}`;
         triggerPushNotification(otherUser.uid, `Message from client`, text, { type: 'chat', senderId: currentUser.uid });
+        // NOTE: We don't usually send in-app notifications back to the coach this way, 
+        // as the coach dashboard has its own real-time listeners for messages.
       }
 
     } catch (error) {
-      console.error('Error sending message:', error);
+      handleFirestoreError(error, OperationType.CREATE, 'messages');
     }
   };
 

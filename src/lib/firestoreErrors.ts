@@ -48,8 +48,11 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     path
   }
   console.error('Firestore Error: ', JSON.stringify(errInfo));
-  // We don't necessarily want to crash the whole app with a throw here if it's just a listener failing,
-  // but the instructions say "throw a new error with a very specific JSON object".
-  // However, in a listener, throwing might just go to the global error handler.
+  
+  // Do not throw for list/snapshot operations as it triggers internal assertion failures in some SDK versions
+  if (operationType === OperationType.LIST || operationType === OperationType.GET) {
+    return;
+  }
+  
   throw new Error(JSON.stringify(errInfo));
 }

@@ -42,7 +42,7 @@ export default function LandingPage({ user, profile, onComplete }: LandingPagePr
       }).catch(err => handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}`));
       onComplete();
     } catch (error) {
-      console.error('Error completing onboarding:', error);
+      handleFirestoreError(error, OperationType.UPDATE, `users/${user.uid}`);
     } finally {
       setSubmitting(false);
     }

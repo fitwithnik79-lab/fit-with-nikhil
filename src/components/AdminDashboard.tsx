@@ -6,11 +6,11 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { UserProfile, Workout, Exercise, Feedback, WorkoutTemplate, BodyMetrics, Message, Habit, HabitLog, Goal, MessageTemplate } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { searchExerciseVideos, parseWorkoutFile, analyzeNutritionFile } from '../lib/gemini';
-import { triggerPushNotification } from '../lib/notifications';
+import { triggerPushNotification, sendInAppNotification } from '../lib/notifications';
 import { SAMPLE_PROGRAMS, WEEKLY_PROGRAMS, WORKOUT_TEMPLATES } from '../constants/workoutTemplates';
 import { NUTRITION_TEMPLATES } from '../constants/nutritionTemplates';
 import { NutritionPlan, NutritionTemplate } from '../types';
-import { Plus, Users, Calendar, CheckCircle, ExternalLink, ChevronRight, Search, Activity, Clock, MessageSquare, Trash2, Edit2, ChevronDown, ChevronUp, Save, Download, Layout, Copy, ChevronLeft, Play, Sparkles, Loader2, Droplets, Footprints, Flame, Scale, LayoutDashboard, X, Bell, Send, BookOpen, Layers, Upload, Youtube, Utensils, Shield, Zap, ArrowRight, Check, Target, RefreshCcw, Circle, Settings, Camera, TrendingUp, Calculator } from 'lucide-react';
+import { Plus, Users, Calendar, CheckCircle, ExternalLink, ChevronRight, Search, Activity, Clock, MessageSquare, Trash2, Edit2, ChevronDown, ChevronUp, Save, Download, Layout, Copy, ChevronLeft, Play, Sparkles, Loader2, Droplets, Footprints, Flame, Scale, LayoutDashboard, X, Bell, Send, BookOpen, Layers, Upload, Youtube, Utensils, Shield, Zap, ArrowRight, Check, Target, RefreshCcw, Circle, Settings, Camera, TrendingUp, Calculator, Dumbbell, FileSearch } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, playNotificationSound, getAvatarUrl } from '../lib/utils';
 import Chat from './Chat';
@@ -44,6 +44,7 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
   const [clients, setClients] = useState<UserProfile[]>([]);
   const [selectedClient, setSelectedClient] = useState<UserProfile | null>(null);
   const [feedbacks, setFeedbacks] = useState<Feedback[]>([]);
+  const [selectedFeedbackForDetails, setSelectedFeedbackForDetails] = useState<Feedback | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'dash' | 'clients' | 'tracker' | 'calendar' | 'broadcast' | 'templates' | 'settings'>('dash');
@@ -200,12 +201,19 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
               type: 'motivation',
               isRead: false
             });
+
+            await sendInAppNotification(
+              item.client.uid,
+              'Welcome Nudge',
+              'Coach Nik sent you a message to help you get started!',
+              'message'
+            );
             
             await updateDoc(doc(db, 'users', item.client.uid), {
               welcomeNudgeSent: true
-            });
+            }).catch(e => handleFirestoreError(e, OperationType.UPDATE, `users/${item.client.uid}`));
           } catch (e) {
-            console.error('Error sending auto-nudge:', e);
+            handleFirestoreError(e, OperationType.CREATE, 'messages');
           }
         }
       }
@@ -801,7 +809,14 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
                               </div>
                             </div>
 
-                            <div className="flex items-center gap-3">
+                            <div className="flex flex-wrap items-center gap-3">
+                               <button 
+                                 onClick={() => setSelectedFeedbackForDetails(feedback)}
+                                 className="px-6 py-2.5 bg-zinc-800 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:border-orange-500/50 border border-transparent transition-all flex items-center gap-2"
+                               >
+                                 <FileSearch className="w-3.5 h-3.5 text-orange-500" />
+                                 Track Performance
+                               </button>
                                <button 
                                  onClick={async () => {
                                    if (feedback.id) {
@@ -1264,16 +1279,25 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
                                 <Clock className="w-3 h-3" />
                                 {fb.createdAt?.toDate ? format(fb.createdAt.toDate(), 'MMM d, h:mm a') : 'Live Now'}
                               </div>
-                              <button 
-                                onClick={() => {
-                                  setSelectedClient(client || null);
-                                  setActiveTab('clients');
-                                  setClientViewTab('chat');
-                                }}
-                                className="px-6 py-2 bg-white text-black rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-orange-500 hover:text-white transition-all shadow-xl shadow-black/50"
-                              >
-                                Brief Athlete
-                              </button>
+                              <div className="flex gap-2">
+                                <button 
+                                  onClick={() => setSelectedFeedbackForDetails(fb)}
+                                  className="px-6 py-2 bg-zinc-800 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:border-orange-500/50 border border-transparent transition-all flex items-center gap-2"
+                                >
+                                  <FileSearch className="w-3.5 h-3.5 text-orange-500" />
+                                  Performance
+                                </button>
+                                <button 
+                                  onClick={() => {
+                                    setSelectedClient(client || null);
+                                    setActiveTab('clients');
+                                    setClientViewTab('chat');
+                                  }}
+                                  className="px-6 py-2 bg-white text-black rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-orange-500 hover:text-white transition-all shadow-xl shadow-black/50"
+                                >
+                                  Brief Athlete
+                                </button>
+                              </div>
                             </div>
                           </div>
                         );
@@ -1364,6 +1388,151 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
           </div>
         )}
       </AnimatePresence>
+
+      <AnimatePresence>
+        {selectedFeedbackForDetails && (
+          <FeedbackDetailModal 
+            feedback={selectedFeedbackForDetails} 
+            workout={allWorkouts.find(w => w.id === selectedFeedbackForDetails.workoutId)}
+            onClose={() => setSelectedFeedbackForDetails(null)} 
+          />
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function FeedbackDetailModal({ feedback, workout, onClose }: { feedback: Feedback, workout: Workout | undefined, onClose: () => void }) {
+  if (!feedback) return null;
+
+  return (
+    <div className="fixed inset-0 z-[250] flex items-center justify-center p-4">
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        onClick={onClose}
+        className="absolute inset-0 bg-black/90 backdrop-blur-md"
+      />
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 20 }}
+        className="relative w-full max-w-4xl bg-zinc-950 border border-white/10 rounded-[40px] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+      >
+        <div className="p-8 border-b border-white/5 bg-zinc-900/50 flex items-center justify-between">
+          <div className="space-y-1">
+            <div className="flex items-center gap-3">
+              <div className="p-3 bg-orange-500 rounded-2xl text-white">
+                <CheckCircle className="w-5 h-5" />
+              </div>
+              <h3 className="text-2xl font-black uppercase tracking-tighter">Workout Results</h3>
+            </div>
+            <p className="text-zinc-500 text-xs font-black uppercase tracking-widest ml-14">
+              Week {feedback.weekNumber} • Day {feedback.dayNumber} • {feedback.createdAt?.toDate ? format(feedback.createdAt.toDate(), 'MMMM d, yyyy') : 'Recent'}
+            </p>
+          </div>
+          <button 
+            onClick={onClose}
+            className="p-4 bg-zinc-900 border border-white/5 rounded-2xl text-zinc-500 hover:text-white transition-colors"
+          >
+            <X className="w-6 h-6" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto custom-scrollbar p-8 space-y-8">
+          {/* General Notes */}
+          {feedback.clientNote && (
+            <div className="bg-orange-500/5 border border-orange-500/20 rounded-[32px] p-8">
+              <h4 className="text-[10px] font-black uppercase tracking-widest text-orange-500 mb-4 flex items-center gap-2">
+                <MessageSquare className="w-3 h-3" />
+                Athlete's Overall Assessment
+              </h4>
+              <p className="text-zinc-300 italic font-serif text-lg leading-relaxed">
+                "{feedback.clientNote}"
+              </p>
+            </div>
+          )}
+
+          {/* Exercise Breakdown */}
+          <div className="space-y-4">
+            <h4 className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-6 flex items-center gap-2">
+              <Dumbbell className="w-3 h-3" />
+              Exercise Specific Performance
+            </h4>
+            
+            {!workout ? (
+              <div className="p-12 text-center bg-zinc-900/30 border border-dashed border-zinc-800 rounded-[32px]">
+                <Activity className="w-8 h-8 text-zinc-800 mx-auto mb-4" />
+                <p className="text-zinc-600 text-sm italic">Workout details could not be retrieved. The source document may have been removed.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-4">
+                {workout.exercises.map((ex, idx) => (
+                  <div 
+                    key={idx}
+                    className={cn(
+                      "group p-6 rounded-[32px] border transition-all flex flex-col md:flex-row md:items-center justify-between gap-6",
+                      ex.isCompleted 
+                        ? "bg-zinc-900/50 border-white/5 hover:border-green-500/30" 
+                        : "bg-zinc-900/20 border-white/5 opacity-60 hover:opacity-100"
+                    )}
+                  >
+                    <div className="flex items-center gap-6">
+                      <div className={cn(
+                        "w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 border",
+                        ex.isCompleted ? "bg-green-500/10 border-green-500/20 text-green-500" : "bg-zinc-800 border-white/5 text-zinc-500"
+                      )}>
+                        {ex.isCompleted ? <Check className="w-6 h-6" /> : <Circle className="w-6 h-6" />}
+                      </div>
+                      <div>
+                        <h5 className="font-black text-lg text-white group-hover:text-orange-500 transition-colors uppercase tracking-tight">{ex.name}</h5>
+                        <div className="flex items-center gap-3 mt-1 text-[10px] font-black uppercase tracking-widest text-zinc-500">
+                          <span>Target: {ex.sets}x{ex.reps} @ {ex.weight || 'Bodyweight'}</span>
+                          {ex.rest && <span>• Rest: {ex.rest}</span>}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-8 bg-zinc-950/80 px-8 py-4 rounded-[24px] border border-white/5">
+                      <div className="text-center">
+                        <p className="text-lg font-black text-white italic">{ex.completedSets || 0}</p>
+                        <p className="text-[9px] font-black uppercase text-zinc-600 tracking-tighter">Sets</p>
+                      </div>
+                      <div className="w-px h-8 bg-white/5" />
+                      <div className="text-center">
+                        <p className="text-lg font-black text-white italic">{ex.completedReps || '-'}</p>
+                        <p className="text-[9px] font-black uppercase text-zinc-600 tracking-tighter">Reps</p>
+                      </div>
+                      <div className="w-px h-8 bg-white/5" />
+                      <div className="text-center">
+                        <p className="text-lg font-black text-orange-500 italic">{ex.completedWeight || '-'}</p>
+                        <p className="text-[9px] font-black uppercase text-zinc-600 tracking-tighter">Load</p>
+                      </div>
+                    </div>
+
+                    {ex.clientNote && (
+                      <div className="md:max-w-xs text-right hidden xl:block">
+                        <p className="text-[10px] font-black uppercase text-zinc-600 mb-1">Exercise Note</p>
+                        <p className="text-xs text-zinc-400 italic">"{ex.clientNote}"</p>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="p-8 bg-zinc-900/50 border-t border-white/5 flex justify-end">
+          <button 
+            onClick={onClose}
+            className="px-10 py-4 bg-orange-500 text-white rounded-2xl font-black text-[11px] uppercase tracking-widest hover:bg-orange-600 transition-all shadow-xl shadow-orange-500/20"
+          >
+            Acknowledge Performance
+          </button>
+        </div>
+      </motion.div>
     </div>
   );
 }
@@ -1511,7 +1680,7 @@ function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToa
     if (!selectedTemplate || !selectedClient || !assignDate) return;
     setAssigning(true);
     try {
-      await addDoc(collection(db, 'workouts'), {
+      const workoutRef = await addDoc(collection(db, 'workouts'), {
         clientId: selectedClient.uid,
         weekNumber: 1,
         dayNumber: 1,
@@ -1519,6 +1688,15 @@ function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToa
         scheduledDate: assignDate,
         createdAt: serverTimestamp()
       });
+
+      await sendInAppNotification(
+        selectedClient.uid,
+        'New Workout Assigned',
+        `Coach Nik assigned the "${selectedTemplate.name}" workout to your schedule.`,
+        'workout',
+        workoutRef.id
+      );
+
       showToast(`Template "${selectedTemplate.name}" assigned to ${selectedClient.displayName}`);
       setShowAssignModal(false);
       setSelectedTemplate(null);
@@ -1562,6 +1740,14 @@ function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToa
       }
 
       await Promise.all(batch);
+
+      await sendInAppNotification(
+        selectedClient.uid,
+        'New Program Assigned',
+        `Coach Nik assigned the "${selectedProgram.name}" program to your schedule.`,
+        'workout'
+      );
+
       showToast(`Program "${selectedProgram.name}" assigned to ${selectedClient.displayName}`);
       setShowProgramModal(false);
       setSelectedProgram(null);
@@ -1646,7 +1832,16 @@ function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToa
         assignedFromTemplateId: selectedNutritionTemplate.id
       };
 
-      await addDoc(collection(db, 'nutritionPlans'), planData);
+      const nutritionRef = await addDoc(collection(db, 'nutritionPlans'), planData);
+
+      await sendInAppNotification(
+        selectedClient.uid,
+        'Nutrition Protocol Updated',
+        `Coach Nik assigned the "${selectedNutritionTemplate.name}" nutrition protocol to you.`,
+        'general',
+        nutritionRef.id
+      );
+
       showToast(`Nutrition Protocol "${selectedNutritionTemplate.name}" assigned to ${selectedClient.displayName}`);
       setShowNutritionModal(false);
       setSelectedNutritionTemplate(null);
@@ -2864,6 +3059,198 @@ function RemindersView({ clients, showToast, currentUser }: { clients: UserProfi
   );
 }
 
+function DuplicateWorkoutModal({ workout, clients, onClose, onDuplicate, showToast }: { 
+  workout: Workout, 
+  clients: UserProfile[], 
+  onClose: () => void, 
+  onDuplicate: (workout: Workout) => void,
+  showToast: (m: string, t?: 'success' | 'error') => void
+}) {
+  const [selectedClient, setSelectedClient] = useState<UserProfile | null>(null);
+  const [targetDate, setTargetDate] = useState<string>(workout.scheduledDate || '');
+  const [duplicating, setDuplicating] = useState(false);
+  const [search, setSearch] = useState('');
+
+  const filteredClients = clients.filter(c => 
+    c.displayName?.toLowerCase().includes(search.toLowerCase()) || 
+    c.email.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const handleDuplicate = async () => {
+    if (!selectedClient) return;
+    setDuplicating(true);
+    try {
+      const newWorkout = {
+        ...workout,
+        clientId: selectedClient.uid,
+        scheduledDate: targetDate,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        // Reset completion status for duplication
+        isCompleted: false,
+        completionStatus: false,
+      };
+      delete (newWorkout as any).id; // Ensure we don't copy the ID
+      
+      // Also reset completion for nested exercises if they exist
+      if (newWorkout.exercises) {
+        newWorkout.exercises = newWorkout.exercises.map(ex => ({
+          ...ex,
+          isCompleted: false,
+          completedSets: 0,
+          completedReps: '',
+          completedWeight: '',
+          clientNote: ''
+        }));
+      }
+
+      const docRef = await addDoc(collection(db, 'workouts'), newWorkout);
+      
+      // Notify the client
+      const q = query(collection(db, 'users'), where('role', '==', 'admin'), limit(1));
+      const snap = await getDocs(q);
+      const adminUid = snap.empty ? 'admin' : snap.docs[0].id;
+
+      await addDoc(collection(db, 'messages'), {
+        senderId: adminUid,
+        receiverId: selectedClient.uid,
+        text: `Hey! I've assigned a new activity for you: Week ${workout.weekNumber}, Day ${workout.dayNumber} on ${targetDate}. Let's crush it! 🚀`,
+        isRead: false,
+        type: 'motivation',
+        createdAt: serverTimestamp()
+      });
+
+      triggerPushNotification(
+        selectedClient.uid, 
+        'New Workout Assigned!', 
+        `Coach Nik assigned a new workout for you on ${targetDate}.`,
+        { type: 'workout', week: workout.weekNumber, day: workout.dayNumber }
+      );
+
+      onDuplicate({ id: docRef.id, ...newWorkout } as Workout);
+    } catch (error) {
+      console.error('Error duplicating workout:', error);
+      showToast('Failed to duplicate workout', 'error');
+    } finally {
+      setDuplicating(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        onClick={onClose}
+        className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+      />
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.95 }}
+        className="relative w-full max-w-lg bg-zinc-900 border border-zinc-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+      >
+        <div className="p-6 border-b border-zinc-800 flex items-center justify-between">
+          <div>
+            <h3 className="font-bold text-xl uppercase italic tracking-tight flex items-center gap-2">
+              <Copy className="w-5 h-5 text-orange-500" />
+              Duplicate Workout
+            </h3>
+            <p className="text-xs text-zinc-500 font-medium">Replicating Cycle Week {workout.weekNumber} Day {workout.dayNumber}</p>
+          </div>
+          <button onClick={onClose} className="text-zinc-500 hover:text-white">
+            <X className="w-6 h-6" />
+          </button>
+        </div>
+
+        <div className="p-6 overflow-y-auto custom-scrollbar space-y-6">
+          <div className="space-y-4">
+            <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Target Date</label>
+            <input 
+              type="date" 
+              value={targetDate} 
+              onChange={(e) => setTargetDate(e.target.value)}
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl p-4 text-white focus:border-orange-500 outline-none transition-all"
+            />
+          </div>
+
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Select Athlete</label>
+              {selectedClient && (
+                <button 
+                  onClick={() => setSelectedClient(null)}
+                  className="text-[10px] font-black uppercase text-orange-500 hover:underline"
+                >
+                  Clear Selection
+                </button>
+              )}
+            </div>
+            
+            {!selectedClient ? (
+              <div className="space-y-4">
+                <div className="relative">
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-600" />
+                  <input 
+                    type="text" 
+                    placeholder="Search athletes..." 
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl pl-12 pr-4 py-3 text-sm outline-none focus:border-orange-500/50"
+                  />
+                </div>
+                <div className="grid grid-cols-1 gap-2 max-h-[300px] overflow-y-auto custom-scrollbar">
+                  {filteredClients.map(client => (
+                    <button
+                      key={client.uid}
+                      onClick={() => setSelectedClient(client)}
+                      className="flex items-center gap-3 p-3 bg-zinc-950 border border-zinc-800 rounded-xl hover:border-orange-500/30 transition-all group"
+                    >
+                      <div className="w-8 h-8 rounded-full overflow-hidden border border-white/5">
+                        <img src={getAvatarUrl(client.email, client.gender, client.photoURL)} className="w-full h-full object-cover" />
+                      </div>
+                      <span className="font-bold text-sm text-zinc-300 group-hover:text-white transition-colors">{client.displayName}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-4 p-4 bg-orange-500/5 border border-orange-500/20 rounded-2xl">
+                <div className="w-12 h-12 rounded-2xl overflow-hidden border border-orange-500/50">
+                  <img src={getAvatarUrl(selectedClient.email, selectedClient.gender, selectedClient.photoURL)} className="w-full h-full object-cover" />
+                </div>
+                <div>
+                  <p className="font-black text-white uppercase">{selectedClient.displayName}</p>
+                  <p className="text-[10px] text-zinc-500 uppercase font-bold">{selectedClient.email}</p>
+                </div>
+                <div className="ml-auto p-2 bg-orange-500 text-white rounded-xl">
+                  <Check className="w-4 h-4" />
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="p-6 border-t border-zinc-800">
+          <button
+            onClick={handleDuplicate}
+            disabled={!selectedClient || !targetDate || duplicating}
+            className="w-full bg-orange-500 text-white font-black py-4 rounded-2xl hover:bg-orange-600 disabled:opacity-50 transition-all shadow-xl shadow-orange-500/20 flex items-center justify-center gap-3"
+          >
+            {duplicating ? (
+              <Loader2 className="w-5 h-5 animate-spin" />
+            ) : (
+              <Copy className="w-5 h-5" />
+            )}
+            <span>{duplicating ? 'Replicating...' : 'Duplicate Workout'}</span>
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 function CalendarView({ clients, showToast, confirmAction }: { clients: UserProfile[], showToast: (m: string, t?: 'success' | 'error') => void, confirmAction: (t: string, m: string, c: () => void) => void }) {
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [workouts, setWorkouts] = useState<Workout[]>([]);
@@ -2871,6 +3258,7 @@ function CalendarView({ clients, showToast, confirmAction }: { clients: UserProf
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [selectedClientForSchedule, setSelectedClientForSchedule] = useState<UserProfile | null>(null);
   const [editingWorkout, setEditingWorkout] = useState<Workout | null>(null);
+  const [duplicatingWorkout, setDuplicatingWorkout] = useState<Workout | null>(null);
 
   useEffect(() => {
     const q = query(collection(db, 'workouts'), where('scheduledDate', '!=', null));
@@ -2992,27 +3380,39 @@ function CalendarView({ clients, showToast, confirmAction }: { clients: UserProf
                       <span className="text-orange-500 mr-1">{client?.displayName?.split(' ')[0] || 'Client'}</span>
                       W{w.weekNumber}D{w.dayNumber}
                       
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          confirmAction(
-                            'Delete Workout',
-                            `Are you sure you want to delete the workout for ${client?.displayName}?`,
-                            async () => {
-                              try {
-                                await deleteDoc(doc(db, 'workouts', w.id!));
-                                showToast('Workout deleted successfully');
-                              } catch (err) {
-                                handleFirestoreError(err, OperationType.DELETE, `workouts/${w.id}`);
-                                showToast('Failed to delete workout', 'error');
+                      <div className="flex gap-1 absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover/item:opacity-100 bg-zinc-900 rounded p-0.5">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDuplicatingWorkout(w);
+                          }}
+                          className="p-0.5 hover:text-orange-500 transition-all"
+                          title="Duplicate"
+                        >
+                          <Copy className="w-3 h-3" />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            confirmAction(
+                              'Delete Workout',
+                              `Are you sure you want to delete the workout for ${client?.displayName}?`,
+                              async () => {
+                                try {
+                                  await deleteDoc(doc(db, 'workouts', w.id!));
+                                  showToast('Workout deleted successfully');
+                                } catch (err) {
+                                  handleFirestoreError(err, OperationType.DELETE, `workouts/${w.id}`);
+                                  showToast('Failed to delete workout', 'error');
+                                }
                               }
-                            }
-                          );
-                        }}
-                        className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover/item:opacity-100 p-0.5 bg-zinc-900 rounded hover:text-red-500 transition-all"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
+                            );
+                          }}
+                          className="p-0.5 hover:text-red-500 transition-all"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
                     </div>
                   );
                 })}
@@ -3021,6 +3421,21 @@ function CalendarView({ clients, showToast, confirmAction }: { clients: UserProf
           );
         })}
       </div>
+
+      <AnimatePresence>
+        {duplicatingWorkout && (
+          <DuplicateWorkoutModal
+            workout={duplicatingWorkout}
+            clients={clients}
+            onClose={() => setDuplicatingWorkout(null)}
+            onDuplicate={(newWorkout) => {
+              setDuplicatingWorkout(null);
+              showToast('Workout replicated successfully');
+            }}
+            showToast={showToast}
+          />
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {showScheduleModal && (

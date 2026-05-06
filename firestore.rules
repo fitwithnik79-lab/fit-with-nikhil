@@ -1,97 +1,96 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Global Safety Net
+    // 0. Global Safety Net - Default Deny
     match /{document=**} {
       allow read, write: if false;
     }
 
     // ===============================================================
-    // Assumed Data Model
-    // ===============================================================
-    // ... (rest of the comments) ...
-    //
-    // Collection: users
-    // Document ID: {uid}
-    // Fields:
-    //   - uid: string (required)
-    //   - email: string (required)
-    //   - role: string (required, 'admin' or 'client')
-    //   - displayName: string
-    //   - programGoals: string
-    //   - programDetails: string
-    //   - height: string
-    //   - weight: string
-    //   - chosenProgram: string
-    //   - onboardingComplete: bool
-    //   - createdAt: timestamp
-    //
-    // Collection: metrics
-    // Document ID: {metricId}
-    // Fields:
-    //   - clientId: string (required)
-    //   - date: string (required, YYYY-MM-DD)
-    //   - waterIntake: int (required)
-    //   - stepCount: int (required)
-    //   - calories: int (required)
-    //   - weight: number
-    //   - createdAt: timestamp
-    //
-    // Collection: workouts
-    // Document ID: {workoutId}
-    // Fields:
-    //   - clientId: string (required)
-    //   - weekNumber: int (required)
-    //   - dayNumber: int (required)
-    //   - exercises: list (required)
-    //
-    // Collection: feedback
-    // Document ID: {feedbackId}
-    // Fields:
-    //   - clientId: string (required)
-    //   - workoutId: string (required)
-    //   - completionStatus: bool (required)
-    //   - clientNote: string
-    //   - motivationalMessage: string
-    //   - createdAt: timestamp
-    //
-    // ===============================================================
-
-    // ===============================================================
-    // Helper Functions
+    // Global Helpers
     // ===============================================================
     
-    function isAuthenticated() {
+    function isSignedIn() {
       return request.auth != null;
     }
 
-    function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
+    function isEmailVerified() {
+      return isSignedIn() && (request.auth.token.email_verified == true || request.auth.token.firebase.sign_in_provider == 'google.com');
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
     function isCoach() {
-      return isAuthenticated() && request.auth.token.email == "fitwithnik79@gmail.com";
+      return isSignedIn() && 
+             'email' in request.auth.token &&
+             request.auth.token.email.lower() == "fitwithnik79@gmail.com";
     }
 
     function isAdmin() {
-      return isCoach() || (isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin');
+      // Direct email check is most efficient, but verify the user document as a secondary source of truth.
+      return isCoach() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin');
     }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // ===============================================================
+    // Entity Validations (The Blueprints)
+    // ===============================================================
 
     function isValidUser(data) {
       return data.keys().hasAll(['uid', 'email', 'role']) &&
-             data.uid is string &&
-             data.email is string &&
+             data.uid is string && data.uid.size() <= 128 &&
+             data.email is string && data.email.size() <= 256 &&
              data.role in ['admin', 'client'] &&
-             (!('displayName' in data) || data.displayName is string) &&
-             (!('programGoals' in data) || data.programGoals is string) &&
-             (!('programDetails' in data) || data.programDetails is string) &&
-             (!('height' in data) || data.height is string) &&
-             (!('weight' in data) || data.weight is string) &&
-             (!('chosenProgram' in data) || data.chosenProgram is string) &&
-             (!('onboardingComplete' in data) || data.onboardingComplete is bool) &&
-             (!('welcomeNudgeSent' in data) || data.welcomeNudgeSent is bool) &&
-             (!('fcmTokens' in data) || data.fcmTokens is list) &&
-             (!('googleFitTokens' in data) || data.googleFitTokens is map);
+             (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 100)) &&
+             (!('fcmTokens' in data) || data.fcmTokens is list);
+    }
+
+    function isValidNutritionPlan(data) {
+      return data.keys().hasAll(['clientId', 'name', 'targetMacros', 'guidelines', 'isActive']) &&
+             data.clientId is string &&
+             data.name is string && data.name.size() <= 200 &&
+             data.targetMacros is map &&
+             data.targetMacros.calories is int &&
+             data.guidelines is list &&
+             data.isActive is bool &&
+             (!('plannedMeals' in data) || data.plannedMeals is list) &&
+             (!('createdAt' in data) || data.createdAt is timestamp);
+    }
+
+    function isValidNutritionTemplate(data) {
+      return data.keys().hasAll(['name', 'targetMacros', 'guidelines']) &&
+             data.name is string && data.name.size() <= 200 &&
+             data.targetMacros is map &&
+             data.guidelines is list;
+    }
+
+    function isValidWorkout(data) {
+      return data.keys().hasAll(['clientId', 'weekNumber', 'dayNumber', 'exercises']) &&
+             data.clientId is string &&
+             data.weekNumber is int &&
+             data.dayNumber is int &&
+             data.exercises is list &&
+             (!('createdAt' in data) || data.createdAt is timestamp);
+    }
+
+    function isValidFeedback(data) {
+      return data.keys().hasAll(['clientId', 'workoutId', 'completionStatus']) &&
+             data.clientId is string &&
+             data.workoutId is string &&
+             data.completionStatus is bool &&
+             (!('clientNote' in data) || (data.clientNote is string && data.clientNote.size() <= 2000)) &&
+             (!('motivationalMessage' in data) || (data.motivationalMessage is string && data.motivationalMessage.size() <= 2000)) &&
+             (!('isRead' in data) || data.isRead is bool) &&
+             (!('createdAt' in data) || data.createdAt is timestamp);
     }
 
     function isValidMetric(data) {
@@ -100,227 +99,144 @@ service cloud.firestore {
              data.date is string &&
              data.waterIntake is int &&
              data.stepCount is int &&
-             data.calories is int &&
-             (!('weight' in data) || data.weight is number);
+             data.calories is int;
     }
 
-    function isValidWorkout(data) {
-      return data.keys().hasAll(['clientId', 'weekNumber', 'dayNumber', 'exercises']) &&
+    function isValidNotification(data) {
+      return data.keys().hasAll(['clientId', 'title', 'message', 'type', 'isRead', 'createdAt']) &&
              data.clientId is string &&
-             data.weekNumber is int &&
-             data.dayNumber is int &&
-             data.exercises is list;
-    }
-
-    function isValidFeedback(data) {
-      return data.keys().hasAll(['clientId', 'workoutId', 'completionStatus']) &&
-             data.clientId is string &&
-             data.workoutId is string &&
-             data.completionStatus is bool;
-    }
-
-    function isValidMessage(data) {
-      return data.keys().hasAll(['senderId', 'receiverId', 'text', 'type']) &&
-             data.senderId is string &&
-             data.receiverId is string &&
-             data.text is string &&
-             data.text.size() > 0 &&
-             data.text.size() < 5000 &&
-             data.type in ['chat', 'motivation', 'reminder'] &&
-             (!('isRead' in data) || data.isRead is bool) &&
-             (!('createdAt' in data) || data.createdAt is timestamp);
-    }
-
-    function isValidNutritionPlan(data) {
-      return data.keys().hasAll(['clientId', 'name', 'targetMacros', 'guidelines', 'isActive']) &&
-             data.clientId is string &&
-             data.name is string &&
-             data.targetMacros is map &&
-             data.targetMacros.keys().hasAll(['calories', 'protein', 'carbs', 'fats']) &&
-             data.guidelines is list &&
-             data.isActive is bool &&
-             (!('description' in data) || data.description is string) &&
-             (!('plannedMeals' in data) || data.plannedMeals is list) &&
-             (!('recommendedFoods' in data) || data.recommendedFoods is list) &&
-             (!('restrictedFoods' in data) || data.restrictedFoods is list) &&
-             (!('createdAt' in data) || data.createdAt is timestamp) &&
-             (!('updatedAt' in data) || data.updatedAt is timestamp) &&
-             (!('assignedFromTemplateId' in data) || data.assignedFromTemplateId is string);
-    }
-
-    function isValidHabit(data) {
-      return data.keys().hasAll(['clientId', 'title', 'frequency', 'active']) &&
-             data.clientId is string &&
-             data.title is string &&
-             data.frequency in ['daily', 'weekly'] &&
-             data.active is bool;
-    }
-
-    function isValidHabitLog(data) {
-      return data.keys().hasAll(['habitId', 'clientId', 'date', 'completed']) &&
-             data.habitId is string &&
-             data.clientId is string &&
-             data.date is string &&
-             data.completed is bool;
-    }
-
-    function isValidGoal(data) {
-      return data.keys().hasAll(['clientId', 'title', 'status']) &&
-             data.clientId is string &&
-             data.title is string &&
-             data.status in ['in-progress', 'completed', 'deferred'];
-    }
-
-    function isValidReminder(data) {
-      return data.keys().hasAll(['clientId', 'title', 'time', 'active', 'type']) &&
-             data.clientId is string &&
-             data.title is string &&
-             data.time is string &&
-             data.time.matches('^([01]?[0-9]|2[0-3]):[0-5][0-9]$') &&
-             data.active is bool &&
-             data.type in ['habit', 'goal', 'task'] &&
-             (!('description' in data) || data.description is string) &&
-             (!('days' in data) || data.days is list) &&
-             (!('habitId' in data) || data.habitId is string || data.habitId == null) &&
-             (!('goalId' in data) || data.goalId is string || data.goalId == null) &&
-             (!('lastNotified' in data) || data.lastNotified is string);
-    }
-
-    function isValidMessageTemplate(data) {
-      return data.keys().hasAll(['title', 'content', 'category']) &&
-             data.title is string &&
-             data.content is string &&
-             data.category in ['motivation', 'reminder', 'general'];
+             data.title is string && data.title.size() <= 200 &&
+             data.message is string && data.message.size() <= 2000 &&
+             data.type in ['message', 'workout', 'feedback', 'general'] &&
+             data.isRead is bool &&
+             data.createdAt is timestamp;
     }
 
     // ===============================================================
-    // Rules
+    // Collection Rules
     // ===============================================================
 
     match /users/{userId} {
-      allow read: if isAuthenticated() && (isOwner(userId) || isCoach() || isAdmin() || resource.data.role == 'admin');
-      allow create: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == 'client' || isCoach());
-      allow update: if isAuthenticated() && (
-        (isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.role == resource.data.role) || 
-        isAdmin()
-      );
-    }
-
-    match /workouts/{workoutId} {
-      allow read: if isAuthenticated() && (request.auth.uid == resource.data.clientId || isAdmin());
-      allow update: if (isAuthenticated() && request.auth.uid == resource.data.clientId && isValidWorkout(request.resource.data)) || isAdmin();
-      allow create: if isAdmin() && isValidWorkout(request.resource.data);
-      allow delete: if isAdmin();
-    }
-
-    match /feedback/{feedbackId} {
-      allow read: if isAuthenticated() && (request.auth.uid == resource.data.clientId || isCoach() || isAdmin());
-      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.clientId && isValidFeedback(request.resource.data);
-      allow update: if isCoach() || isAdmin();
-    }
-
-    match /templates/{templateId} {
-      allow read: if isAdmin();
-      allow write: if isAdmin();
-    }
-
-    match /messages/{messageId} {
-      allow read: if isAuthenticated() && (
-        request.auth.uid == resource.data.senderId || 
-        request.auth.uid == resource.data.receiverId || 
-        isAdmin()
-      );
-      allow create: if isAuthenticated() && (
-        request.auth.uid == request.resource.data.senderId || 
-        isAdmin()
-      ) && isValidMessage(request.resource.data);
-      allow update: if isAdmin() || (isAuthenticated() && request.auth.uid == resource.data.receiverId);
-    }
-
-    match /metrics/{metricId} {
-      allow read: if isAuthenticated() && (request.auth.uid == resource.data.clientId || isCoach() || isAdmin());
-      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.clientId && isValidMetric(request.resource.data);
-      allow update: if isAuthenticated() && request.auth.uid == resource.data.clientId && isValidMetric(request.resource.data);
-    }
-
-    match /daily_steps/{stepDocId} {
-      allow read: if isAuthenticated() && (request.auth.uid == resource.data.clientId || isCoach() || isAdmin());
-      allow write: if isCoach() || isAdmin(); // Only allow server-side sync to write for now
-    }
-
-    match /meals/{mealId} {
-      allow read: if isAuthenticated() && (request.auth.uid == resource.data.clientId || isAdmin());
-      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.clientId;
-      allow update, delete: if isAuthenticated() && request.auth.uid == resource.data.clientId;
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow create: if isSignedIn() && request.auth.uid == userId && isValidUser(incoming());
+      allow update: if isSignedIn() && (isAdmin() || (request.auth.uid == userId && incoming().role == existing().role));
     }
 
     match /nutritionPlans/{planId} {
-      allow read: if isAuthenticated() && (request.auth.uid == resource.data.clientId || isAdmin());
-      allow create, update: if isAdmin() && isValidNutritionPlan(request.resource.data);
+      allow read: if isSignedIn() && (resource.data.clientId == request.auth.uid || isAdmin());
+      allow create: if isAdmin() && isValidNutritionPlan(incoming());
+      allow update: if (isAdmin() && isValidNutritionPlan(incoming())) || 
+                     (isSignedIn() && 
+                      resource.data.clientId == request.auth.uid && 
+                      incoming().diff(existing()).affectedKeys().hasOnly(['plannedMeals']) &&
+                      isValidNutritionPlan(incoming()));
       allow delete: if isAdmin();
-    }
-
-    match /habits/{habitId} {
-      allow read: if isAuthenticated() && (request.auth.uid == resource.data.clientId || isCoach() || isAdmin());
-      allow create: if isAuthenticated() && (request.auth.uid == request.resource.data.clientId || isCoach() || isAdmin()) && isValidHabit(request.resource.data);
-      allow update: if isAuthenticated() && (request.auth.uid == resource.data.clientId || isCoach() || isAdmin()) && isValidHabit(request.resource.data);
-      allow delete: if isAuthenticated() && (request.auth.uid == resource.data.clientId || isCoach() || isAdmin());
-    }
-
-    match /habitLogs/{logId} {
-      allow read: if isAuthenticated() && (request.auth.uid == resource.data.clientId || isCoach() || isAdmin());
-      allow write: if isAuthenticated() && (request.auth.uid == request.resource.data.clientId || isCoach() || isAdmin()) && isValidHabitLog(request.resource.data);
-    }
-
-    match /goals/{goalId} {
-      allow read: if isAuthenticated() && (request.auth.uid == resource.data.clientId || isCoach() || isAdmin());
-      allow create: if isAuthenticated() && (request.auth.uid == request.resource.data.clientId || isCoach() || isAdmin()) && isValidGoal(request.resource.data);
-      allow update: if isAuthenticated() && (request.auth.uid == resource.data.clientId || isCoach() || isAdmin()) && isValidGoal(request.resource.data);
-      allow delete: if isAuthenticated() && (request.auth.uid == resource.data.clientId || isCoach() || isAdmin());
-    }
-
-    match /messageTemplates/{templateId} {
-      allow read: if isAdmin();
-      allow write: if isAdmin() && isValidMessageTemplate(request.resource.data);
-    }
-
-    function isValidNutritionTemplate(data) {
-      return data.keys().hasAll(['name', 'targetMacros', 'guidelines']) &&
-             data.name is string &&
-             data.targetMacros is map &&
-             data.targetMacros.keys().hasAll(['calories', 'protein', 'carbs', 'fats']) &&
-             data.guidelines is list &&
-             (!('description' in data) || data.description is string) &&
-             (!('plannedMeals' in data) || data.plannedMeals is list) &&
-             (!('isCustom' in data) || data.isCustom is bool) &&
-             (!('createdAt' in data) || data.createdAt is timestamp);
-    }
-
-    function isValidFrequentFood(data) {
-      return data.keys().hasAll(['userId', 'name', 'notes', 'usageCount']) &&
-             data.userId is string &&
-             data.name is string &&
-             data.notes is string &&
-             data.usageCount is int;
     }
 
     match /nutritionTemplates/{templateId} {
       allow read: if isAdmin();
-      allow write: if isAdmin() && isValidNutritionTemplate(request.resource.data);
+      allow create: if isAdmin() && isValidNutritionTemplate(incoming());
+      allow update: if isAdmin() && isValidNutritionTemplate(incoming());
+      allow delete: if isAdmin();
     }
 
-    match /frequentFoods/{id} {
-      allow read: if isAdmin() && resource.data.userId == request.auth.uid;
-      allow create: if isAdmin() && request.resource.data.userId == request.auth.uid && isValidFrequentFood(request.resource.data);
-      allow update: if isAdmin() && resource.data.userId == request.auth.uid && isValidFrequentFood(request.resource.data);
-      allow delete: if isAdmin() && resource.data.userId == request.auth.uid;
+    match /workouts/{workoutId} {
+      allow read: if isSignedIn() && (resource.data.clientId == request.auth.uid || isAdmin());
+      allow create: if isAdmin() && isValidWorkout(incoming());
+      allow update: if (isAdmin() && isValidWorkout(incoming())) || 
+                     (isSignedIn() && 
+                      resource.data.clientId == request.auth.uid && 
+                      incoming().diff(existing()).affectedKeys().hasOnly(['exercises']) &&
+                      isValidWorkout(incoming()));
+      allow delete: if isAdmin();
+    }
+
+    match /feedback/{feedbackId} {
+      allow read: if isSignedIn() && (resource.data.clientId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && incoming().clientId == request.auth.uid && isValidFeedback(incoming());
+      allow update: if (isAdmin() && isValidFeedback(incoming())) || 
+                     (isSignedIn() && resource.data.clientId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['clientNote', 'completionStatus', 'exercises']) && isValidFeedback(incoming()));
+      allow delete: if isAdmin();
+    }
+
+    match /metrics/{metricId} {
+      allow read: if isSignedIn() && (resource.data.clientId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && incoming().clientId == request.auth.uid && isValidMetric(incoming());
+      allow update: if isSignedIn() && resource.data.clientId == request.auth.uid && isValidMetric(incoming());
+    }
+
+    match /messages/{messageId} {
+      allow read: if isSignedIn() && (resource.data.senderId == request.auth.uid || resource.data.receiverId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && incoming().senderId == request.auth.uid;
+      allow update: if isAdmin() || (isSignedIn() && resource.data.receiverId == request.auth.uid);
+    }
+
+    match /habits/{habitId} {
+      allow read: if isSignedIn() && (resource.data.clientId == request.auth.uid || isAdmin());
+      allow create: if isAdmin() || (isSignedIn() && incoming().clientId == request.auth.uid);
+      allow update: if isAdmin() || (isSignedIn() && resource.data.clientId == request.auth.uid);
+      allow delete: if isAdmin() || (isSignedIn() && resource.data.clientId == request.auth.uid);
+    }
+
+    match /habitLogs/{logId} {
+      allow read: if isSignedIn() && (resource.data.clientId == request.auth.uid || isAdmin());
+      allow create: if isAdmin() || (isSignedIn() && incoming().clientId == request.auth.uid);
+      allow update: if isAdmin() || (isSignedIn() && resource.data.clientId == request.auth.uid);
+      allow delete: if isAdmin() || (isSignedIn() && resource.data.clientId == request.auth.uid);
+    }
+
+    match /goals/{goalId} {
+      allow read: if isSignedIn() && (resource.data.clientId == request.auth.uid || isAdmin());
+      allow create: if isAdmin() || (isSignedIn() && incoming().clientId == request.auth.uid);
+      allow update: if isAdmin() || (isSignedIn() && resource.data.clientId == request.auth.uid);
+      allow delete: if isAdmin() || (isSignedIn() && resource.data.clientId == request.auth.uid);
+    }
+
+    match /frequentFoods/{foodId} {
+      allow read: if isSignedIn() && (isAdmin() || resource.data.userId == request.auth.uid);
+      allow create: if isSignedIn() && (isAdmin() || incoming().userId == request.auth.uid);
+      allow update: if isSignedIn() && (isAdmin() || resource.data.userId == request.auth.uid);
+      allow delete: if isSignedIn() && (isAdmin() || resource.data.userId == request.auth.uid);
+    }
+
+    match /meals/{mealId} {
+      allow read: if isSignedIn() && (resource.data.clientId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && incoming().clientId == request.auth.uid;
+      allow update: if isSignedIn() && (resource.data.clientId == request.auth.uid || isAdmin());
+      allow delete: if isAdmin();
     }
 
     match /reminders/{reminderId} {
-      allow read: if isAuthenticated() && (request.auth.uid == resource.data.clientId || isAdmin());
-      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.clientId && isValidReminder(request.resource.data);
-      allow update: if isAuthenticated() && request.auth.uid == resource.data.clientId && isValidReminder(request.resource.data);
-      allow delete: if isAuthenticated() && request.auth.uid == resource.data.clientId;
+      allow read: if isSignedIn() && (resource.data.clientId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && incoming().clientId == request.auth.uid;
+      allow update: if isSignedIn() && resource.data.clientId == request.auth.uid;
+      allow delete: if isSignedIn() && resource.data.clientId == request.auth.uid;
+    }
+
+    match /daily_steps/{id} {
+      allow read: if isSignedIn() && (resource.data.clientId == request.auth.uid || isAdmin());
+      allow write: if isAdmin();
+    }
+
+    match /templates/{id} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    match /messageTemplates/{id} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if isSignedIn() && (resource.data.clientId == request.auth.uid || isAdmin());
+      allow create: if isAdmin() && isValidNotification(incoming()); 
+      allow update: if isSignedIn() && (
+        (resource.data.clientId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['isRead']) && isValidNotification(incoming())) ||
+        isAdmin()
+      );
+      allow delete: if isSignedIn() && (resource.data.clientId == request.auth.uid || isAdmin());
     }
   }
 }
+

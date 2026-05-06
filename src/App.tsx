@@ -15,6 +15,7 @@ import { cn } from './lib/utils';
 import AdminDashboard from './components/AdminDashboard';
 import ClientDashboard from './components/ClientDashboard';
 import LandingPage from './components/LandingPage';
+import ErrorBoundary from './components/ErrorBoundary';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -169,17 +170,19 @@ export default function App() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-8">
-        {profile.role === 'admin' ? (
-          <AdminDashboard user={user} profile={profile} />
-        ) : !profile.onboardingComplete ? (
-          <LandingPage 
-            user={user} 
-            profile={profile} 
-            onComplete={() => setProfile({ ...profile, onboardingComplete: true })} 
-          />
-        ) : (
-          <ClientDashboard user={user} profile={profile} />
-        )}
+        <ErrorBoundary>
+          {profile.role === 'admin' ? (
+            <AdminDashboard user={user} profile={profile} />
+          ) : !profile.onboardingComplete ? (
+            <LandingPage 
+              user={user} 
+              profile={profile} 
+              onComplete={() => setProfile({ ...profile, onboardingComplete: true })} 
+            />
+          ) : (
+            <ClientDashboard user={user} profile={profile} />
+          )}
+        </ErrorBoundary>
       </main>
     </div>
   );

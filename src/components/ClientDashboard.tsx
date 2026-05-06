@@ -6,6 +6,8 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { BodyMetrics, Workout, Feedback, UserProfile, NutritionPlan, Message, Habit, HabitLog, Goal } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { 
+  Maximize2,
+  Minimize2,
   CheckCircle, 
   Check,
   ExternalLink, 
@@ -125,7 +127,7 @@ const GoalsAndHabits = ({ habits, habitLogs, goals, user, profile, adminProfile,
         });
       }
     } catch (error) {
-      console.error('Error toggling habit:', error);
+      handleFirestoreError(error, OperationType.UPDATE, `habitLogs/${existingLog?.id || 'new'}`);
     }
   };
 
@@ -142,7 +144,7 @@ const GoalsAndHabits = ({ habits, habitLogs, goals, user, profile, adminProfile,
       setNewHabit({ title: '', frequency: 'daily', category: 'health', icon: 'zap' });
       setShowAddHabit(false);
     } catch (error) {
-       console.error('Error adding habit:', error);
+      handleFirestoreError(error, OperationType.CREATE, 'habits');
     } finally {
       setIsSaving(false);
     }
@@ -175,7 +177,7 @@ const GoalsAndHabits = ({ habits, habitLogs, goals, user, profile, adminProfile,
       setNewGoal({ title: '', targetValue: 0, unit: '', deadline: '', category: 'fitness' });
       setShowAddGoal(false);
     } catch (error) {
-       console.error('Error adding goal:', error);
+      handleFirestoreError(error, OperationType.CREATE, 'goals');
     } finally {
       setIsSaving(false);
     }
@@ -210,7 +212,7 @@ const GoalsAndHabits = ({ habits, habitLogs, goals, user, profile, adminProfile,
         }
       }
     } catch (error) {
-      console.error('Error updating goal:', error);
+      handleFirestoreError(error, OperationType.UPDATE, `goals/${goalId}`);
     }
   };
 
@@ -486,7 +488,7 @@ const TasksAndReminders = ({ reminders, user, habits, goals }: { reminders: Remi
       setShowAdd(false);
       setNewReminder({ title: '', description: '', time: '08:00', days: [1, 2, 3, 4, 5], type: 'task', active: true });
     } catch (error) {
-      console.error('Error adding reminder:', error);
+      handleFirestoreError(error, OperationType.CREATE, 'reminders');
     } finally {
       setIsSaving(false);
     }
@@ -496,7 +498,7 @@ const TasksAndReminders = ({ reminders, user, habits, goals }: { reminders: Remi
     try {
       await updateDoc(doc(db, 'reminders', id), { active: false });
     } catch (e) {
-       console.error(e);
+       handleFirestoreError(e, OperationType.UPDATE, `reminders/${id}`);
     }
   };
 
@@ -932,6 +934,120 @@ function getYouTubeId(url: string) {
   return (match && match[2].length === 11) ? match[2] : null;
 }
 
+function resolveVideoUrl(url: string) {
+  if (!url) return null;
+  
+  // YouTube
+  const ytId = getYouTubeId(url);
+  if (ytId) return `https://www.youtube.com/embed/${ytId}?autoplay=1&rel=0`;
+  
+  // Vimeo
+  const vimeoReg = /vimeo\.com\/(?:channels\/(?:\w+\/)?|groups\/([^\/]*)\/videos\/|album\/(\d+)\/video\/|video\/|)(\d+)(?:$|\/|\?)/;
+  const vimeoMatch = url.match(vimeoReg);
+  if (vimeoMatch) return `https://player.vimeo.com/video/${vimeoMatch[3]}?autoplay=1`;
+  
+  // Google Drive
+  const driveReg = /\/file\/d\/([^\/]+)\//;
+  const driveMatch = url.match(driveReg);
+  if (driveMatch) return `https://drive.google.com/file/d/${driveMatch[1]}/preview`;
+  
+  return url;
+}
+
+function resolveThumbnail(url: string) {
+  const ytId = getYouTubeId(url);
+  if (ytId) return `https://img.youtube.com/vi/${ytId}/mqdefault.jpg`;
+  
+  // Return null or a generic placeholder for others
+  return null;
+}
+
+function CinemaVideoPlayer({ url, title, onClose }: { url: string, title?: string, onClose: () => void }) {
+  const [isPip, setIsPip] = useState(false);
+  const embedUrl = resolveVideoUrl(url);
+
+  return (
+    <div className={cn(
+      "fixed z-[100] transition-all duration-500 ease-in-out",
+      isPip 
+        ? "bottom-8 right-8 w-80 md:w-96 aspect-video" 
+        : "inset-0 flex items-center justify-center p-4"
+    )}>
+      <AnimatePresence>
+        {!isPip && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={onClose}
+            className="absolute inset-0 bg-black/95 backdrop-blur-xl"
+          />
+        )}
+      </AnimatePresence>
+
+      <motion.div
+        layout
+        initial={{ opacity: 0, scale: 0.9, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.9, y: 20 }}
+        className={cn(
+          "relative w-full h-full bg-black shadow-2xl overflow-hidden border border-white/10 group",
+          isPip ? "rounded-3xl shadow-orange-500/10" : "max-w-5xl rounded-[40px]"
+        )}
+      >
+        {embedUrl ? (
+          <iframe
+            src={embedUrl}
+            className="w-full h-full border-0"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
+            referrerPolicy="no-referrer"
+          />
+        ) : (
+          <div className="w-full h-full flex flex-col items-center justify-center text-zinc-500 space-y-4">
+            <Play className="w-16 h-16 opacity-20" />
+            <p className="font-medium italic">Video source unavailable</p>
+          </div>
+        )}
+        
+        {/* Cinema Controls Overlays */}
+        <div className={cn(
+          "absolute top-0 inset-x-0 p-4 md:p-8 flex justify-between items-start bg-gradient-to-b from-black/80 to-transparent transition-opacity duration-300",
+          isPip ? "opacity-0 group-hover:opacity-100" : "opacity-0 group-hover:opacity-100"
+        )}>
+          {!isPip && (
+            <div>
+              <h3 className="text-xl font-black uppercase tracking-tighter text-white">{title || 'Exercise Tutorial'}</h3>
+              <p className="text-orange-500 text-[10px] font-black uppercase tracking-[0.2em] mt-1">Cinema Mode Active</p>
+            </div>
+          )}
+          <div className="flex gap-2 ml-auto">
+            <button 
+              onClick={() => setIsPip(!isPip)}
+              className="p-3 bg-white/10 hover:bg-white/20 text-white rounded-xl backdrop-blur-md border border-white/10 transition-all flex items-center gap-2 font-bold text-xs"
+              title={isPip ? "Maximize" : "Picture-in-Picture"}
+            >
+              {isPip ? <Maximize2 className="w-4 h-4" /> : <Minimize2 className="w-4 h-4" />}
+            </button>
+            <button 
+              onClick={onClose}
+              className="p-3 bg-white/10 hover:bg-white/20 text-white rounded-xl backdrop-blur-md border border-white/10 transition-all flex items-center gap-2 font-bold text-xs"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {isPip && (
+          <div className="absolute bottom-0 inset-x-0 p-4 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
+            <p className="text-[10px] font-black uppercase tracking-widest text-white truncate">{title}</p>
+          </div>
+        )}
+      </motion.div>
+    </div>
+  );
+}
+
 interface ClientDashboardProps {
   user: User;
   profile: UserProfile;
@@ -941,6 +1057,9 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   const [currentWorkout, setCurrentWorkout] = useState<Workout | null>(null);
   const [allWorkouts, setAllWorkouts] = useState<Workout[]>([]);
   const [allFeedback, setAllFeedback] = useState<Feedback[]>([]);
+  const [activeVideo, setActiveVideo] = useState<{ url: string, title?: string } | null>(null);
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [showNotifications, setShowNotifications] = useState(false);
   const [lastFeedback, setLastFeedback] = useState<Feedback | null>(null);
   const [loading, setLoading] = useState(true);
   const [showFeedbackForm, setShowFeedbackForm] = useState(false);
@@ -1033,6 +1152,50 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
       }
     }
   };
+
+  useEffect(() => {
+    if (!user.uid) return;
+    const q = query(
+      collection(db, 'notifications'),
+      where('clientId', '==', user.uid),
+      orderBy('createdAt', 'desc'),
+      limit(50)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const notes = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setNotifications(notes);
+      
+      // Notify user on new arrivals
+      snapshot.docChanges().forEach(change => {
+        if (change.type === 'added' && !snapshot.metadata.fromCache) {
+          playNotificationSound();
+        }
+      });
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'notifications');
+    });
+
+    return () => unsubscribe();
+  }, [user.uid]);
+
+  const markNotificationAsRead = async (id: string) => {
+    try {
+      await updateDoc(doc(db, 'notifications', id), { isRead: true });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, `notifications/${id}`);
+    }
+  };
+
+  const deleteNotification = async (id: string) => {
+    try {
+      await updateDoc(doc(db, 'notifications', id), { clientId: 'deleted' }); // Logical delete or use real delete if rules allow
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, `notifications/${id}`);
+    }
+  };
+
+  const unreadNotificationsCount = useMemo(() => notifications.filter(n => !n.isRead).length, [notifications]);
 
   useEffect(() => {
     if (user.uid) {
@@ -1138,7 +1301,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
         try {
           await updateDoc(doc(db, 'users', user.uid), { badges: newBadges });
         } catch (error) {
-          console.error("Error updating badges:", error);
+          handleFirestoreError(error, OperationType.UPDATE, `users/${user.uid}`);
         }
       }
     };
@@ -1188,7 +1351,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
         });
       }
     } catch (error) {
-      console.error("Error sending automated message:", error);
+      handleFirestoreError(error, OperationType.CREATE, 'messages');
     }
   };
 
@@ -1351,7 +1514,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
               lastNotified: todayKey
             });
           } catch (error) {
-            console.error('Error updating lastNotified:', error);
+            handleFirestoreError(error, OperationType.UPDATE, `reminders/${reminder.id}`);
           }
         }
       });
@@ -1464,6 +1627,8 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     }
   }, []);
 
+  const [submittingError, setSubmittingError] = useState<string | null>(null);
+
   const handleComplete = async (workout: Workout, exerciseFeedback?: Record<number, { 
     completedWeight: string, 
     completedReps: string, 
@@ -1472,6 +1637,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     isCompleted: boolean 
   }>) => {
     setSubmitting(true);
+    setSubmittingError(null);
     try {
       const motivationalMessage = await generateMotivationalMessage(profile.displayName || 'Champ', workout.weekNumber);
       
@@ -1534,8 +1700,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
       setTimeout(() => setShowSuccess(false), 4000);
     } catch (error) {
       console.error('Error submitting feedback:', error);
-      // Give feedback to the user on error too
-      alert("There was an issue submitting your workout. Please try again. If it persists, please message your coach.");
+      setSubmittingError("There was an issue submitting your workout. Please try again. If it persists, please message your coach.");
     } finally {
       setSubmitting(false);
     }
@@ -1666,6 +1831,111 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
             </div>
 
             <div className="flex items-center gap-4">
+              <div className="relative">
+                <button 
+                  onClick={() => setShowNotifications(!showNotifications)}
+                  className={cn(
+                    "p-3 rounded-2xl border transition-all relative group",
+                    showNotifications 
+                      ? "bg-orange-500 border-orange-500 text-white shadow-lg shadow-orange-500/20" 
+                      : "bg-zinc-900 border-white/5 text-zinc-500 hover:text-white hover:border-zinc-700 hover:bg-zinc-800"
+                  )}
+                >
+                  <Bell className="w-5 h-5" />
+                  {unreadNotificationsCount > 0 && (
+                    <span className="absolute -top-1 -right-1 w-5 h-5 bg-orange-600 text-white text-[10px] font-black rounded-full flex items-center justify-center border-2 border-black animate-bounce">
+                      {unreadNotificationsCount}
+                    </span>
+                  )}
+                </button>
+
+                <AnimatePresence>
+                  {showNotifications && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                      className="absolute top-full right-0 mt-4 w-[350px] bg-zinc-950 border border-zinc-800 rounded-[32px] shadow-2xl z-[100] overflow-hidden flex flex-col max-h-[500px]"
+                    >
+                      <div className="p-6 border-b border-zinc-800 bg-zinc-900/50 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <Bell className="w-4 h-4 text-orange-500" />
+                          <h3 className="text-sm font-black uppercase tracking-widest">Athlete Alerts</h3>
+                        </div>
+                        <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500 bg-zinc-950 px-2 py-0.5 rounded-lg border border-white/5">
+                          {notifications.length} Total
+                        </span>
+                      </div>
+
+                      <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1">
+                        {notifications.length === 0 ? (
+                          <div className="py-20 text-center space-y-4">
+                            <div className="w-16 h-16 bg-zinc-900 rounded-full flex items-center justify-center mx-auto border border-white/5">
+                              <Bell className="w-8 h-8 text-zinc-800" />
+                            </div>
+                            <p className="text-zinc-500 text-xs italic">All clear. No alerts at the moment.</p>
+                          </div>
+                        ) : (
+                          notifications.map((note) => (
+                            <div 
+                              key={note.id}
+                              className={cn(
+                                "group p-4 rounded-2xl border transition-all flex items-start gap-4 hover:bg-zinc-900 relative",
+                                !note.isRead ? "bg-orange-500/5 border-orange-500/20" : "bg-transparent border-transparent"
+                              )}
+                            >
+                              <div className={cn(
+                                "w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border transition-all duration-500",
+                                !note.isRead 
+                                  ? "bg-orange-500 text-white border-orange-500" 
+                                  : "bg-zinc-900 text-zinc-600 border-white/5 group-hover:bg-zinc-800 group-hover:text-zinc-400"
+                              )}>
+                                {note.type === 'message' ? <MessageCircle className="w-5 h-5" /> : 
+                                 note.type === 'workout' ? <Dumbbell className="w-5 h-5" /> : 
+                                 <Bell className="w-5 h-5" />}
+                              </div>
+                              <div className="flex-1 min-w-0 pr-6">
+                                <h4 className={cn("text-xs font-black uppercase truncate", !note.isRead ? "text-white" : "text-zinc-500 italic")}>
+                                  {note.title}
+                                </h4>
+                                <p className="text-[11px] text-zinc-400 line-clamp-2 mt-0.5 leading-relaxed tracking-tight group-hover:text-white transition-colors">
+                                  {note.message}
+                                </p>
+                                <p className="text-[9px] text-zinc-600 font-bold uppercase tracking-widest mt-1">
+                                  {note.createdAt ? format(note.createdAt.toDate ? note.createdAt.toDate() : new Date(note.createdAt), 'MMM d, HH:mm') : 'Just now'}
+                                </p>
+                              </div>
+                              <div className="absolute top-4 right-4 flex flex-col gap-2">
+                                {!note.isRead && (
+                                  <button 
+                                    onClick={() => markNotificationAsRead(note.id)}
+                                    className="p-1.5 bg-green-500/10 text-green-500 rounded-lg border border-green-500/20 hover:bg-green-500/20"
+                                    title="Mark as Read"
+                                  >
+                                    <Check className="w-3 h-3" />
+                                  </button>
+                                )}
+                                <button 
+                                  onClick={() => deleteNotification(note.id)}
+                                  className="p-1.5 bg-zinc-800 text-zinc-600 rounded-lg hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                                  title="Clear"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                      
+                      <button className="w-full py-4 bg-zinc-900 border-t border-zinc-800 text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-white hover:bg-zinc-800 transition-all">
+                        Archive All History
+                      </button>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
               <div className="flex items-center gap-3 bg-zinc-900/50 border border-white/5 py-1.5 pl-1.5 pr-4 rounded-full">
                 <div className="w-8 h-8 rounded-full overflow-hidden bg-orange-500/20 border border-white/10">
                   <img 
@@ -1865,8 +2135,10 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                             clientNote={clientNote}
                             setClientNote={setClientNote}
                             submitting={submitting}
+                            submittingError={submittingError}
                             handleComplete={(feedback) => handleComplete(currentWorkout, feedback)}
                             isCompletedToday={isWorkoutCompletedToday}
+                            setActiveVideo={setActiveVideo}
                           />
                         ) : (
                           <div className="p-12 md:p-20 bg-zinc-950 border border-white/5 border-dashed rounded-[48px] flex flex-col items-center justify-center text-center space-y-6">
@@ -2619,12 +2891,14 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                   clientNote={clientNote}
                   setClientNote={setClientNote}
                   submitting={submitting}
+                  submittingError={submittingError}
                   handleComplete={(feedback) => handleComplete(selectedWorkout, feedback)}
                   isCompletedToday={allFeedback.some(f => {
                     if (!f.createdAt || f.workoutId !== selectedWorkout.id) return false;
                     const fDate = (f.createdAt as any).toDate ? (f.createdAt as any).toDate() : new Date(f.createdAt as any);
                     return isSameDay(fDate, new Date());
                   })}
+                  setActiveVideo={setActiveVideo}
                 />
               </div>
             </motion.div>
@@ -2911,6 +3185,16 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
           </motion.div>
         )}
       </AnimatePresence>
+
+      <AnimatePresence>
+        {activeVideo && (
+          <CinemaVideoPlayer 
+            url={activeVideo.url} 
+            title={activeVideo.title} 
+            onClose={() => setActiveVideo(null)} 
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -3004,7 +3288,7 @@ function MetricsTracker({
 
       // Sync weight to user profile as well
       await updateDoc(doc(db, 'users', user.uid), { weight: weight.toString() })
-        .catch(err => console.error('Error updating profile weight:', err));
+        .catch(err => handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}`));
 
       if (todayMetrics?.id) {
         await updateDoc(doc(db, 'metrics', todayMetrics.id), metricsData)
@@ -3014,7 +3298,7 @@ function MetricsTracker({
           .catch(err => handleFirestoreError(err, OperationType.CREATE, 'metrics'));
       }
     } catch (error) {
-      console.error('Error saving metrics:', error);
+      handleFirestoreError(error, OperationType.WRITE, 'metrics');
     } finally {
       setIsSaving(false);
     }
@@ -3291,8 +3575,10 @@ function WorkoutCard({
   clientNote, 
   setClientNote, 
   submitting, 
+  submittingError,
   handleComplete,
-  isCompletedToday
+  isCompletedToday,
+  setActiveVideo
 }: { 
   workout: Workout, 
   onComplete: () => void,
@@ -3301,6 +3587,7 @@ function WorkoutCard({
   clientNote: string,
   setClientNote: (s: string) => void,
   submitting: boolean,
+  submittingError: string | null,
   handleComplete: (feedback?: Record<number, { 
     completedWeight: string, 
     completedReps: string, 
@@ -3308,7 +3595,8 @@ function WorkoutCard({
     clientNote: string, 
     isCompleted: boolean 
   }>) => void,
-  isCompletedToday: boolean
+  isCompletedToday: boolean,
+  setActiveVideo: (v: { url: string, title?: string } | null) => void
 }) {
   const [showConfirm, setShowConfirm] = useState(false);
   const [exerciseFeedback, setExerciseFeedback] = useState<Record<number, { completedWeight: string, completedReps: string, completedSets: number, clientNote: string, isCompleted: boolean }>>({});
@@ -3425,15 +3713,13 @@ function WorkoutCard({
               </div>
               {ex.youtubeLink && (
                 <div className="flex flex-col gap-2">
-                  <a 
-                    href={ex.youtubeLink}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                  <button 
+                    onClick={() => setActiveVideo({ url: ex.youtubeLink!, title: ex.name })}
                     className="flex items-center gap-2 text-orange-500 hover:text-orange-400 transition-colors text-sm font-bold"
                   >
                     <Play className="w-4 h-4" />
                     Watch Exercise Video
-                  </a>
+                  </button>
                 </div>
               )}
             </div>
@@ -3445,28 +3731,34 @@ function WorkoutCard({
               </div>
             )}
 
-            {ex.youtubeLink && getYouTubeId(ex.youtubeLink) && (
-              <a 
-                href={ex.youtubeLink}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="block relative aspect-video rounded-xl overflow-hidden border border-zinc-800 bg-zinc-950 group/vid mb-4"
+            {ex.youtubeLink && (
+              <button 
+                onClick={() => setActiveVideo({ url: ex.youtubeLink!, title: ex.name })}
+                className="block relative aspect-video rounded-xl overflow-hidden border border-zinc-800 bg-zinc-950 group/vid mb-4 text-left w-full"
               >
-                <img 
-                  src={`https://img.youtube.com/vi/${getYouTubeId(ex.youtubeLink)}/mqdefault.jpg`}
-                  alt="Exercise Video"
-                  className="w-full h-full object-cover opacity-60 group-hover/vid:opacity-80 transition-opacity"
-                  referrerPolicy="no-referrer"
-                />
+                {resolveThumbnail(ex.youtubeLink) ? (
+                  <img 
+                    src={resolveThumbnail(ex.youtubeLink)!}
+                    alt="Exercise Video"
+                    className="w-full h-full object-cover opacity-60 group-hover/vid:opacity-80 transition-opacity"
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <div className="w-full h-full bg-zinc-900 flex flex-col items-center justify-center opacity-40 group-hover/vid:opacity-60 transition-opacity">
+                    <Play className="w-8 h-8 text-zinc-500 mb-2" />
+                    <span className="text-[10px] font-black tracking-widest text-zinc-600 uppercase italic">Media Available</span>
+                  </div>
+                )}
                 <div className="absolute inset-0 flex items-center justify-center">
                   <div className="w-12 h-12 rounded-full bg-orange-500 text-white flex items-center justify-center shadow-xl shadow-orange-500/20 group-hover/vid:scale-110 transition-transform">
                     <Play className="w-6 h-6 fill-current" />
                   </div>
                 </div>
-                <div className="absolute bottom-3 left-3 px-2 py-1 bg-black/50 backdrop-blur-md rounded text-[10px] font-bold text-white border border-white/10">
+                <div className="absolute bottom-3 left-3 px-2 py-1 bg-black/50 backdrop-blur-md rounded text-[10px] font-bold text-white border border-white/10 flex items-center gap-2">
+                  <div className="w-1 h-1 rounded-full bg-orange-500 animate-pulse" />
                   WATCH DEMO
                 </div>
-              </a>
+              </button>
             )}
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6 pt-6 border-t border-zinc-800/50">
@@ -3579,6 +3871,12 @@ function WorkoutCard({
               placeholder="Any notes for Coach Nik? (e.g. weight felt light, knee felt a bit tight...)"
               className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-4 text-sm focus:ring-1 focus:ring-orange-500 outline-none min-h-[120px]"
             />
+            {submittingError && (
+              <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-xs text-red-500 flex items-center gap-2">
+                <Info className="w-4 h-4 flex-shrink-0" />
+                {submittingError}
+              </div>
+            )}
             <div className="flex gap-3">
               <button
                 onClick={() => setShowFeedbackForm(false)}
@@ -3980,7 +4278,7 @@ function MealAI({
       setCustomMealName('');
       alert('Meal logged successfully!');
     } catch (error) {
-      console.error('Error logging meal:', error);
+      handleFirestoreError(error, OperationType.CREATE, 'meals');
     } finally {
       setLogging(false);
     }
@@ -4609,7 +4907,7 @@ function ProfileSection({ user, profile, setShowChat, onConnectGoogleFit, isGoog
       setFormData(prev => ({ ...prev, photoURL: downloadURL }));
       setMessage({ text: 'Image uploaded! Remember to save your profile changes.', type: 'success' });
     } catch (error: any) {
-      console.error('Error uploading image:', error);
+      handleFirestoreError(error, OperationType.WRITE, 'storage');
       let errorMsg = 'Failed to upload image.';
       if (error.code === 'storage/unauthorized') {
         errorMsg = 'Upload denied. Please ensure your storage permissions are configured.';
@@ -4630,7 +4928,7 @@ function ProfileSection({ user, profile, setShowChat, onConnectGoogleFit, isGoog
         .catch(err => handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}`));
       setMessage({ text: 'Profile updated successfully!', type: 'success' });
     } catch (error) {
-      console.error('Error updating profile:', error);
+      handleFirestoreError(error, OperationType.UPDATE, `users/${user.uid}`);
       setMessage({ text: 'Failed to update profile.', type: 'error' });
     } finally {
       setIsSaving(false);
