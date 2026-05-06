@@ -939,12 +939,12 @@ function resolveVideoUrl(url: string) {
   
   // YouTube
   const ytId = getYouTubeId(url);
-  if (ytId) return `https://www.youtube.com/embed/${ytId}?autoplay=1&rel=0`;
+  if (ytId) return `https://www.youtube.com/embed/${ytId}?autoplay=1&mute=1&rel=0`;
   
   // Vimeo
   const vimeoReg = /vimeo\.com\/(?:channels\/(?:\w+\/)?|groups\/([^\/]*)\/videos\/|album\/(\d+)\/video\/|video\/|)(\d+)(?:$|\/|\?)/;
   const vimeoMatch = url.match(vimeoReg);
-  if (vimeoMatch) return `https://player.vimeo.com/video/${vimeoMatch[3]}?autoplay=1`;
+  if (vimeoMatch) return `https://player.vimeo.com/video/${vimeoMatch[3]}?autoplay=1&muted=1`;
   
   // Google Drive
   const driveReg = /\/file\/d\/([^\/]+)\//;
@@ -1001,7 +1001,6 @@ function CinemaVideoPlayer({ url, title, onClose }: { url: string, title?: strin
             className="w-full h-full border-0"
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
             allowFullScreen
-            referrerPolicy="no-referrer"
           />
         ) : (
           <div className="w-full h-full flex flex-col items-center justify-center text-zinc-500 space-y-4">
@@ -1022,6 +1021,18 @@ function CinemaVideoPlayer({ url, title, onClose }: { url: string, title?: strin
             </div>
           )}
           <div className="flex gap-2 ml-auto">
+            {!isPip && (
+              <a 
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="p-3 bg-white/10 hover:bg-white/20 text-white rounded-xl backdrop-blur-md border border-white/10 transition-all flex items-center gap-2 font-bold text-xs"
+                title="Open in original player (fix playback errors)"
+              >
+                <ExternalLink className="w-4 h-4" />
+                <span className="hidden sm:inline uppercase">Open Link</span>
+              </a>
+            )}
             <button 
               onClick={() => setIsPip(!isPip)}
               className="p-3 bg-white/10 hover:bg-white/20 text-white rounded-xl backdrop-blur-md border border-white/10 transition-all flex items-center gap-2 font-bold text-xs"
