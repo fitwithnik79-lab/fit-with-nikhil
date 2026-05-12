@@ -38,9 +38,10 @@ import {
 interface AdminDashboardProps {
   user: User;
   profile: UserProfile;
+  onEnterPreview?: (clientId: string) => void;
 }
 
-export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
+export default function AdminDashboard({ user, profile, onEnterPreview }: AdminDashboardProps) {
   const [clients, setClients] = useState<UserProfile[]>([]);
   const [selectedClient, setSelectedClient] = useState<UserProfile | null>(null);
   const [feedbacks, setFeedbacks] = useState<Feedback[]>([]);
@@ -1004,8 +1005,18 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
                         <p className="text-zinc-500 text-sm">{selectedClient.email}</p>
                       </div>
                     </div>
-                    
-                    <div className="flex bg-zinc-950 p-1 rounded-xl border border-zinc-800">
+
+                    <div className="flex items-center gap-3">
+                      {onEnterPreview && (
+                        <button
+                          onClick={() => onEnterPreview(selectedClient.uid)}
+                          className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-orange-500/10 text-zinc-400 hover:text-orange-500 rounded-xl border border-zinc-800 hover:border-orange-500/50 transition-all text-xs font-bold uppercase tracking-wider"
+                        >
+                          <ExternalLink className="w-4 h-4" />
+                          View Live Dashboard
+                        </button>
+                      )}
+                      <div className="flex bg-zinc-950 p-1 rounded-xl border border-zinc-800">
                       <button
                         onClick={() => setClientViewTab('program')}
                         className={cn(
@@ -1053,8 +1064,9 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
                       </button>
                     </div>
                   </div>
+                </div>
 
-                  <AnimatePresence mode="wait">
+                <AnimatePresence mode="wait">
                     {clientViewTab === 'program' && (
                       <motion.div
                         key="program"
@@ -1065,7 +1077,7 @@ export default function AdminDashboard({ user, profile }: AdminDashboardProps) {
                       >
                         <div className="lg:col-span-2 space-y-6">
                           <ClientDetailsEditor client={selectedClient} showToast={showToast} />
-                          <WorkoutManager client={selectedClient} showToast={showToast} confirmAction={confirmAction} />
+                          <WorkoutManager client={selectedClient} clients={clients} showToast={showToast} confirmAction={confirmAction} />
                           <ClientHistory client={selectedClient} />
                         </div>
                         <div className="lg:col-span-1">
@@ -3514,6 +3526,7 @@ function CalendarView({ clients, showToast, confirmAction }: { clients: UserProf
                     
                     <WorkoutManager 
                       client={selectedClientForSchedule} 
+                      clients={clients}
                       initialDate={selectedDate || undefined} 
                       initialWorkout={editingWorkout || undefined}
                       onSave={() => {
@@ -4945,7 +4958,7 @@ function NutritionManager({ client, template, onSaveTemplate, showToast }: { cli
   );
 }
 
-function WorkoutManager({ client, initialDate, initialWorkout, onSave, showToast, confirmAction }: { client: UserProfile, initialDate?: Date, initialWorkout?: Workout, onSave?: () => void, showToast: (m: string, t?: 'success' | 'error') => void, confirmAction: (t: string, m: string, c: () => void) => void }) {
+function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, showToast, confirmAction }: { client: UserProfile, clients: UserProfile[], initialDate?: Date, initialWorkout?: Workout, onSave?: () => void, showToast: (m: string, t?: 'success' | 'error') => void, confirmAction: (t: string, m: string, c: () => void) => void }) {
   const [week, setWeek] = useState(initialWorkout?.weekNumber || 1);
   const [day, setDay] = useState(initialWorkout?.dayNumber || 1);
   const [scheduledDate, setScheduledDate] = useState<string>(
@@ -4964,6 +4977,12 @@ function WorkoutManager({ client, initialDate, initialWorkout, onSave, showToast
   const [filterCategory, setFilterCategory] = useState('All');
   const [searchingIndex, setSearchingIndex] = useState<number | null>(null);
   const [videoResults, setVideoResults] = useState<{title: string, url: string}[]>([]);
+  const [workoutNotes, setWorkoutNotes] = useState(initialWorkout?.notes || '');
+  const [globalSearchQuery, setGlobalSearchQuery] = useState('');
+  const [globalSearchResults, setGlobalSearchResults] = useState<{title: string, url: string}[]>([]);
+  const [isGlobalSearching, setIsGlobalSearching] = useState(false);
+  const [activeVideo, setActiveVideo] = useState<{ url: string, title?: string } | null>(null);
+  const [showDuplicateModal, setShowDuplicateModal] = useState(false);
 
   const categories = ['All', 'General', 'Strength', 'Hypertrophy', 'Mobility', 'Flexibility', 'HIIT', 'Resistance Band'];
 
@@ -4994,18 +5013,47 @@ function WorkoutManager({ client, initialDate, initialWorkout, onSave, showToast
     setExercises(newExercises);
   };
 
-  const handleSearchVideos = async (index: number, name: string) => {
+  const handleSearchVideos = async (index: number | null, name: string) => {
     if (!name.trim()) return;
-    setSearchingIndex(index);
-    setVideoResults([]);
+    if (index !== null) {
+      setSearchingIndex(index);
+      setVideoResults([]);
+    } else {
+      setIsGlobalSearching(true);
+      setGlobalSearchResults([]);
+    }
+    
     try {
       const results = await searchExerciseVideos(name);
-      setVideoResults(results);
+      if (index !== null) {
+        setVideoResults(results);
+      } else {
+        setGlobalSearchResults(results);
+      }
     } catch (error) {
       console.error('Error searching videos:', error);
     } finally {
-      setSearchingIndex(null);
+      if (index !== null) {
+        setSearchingIndex(null);
+      } else {
+        setIsGlobalSearching(false);
+      }
     }
+  };
+
+  const handleAddFromSearch = (video: { title: string, url: string }) => {
+    const newIdx = exercises.length;
+    setExercises([...exercises, { 
+      name: video.title, 
+      youtubeLink: video.url, 
+      sets: 3, 
+      reps: '12', 
+      weight: '', 
+      rest: '60s', 
+      coachNote: '' 
+    }]);
+    setExpandedIndex(newIdx);
+    showToast(`Added ${video.title}`);
   };
 
   const moveExercise = (index: number, direction: 'up' | 'down') => {
@@ -5027,6 +5075,7 @@ function WorkoutManager({ client, initialDate, initialWorkout, onSave, showToast
         weekNumber: week,
         dayNumber: day,
         exercises: exercises.filter(e => e.name.trim() !== ''),
+        notes: workoutNotes,
         scheduledDate: scheduledDate || null,
         updatedAt: serverTimestamp()
       };
@@ -5099,6 +5148,7 @@ function WorkoutManager({ client, initialDate, initialWorkout, onSave, showToast
         name: templateName,
         category: templateCategory,
         description: templateDescription,
+        notes: workoutNotes,
         exercises: exercises.filter(e => e.name.trim() !== ''),
         createdAt: serverTimestamp()
       }).catch(err => handleFirestoreError(err, OperationType.CREATE, 'templates'));
@@ -5115,6 +5165,7 @@ function WorkoutManager({ client, initialDate, initialWorkout, onSave, showToast
 
   const importTemplate = (template: WorkoutTemplate) => {
     setExercises(template.exercises);
+    setWorkoutNotes(template.notes || '');
     setExpandedIndex(0);
   };
 
@@ -5125,6 +5176,7 @@ function WorkoutManager({ client, initialDate, initialWorkout, onSave, showToast
         name: `${template.name} (Copy)`,
         category: template.category || 'General',
         description: template.description || '',
+        notes: template.notes || '',
         exercises: template.exercises,
         createdAt: serverTimestamp()
       }).catch(err => handleFirestoreError(err, OperationType.CREATE, 'templates'));
@@ -5236,323 +5288,455 @@ function WorkoutManager({ client, initialDate, initialWorkout, onSave, showToast
     : templates.filter(t => t.category === filterCategory);
 
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
-      <div className="p-6 border-b border-zinc-800 bg-zinc-900/50">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-          <h3 className="font-bold text-xl flex items-center gap-2">
-            <Calendar className="w-5 h-5 text-orange-500" />
-            Workout Builder
-          </h3>
-          
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 bg-zinc-950 p-1 rounded-lg border border-zinc-800">
-              <div className="flex items-center gap-1.5 px-2">
-                <span className="text-[10px] text-zinc-500 uppercase font-bold">Wk</span>
-                <input 
-                  type="number" 
-                  value={week} 
-                  onChange={(e) => setWeek(parseInt(e.target.value))}
-                  className="w-10 bg-transparent text-sm font-bold text-center outline-none"
-                />
-              </div>
-              <div className="w-[1px] h-4 bg-zinc-800" />
-              <div className="flex items-center gap-1.5 px-2">
-                <span className="text-[10px] text-zinc-500 uppercase font-bold">Day</span>
-                <input 
-                  type="number" 
-                  value={day} 
-                  onChange={(e) => setDay(parseInt(e.target.value))}
-                  className="w-10 bg-transparent text-sm font-bold text-center outline-none"
-                />
-              </div>
+    <div className="bg-zinc-950 border border-white/5 rounded-[40px] overflow-hidden flex flex-col h-[90vh] max-h-[1000px]">
+      {/* Top Bar */}
+      <div className="p-4 md:p-6 border-b border-white/5 bg-zinc-900 flex flex-col md:flex-row items-center justify-between gap-4">
+        <div className="flex items-center gap-4 w-full md:w-auto">
+          <div className="p-2.5 bg-orange-500 rounded-xl">
+            <Calendar className="w-5 h-5 text-white" />
+          </div>
+          <div className="flex-1">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Protocol Builder</span>
+              <div className="w-1 h-1 rounded-full bg-zinc-700" />
+              <span className="text-[10px] font-black uppercase tracking-widest text-orange-500 italic">Phase: Planning</span>
             </div>
-
-            <div className="flex items-center gap-2 bg-zinc-950 p-1 rounded-lg border border-zinc-800">
-              <div className="flex items-center gap-1.5 px-2">
-                <span className="text-[10px] text-zinc-500 uppercase font-bold">Date</span>
-                <input 
-                  type="date" 
-                  value={scheduledDate} 
-                  onChange={(e) => setScheduledDate(e.target.value)}
-                  className="bg-transparent text-xs font-bold outline-none text-zinc-300"
-                />
-              </div>
-            </div>
-            
-            <button 
-              onClick={() => setShowTemplateModal(true)}
-              className="p-2 bg-zinc-950 border border-zinc-800 rounded-lg hover:text-orange-500 transition-colors"
-              title="Templates"
-            >
-              <Layout className="w-5 h-5" />
-            </button>
+            <h3 className="text-lg font-black uppercase italic tracking-tighter text-white flex items-center gap-2">
+              Regular Workout: {initialWorkout ? `Week ${week} Day ${day}` : "New Entry"}
+            </h3>
           </div>
         </div>
 
-        <div className="space-y-3">
-          {exercises.map((ex, idx) => (
-            <motion.div 
-              layout
-              key={idx} 
-              className={cn(
-                "bg-zinc-950 rounded-xl border transition-all overflow-hidden",
-                expandedIndex === idx ? "border-orange-500/50" : "border-zinc-800"
-              )}
+        <div className="flex items-center gap-2 w-full md:w-auto overflow-x-auto no-scrollbar pb-1 md:pb-0">
+          <div className="flex items-center gap-2 bg-zinc-950 p-1.5 rounded-2xl border border-white/5 shrink-0">
+            <div className="flex items-center gap-1.5 px-2">
+              <span className="text-[10px] text-zinc-600 uppercase font-bold">Wk</span>
+              <input 
+                type="number" 
+                value={week} 
+                onChange={(e) => setWeek(parseInt(e.target.value))}
+                className="w-10 bg-transparent text-sm font-black text-white text-center outline-none"
+              />
+            </div>
+            <div className="w-[1px] h-4 bg-white/5" />
+            <div className="flex items-center gap-1.5 px-2">
+              <span className="text-[10px] text-zinc-600 uppercase font-bold">Day</span>
+              <input 
+                type="number" 
+                value={day} 
+                onChange={(e) => setDay(parseInt(e.target.value))}
+                className="w-10 bg-transparent text-sm font-black text-white text-center outline-none"
+              />
+            </div>
+            <div className="w-[1px] h-4 bg-white/5" />
+            <input 
+              type="date" 
+              value={scheduledDate} 
+              onChange={(e) => setScheduledDate(e.target.value)}
+              className="bg-transparent text-[10px] font-black uppercase outline-none text-zinc-400 px-2"
+            />
+          </div>
+
+          <button 
+            onClick={() => setShowTemplateModal(true)}
+            className="p-3 bg-zinc-950 border border-white/5 rounded-2xl hover:text-orange-500 transition-all shrink-0"
+            title="Workout Vault"
+          >
+            <Layout className="w-5 h-5" />
+          </button>
+
+          {initialWorkout && (
+            <button 
+              onClick={() => setShowDuplicateModal(true)}
+              className="p-3 bg-zinc-950 border border-white/5 rounded-2xl hover:text-blue-500 transition-all shrink-0"
+              title="Duplicate Protocol"
             >
-              <div
-                onClick={() => setExpandedIndex(expandedIndex === idx ? null : idx)}
-                className="w-full flex items-center justify-between p-4 hover:bg-zinc-900/50 transition-colors cursor-pointer"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="w-6 h-6 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-xs font-bold text-zinc-500">
-                    {idx + 1}
-                  </div>
-                  <span className={cn(
-                    "font-bold transition-colors",
-                    ex.name ? "text-white" : "text-zinc-600"
-                  )}>
-                    {ex.name || "Unnamed Exercise"}
-                  </span>
-                </div>
-                <div className="flex items-center gap-4">
-                  {expandedIndex !== idx && ex.name && (
-                    <div className="hidden sm:flex items-center gap-3 text-[10px] font-bold text-zinc-500 uppercase">
-                      <span>{ex.sets} Sets</span>
-                      <span>•</span>
-                      <span>{ex.reps} Reps</span>
-                    </div>
-                  )}
-                  <div className="flex items-center gap-1 border-r border-zinc-800 pr-4 mr-2">
-                    <button
-                      onClick={(e) => { e.stopPropagation(); moveExercise(idx, 'up'); }}
-                      disabled={idx === 0}
-                      className="p-1 hover:text-orange-500 disabled:opacity-20 transition-colors"
-                    >
-                      <ChevronUp className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); moveExercise(idx, 'down'); }}
-                      disabled={idx === exercises.length - 1}
-                      className="p-1 hover:text-orange-500 disabled:opacity-20 transition-colors"
-                    >
-                      <ChevronDown className="w-4 h-4" />
-                    </button>
-                  </div>
-                  {expandedIndex === idx ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              <Copy className="w-5 h-5" />
+            </button>
+          )}
+
+          <button
+            disabled={saving}
+            className="flex-1 md:flex-none px-8 py-3 bg-orange-500 hover:bg-orange-600 text-white font-black uppercase text-xs tracking-widest rounded-2xl transition-all shadow-xl shadow-orange-500/20 flex items-center justify-center gap-3 shrink-0"
+          >
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            <span>Save</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Main Split Layout */}
+      <div className="flex-1 flex flex-col md:flex-row overflow-hidden bg-zinc-950">
+        {/* Left: Planning Dashboard */}
+        <div className="flex-1 overflow-y-auto custom-scrollbar p-0 md:p-1 border-r border-white/5">
+          <div className="p-6 md:p-8 space-y-10">
+            {/* Instructions */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 flex items-center gap-2">
+                  <FileSearch className="w-3 h-3 text-orange-500" />
+                  Global Instructions
+                </h4>
+              </div>
+              <textarea
+                value={workoutNotes}
+                onChange={(e) => setWorkoutNotes(e.target.value)}
+                placeholder="Add general instructions for this session... (e.g., target RPE, warm-up protocol, etc.)"
+                className="w-full bg-zinc-900/50 border border-white/5 rounded-[24px] p-6 text-sm text-zinc-300 outline-none focus:border-orange-500/30 min-h-[120px] transition-all resize-none italic"
+              />
+            </div>
+
+            {/* Exercises Table-style Container */}
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 flex items-center gap-2">
+                  <Dumbbell className="w-3 h-3 text-orange-500" />
+                  Exercise Pipeline
+                </h4>
+                <div className="flex items-center gap-1.5 p-1 bg-zinc-900 rounded-xl border border-white/5">
+                  <button className="px-3 py-1.5 text-[8px] font-black uppercase tracking-widest text-zinc-500 hover:text-white transition-colors">Superset</button>
+                  <button className="px-3 py-1.5 text-[8px] font-black uppercase tracking-widest text-zinc-500 hover:text-white transition-colors">Circuit</button>
+                  <button onClick={addExercise} className="flex items-center gap-2 px-4 py-1.5 bg-zinc-950 text-[8px] font-black uppercase tracking-widest text-white rounded-lg border border-white/5 hover:border-orange-500/30 transition-all">
+                    <Plus className="w-3 h-3" />
+                    Drop Exercise
+                  </button>
                 </div>
               </div>
 
-              <AnimatePresence>
-                {expandedIndex === idx && (
-                  <motion.div
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: 'auto', opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    className="border-t border-zinc-800 p-4 space-y-4"
+              <div className="space-y-4">
+                {exercises.map((ex, idx) => (
+                  <motion.div 
+                    layout
+                    key={idx}
+                    className={cn(
+                      "group bg-zinc-900/30 rounded-3xl border transition-all overflow-hidden",
+                      expandedIndex === idx ? "border-orange-500/20 bg-zinc-900/50" : "border-white/5 hover:border-white/10"
+                    )}
                   >
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div className="space-y-1">
-                        <label className="text-[10px] text-zinc-500 uppercase font-bold">Exercise Name</label>
+                    <div 
+                      onClick={() => setExpandedIndex(expandedIndex === idx ? null : idx)}
+                      className="flex items-center gap-4 p-5 cursor-pointer"
+                    >
+                      <div className="w-8 h-8 rounded-xl bg-zinc-950 border border-white/5 flex items-center justify-center text-[10px] font-black text-zinc-500 shrink-0">
+                        {String(idx + 1).padStart(2, '0')}
+                      </div>
+                      
+                      <div className="flex-1 min-w-0">
                         <input
                           value={ex.name}
+                          onClick={(e) => e.stopPropagation()}
                           onChange={(e) => updateExercise(idx, 'name', e.target.value)}
-                          placeholder="e.g. Barbell Squat"
-                          className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-orange-500 outline-none"
+                          placeholder="Select an exercise..."
+                          className="w-full bg-transparent text-sm font-black uppercase italic tracking-tighter text-white outline-none placeholder:text-zinc-700"
                         />
                       </div>
-                      <div className="space-y-1">
-                        <label className="text-[10px] text-zinc-500 uppercase font-bold">YouTube Link</label>
-                        <div className="flex gap-2">
-                          <input
-                            value={ex.youtubeLink}
-                            onChange={(e) => updateExercise(idx, 'youtubeLink', e.target.value)}
-                            placeholder="https://youtube.com/..."
-                            className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-orange-500 outline-none"
-                          />
-                          <button
-                            onClick={() => handleSearchVideos(idx, ex.name)}
-                            disabled={!ex.name || searchingIndex === idx}
-                            className="p-2 bg-zinc-900 border border-zinc-800 rounded-lg hover:text-orange-500 transition-colors disabled:opacity-50"
-                            title="Search for demo video"
-                          >
-                            {searchingIndex === idx ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-                          </button>
-                          {ex.youtubeLink && getYouTubeId(ex.youtubeLink) && (
-                            <a 
-                              href={ex.youtubeLink} 
-                              target="_blank" 
-                              rel="noopener noreferrer"
-                              className="p-2 bg-zinc-900 border border-zinc-800 rounded-lg hover:text-orange-500 transition-colors"
-                            >
-                              <ExternalLink className="w-4 h-4" />
-                            </a>
-                          )}
+
+                      <div className="hidden lg:flex items-center gap-6 px-4">
+                        <div className="flex flex-col items-center">
+                          <span className="text-[8px] font-black text-zinc-600 uppercase mb-1">Sets</span>
+                          <span className="text-xs font-black text-orange-500">{ex.sets}</span>
                         </div>
+                        <div className="flex flex-col items-center">
+                          <span className="text-[8px] font-black text-zinc-600 uppercase mb-1">Target</span>
+                          <span className="text-xs font-black text-white">{ex.reps}</span>
+                        </div>
+                        <div className="flex flex-col items-center">
+                          <span className="text-[8px] font-black text-zinc-600 uppercase mb-1">Weight</span>
+                          <span className="text-xs font-black text-white">{ex.weight || '-'}</span>
+                        </div>
+                      </div>
 
-                        {/* Video Search Results */}
-                        <AnimatePresence>
-                          {videoResults.length > 0 && expandedIndex === idx && (
-                            <motion.div
-                              initial={{ opacity: 0, y: -10 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              exit={{ opacity: 0, y: -10 }}
-                              className="mt-2 p-3 bg-zinc-900/50 border border-zinc-800 rounded-xl space-y-2"
-                            >
-                              <div className="flex items-center justify-between">
-                                <span className="text-[10px] text-zinc-500 uppercase font-bold flex items-center gap-1">
-                                  <Sparkles className="w-3 h-3 text-orange-500" />
-                                  Suggested Demo Videos
-                                </span>
-                                <button 
-                                  onClick={() => setVideoResults([])}
-                                  className="text-[10px] text-zinc-500 hover:text-white uppercase font-bold"
-                                >
-                                  Clear
-                                </button>
-                              </div>
-                              <div className="grid grid-cols-1 gap-2">
-                                {videoResults.map((video, vIdx) => (
-                                  <button
-                                    key={vIdx}
-                                    onClick={() => {
-                                      updateExercise(idx, 'youtubeLink', video.url);
-                                      setVideoResults([]);
-                                    }}
-                                    className="flex items-center justify-between p-2 bg-zinc-950 border border-zinc-800 rounded-lg hover:border-orange-500/50 group transition-all text-left"
-                                  >
-                                    <div className="flex items-center gap-3">
-                                      <div className="w-8 h-8 rounded bg-zinc-900 flex items-center justify-center">
-                                        <Play className="w-3 h-3 text-zinc-500 group-hover:text-orange-500" />
-                                      </div>
-                                      <span className="text-xs text-zinc-400 group-hover:text-white truncate max-w-[200px]">
-                                        {video.title}
-                                      </span>
-                                    </div>
-                                    <Plus className="w-3 h-3 text-zinc-600 group-hover:text-orange-500" />
-                                  </button>
-                                ))}
-                              </div>
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
+                      <div className="flex items-center gap-2 border-l border-white/5 pl-4 ml-2">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); moveExercise(idx, 'up'); }}
+                          disabled={idx === 0}
+                          className="p-1.5 bg-zinc-950 rounded-lg text-zinc-600 hover:text-orange-500 disabled:opacity-20 transition-all border border-white/5"
+                        >
+                          <ChevronUp className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); removeExercise(idx); }}
+                          className="p-1.5 bg-zinc-950 rounded-lg text-zinc-600 hover:text-red-500 transition-all border border-white/5"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
 
-                        {ex.youtubeLink && getYouTubeId(ex.youtubeLink) && (
-                          <div className="mt-2 relative aspect-video rounded-lg overflow-hidden border border-zinc-800 bg-zinc-950 group/vid">
-                            <img 
-                              src={`https://img.youtube.com/vi/${getYouTubeId(ex.youtubeLink)}/mqdefault.jpg`}
-                              alt="Video Preview"
-                              className="w-full h-full object-cover opacity-60 group-hover/vid:opacity-80 transition-opacity"
-                              referrerPolicy="no-referrer"
-                            />
-                            <div className="absolute inset-0 flex items-center justify-center">
-                              <div className="w-10 h-10 rounded-full bg-black/50 backdrop-blur-sm flex items-center justify-center border border-white/20">
-                                <Play className="w-5 h-5 text-white fill-current" />
-                              </div>
+                    <AnimatePresence>
+                      {expandedIndex === idx && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: 'auto', opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          className="px-5 pb-5 pt-0 border-t border-white/5"
+                        >
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-5">
+                            <div className="space-y-1.5">
+                              <label className="text-[8px] font-black text-zinc-500 uppercase tracking-widest pl-1">Sets</label>
+                              <input
+                                type="number"
+                                value={ex.sets}
+                                onChange={(e) => updateExercise(idx, 'sets', parseInt(e.target.value))}
+                                className="w-full bg-zinc-950 border border-white/5 rounded-xl px-4 py-3 text-xs font-bold text-white outline-none focus:border-orange-500/30 transition-all"
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <label className="text-[8px] font-black text-zinc-500 uppercase tracking-widest pl-1">Target / Reps</label>
+                              <input
+                                value={ex.reps}
+                                onChange={(e) => updateExercise(idx, 'reps', e.target.value)}
+                                className="w-full bg-zinc-950 border border-white/5 rounded-xl px-4 py-3 text-xs font-bold text-white outline-none focus:border-orange-500/30 transition-all"
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <label className="text-[8px] font-black text-zinc-500 uppercase tracking-widest pl-1">Load / Weight</label>
+                              <input
+                                value={ex.weight}
+                                onChange={(e) => updateExercise(idx, 'weight', e.target.value)}
+                                className="w-full bg-zinc-950 border border-white/5 rounded-xl px-4 py-3 text-xs font-bold text-white outline-none focus:border-orange-500/30 transition-all"
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <label className="text-[8px] font-black text-zinc-500 uppercase tracking-widest pl-1">Rest Period</label>
+                              <input
+                                value={ex.rest}
+                                onChange={(e) => updateExercise(idx, 'rest', e.target.value)}
+                                className="w-full bg-zinc-950 border border-white/5 rounded-xl px-4 py-3 text-xs font-bold text-white outline-none focus:border-orange-500/30 transition-all"
+                              />
                             </div>
                           </div>
-                        )}
-                      </div>
-                    </div>
 
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                      <div className="space-y-1">
-                        <label className="text-[10px] text-zinc-500 uppercase font-bold">Sets</label>
-                        <input
-                          type="number"
-                          value={ex.sets}
-                          onChange={(e) => updateExercise(idx, 'sets', parseInt(e.target.value))}
-                          className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-orange-500 outline-none"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-[10px] text-zinc-500 uppercase font-bold">Reps</label>
-                        <input
-                          value={ex.reps}
-                          onChange={(e) => updateExercise(idx, 'reps', e.target.value)}
-                          className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-orange-500 outline-none"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-[10px] text-zinc-500 uppercase font-bold">Weight</label>
-                        <input
-                          value={ex.weight}
-                          onChange={(e) => updateExercise(idx, 'weight', e.target.value)}
-                          placeholder="e.g. 60kg"
-                          className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-orange-500 outline-none"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-[10px] text-zinc-500 uppercase font-bold">Rest</label>
-                        <input
-                          value={ex.rest}
-                          onChange={(e) => updateExercise(idx, 'rest', e.target.value)}
-                          placeholder="60s"
-                          className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-orange-500 outline-none"
-                        />
-                      </div>
-                    </div>
+                          <div className="mt-4 flex flex-col md:flex-row gap-4">
+                            <div className="flex-1 space-y-1.5">
+                              <label className="text-[8px] font-black text-zinc-500 uppercase tracking-widest pl-1 flex items-center justify-between">
+                                Internal Demo Link
+                                {ex.youtubeLink && <CheckCircle className="w-3 h-3 text-green-500" />}
+                              </label>
+                              <div className="flex gap-2">
+                                <input
+                                  value={ex.youtubeLink}
+                                  onChange={(e) => updateExercise(idx, 'youtubeLink', e.target.value)}
+                                  placeholder="Demo URL..."
+                                  className="flex-1 bg-zinc-950 border border-white/5 rounded-xl px-4 py-3 text-[10px] font-mono text-zinc-400 outline-none focus:border-orange-500/30 transition-all"
+                                />
+                                <button
+                                  onClick={() => handleSearchVideos(idx, ex.name)}
+                                  disabled={!ex.name || searchingIndex === idx}
+                                  className="p-3 bg-zinc-950 border border-white/5 rounded-xl hover:text-orange-500 hover:border-orange-500/30 transition-all disabled:opacity-20"
+                                >
+                                  {searchingIndex === idx ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                                </button>
+                              </div>
+                            </div>
+                            <div className="flex-1 space-y-1.5">
+                              <label className="text-[8px] font-black text-zinc-500 uppercase tracking-widest pl-1">Cues / Notes</label>
+                              <textarea
+                                value={ex.coachNote}
+                                onChange={(e) => updateExercise(idx, 'coachNote', e.target.value)}
+                                placeholder="Specific cues for technical precision..."
+                                className="w-full bg-zinc-950 border border-white/5 rounded-xl px-4 py-2.5 text-xs font-medium text-zinc-400 outline-none focus:border-orange-500/30 transition-all h-[46px] resize-none"
+                              />
+                            </div>
+                          </div>
 
-                    <div className="space-y-1">
-                      <label className="text-[10px] text-zinc-500 uppercase font-bold">Coach Note</label>
-                      <textarea
-                        value={ex.coachNote}
-                        onChange={(e) => updateExercise(idx, 'coachNote', e.target.value)}
-                        placeholder="Focus on depth..."
-                        className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-orange-500 outline-none min-h-[60px]"
-                      />
-                    </div>
-
-                    <div className="flex justify-end">
-                      <button 
-                        onClick={() => removeExercise(idx)}
-                        className="flex items-center gap-2 text-xs font-bold text-zinc-500 hover:text-red-500 transition-colors"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                        Remove Exercise
-                      </button>
-                    </div>
+                          {ex.youtubeLink && getYouTubeId(ex.youtubeLink) && (
+                            <div 
+                              onClick={() => setActiveVideo({ url: ex.youtubeLink!, title: ex.name })}
+                              className="mt-4 relative aspect-video rounded-2xl overflow-hidden border border-white/5 bg-zinc-950 group/preview cursor-pointer"
+                            >
+                              <img 
+                                src={`https://img.youtube.com/vi/${getYouTubeId(ex.youtubeLink)}/maxresdefault.jpg`}
+                                alt="Demo Preview"
+                                className="w-full h-full object-cover opacity-40 group-hover/preview:opacity-60 transition-opacity"
+                                onError={(e) => {
+                                  // Fallback if maxres is not available
+                                  const target = e.target as HTMLImageElement;
+                                  if (!target.src.includes('mqdefault')) {
+                                    target.src = `https://img.youtube.com/vi/${getYouTubeId(ex.youtubeLink)}/mqdefault.jpg`;
+                                  }
+                                }}
+                              />
+                              <div className="absolute inset-0 flex items-center justify-center">
+                                <div className="p-4 bg-black/60 backdrop-blur-md rounded-full border border-white/20 transform group-hover/preview:scale-110 transition-transform">
+                                  <Play className="w-6 h-6 text-orange-500 fill-current" />
+                                </div>
+                              </div>
+                              <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover/preview:opacity-100 transition-opacity">
+                                <a href={ex.youtubeLink} target="_blank" rel="noopener noreferrer" className="p-2.5 bg-black/80 rounded-xl text-white hover:text-orange-500 border border-white/10">
+                                  <ExternalLink className="w-4 h-4" />
+                                </a>
+                                <button 
+                                  onClick={() => updateExercise(idx, 'youtubeLink', '')}
+                                  className="p-2.5 bg-black/80 rounded-xl text-white hover:text-red-500 border border-white/10"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </motion.div>
-                )}
-              </AnimatePresence>
-            </motion.div>
-          ))}
+                ))}
+              </div>
+
+              {exercises.length === 0 && (
+                <div className="p-20 border border-dashed border-white/5 rounded-[40px] flex flex-col items-center justify-center text-center space-y-4">
+                  <div className="p-6 bg-zinc-900 rounded-full border border-white/5">
+                    <Activity className="w-12 h-12 text-zinc-800" />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-sm font-black text-white uppercase italic tracking-tighter">Empty Pipeline</p>
+                    <p className="text-xs text-zinc-500 font-medium">Search the high-performance catalog on the right to start building.</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
-        <div className="mt-6 space-y-4">
-          <button
-            onClick={addExercise}
-            className="w-full flex items-center justify-center gap-2 py-3 border border-dashed border-zinc-700 rounded-xl text-zinc-400 hover:text-white hover:border-zinc-500 transition-all"
-          >
-            <Plus className="w-4 h-4" />
-            Add Exercise
-          </button>
-          
-          <div className="flex flex-col sm:flex-row gap-3">
-            <button
-              onClick={() => setShowTemplateModal(true)}
-              className="flex-1 flex items-center justify-center gap-2 py-3 bg-zinc-950 border border-zinc-800 rounded-xl text-zinc-400 hover:text-white transition-all"
-            >
-              <Save className="w-4 h-4" />
-              Save as Template
-            </button>
-            <button
-              onClick={handleSaveWorkout}
-              disabled={saving}
-              className="flex-[2] bg-orange-500 text-white font-bold py-3 rounded-xl hover:bg-orange-600 disabled:opacity-50 transition-all shadow-lg shadow-orange-500/20 flex items-center justify-center gap-2"
-            >
-              <CheckCircle className="w-4 h-4" />
-              {saving ? 'Saving...' : initialWorkout ? 'Update Workout' : 'Assign to Client'}
-            </button>
-            {initialWorkout && (
-              <button
-                onClick={handleDeleteWorkout}
-                disabled={saving}
-                className="p-3 bg-zinc-950 border border-zinc-800 rounded-xl text-zinc-500 hover:text-red-500 transition-all"
-                title="Delete Workout"
-              >
-                <Trash2 className="w-5 h-5" />
-              </button>
-            )}
+        {/* Right: YouTube Hub */}
+        <div className="w-full md:w-[450px] lg:w-[550px] bg-zinc-900/50 flex flex-col border-l border-white/5">
+          <div className="p-6 md:p-8 space-y-6 flex flex-col h-full">
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-500">Demo Library</h4>
+                  <p className="text-[18px] font-black uppercase italic tracking-tighter text-white">Cloud Search Engine</p>
+                </div>
+                <div className="p-2.5 bg-zinc-950 rounded-xl border border-white/5">
+                  <Youtube className="w-5 h-5 text-red-500" />
+                </div>
+              </div>
+
+              <div className="relative group">
+                <div className="absolute inset-y-0 left-0 pl-6 flex items-center pointer-events-none transition-colors group-focus-within:text-orange-500">
+                  <Search className="w-5 h-5 text-zinc-600" />
+                </div>
+                <input 
+                  type="text" 
+                  value={globalSearchQuery}
+                  onChange={(e) => setGlobalSearchQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSearchVideos(null, globalSearchQuery)}
+                  placeholder="Scan YouTube for elite demonstrations..." 
+                  className="w-full bg-zinc-950 border border-white/5 rounded-[24px] pl-16 pr-24 py-5 text-sm text-zinc-300 outline-none focus:border-orange-500/50 shadow-2xl transition-all"
+                />
+                <div className="absolute inset-y-0 right-4 flex items-center gap-2">
+                  {globalSearchQuery && (
+                    <button 
+                      onClick={() => { setGlobalSearchQuery(''); setGlobalSearchResults([]); }}
+                      className="p-2 text-zinc-500 hover:text-white"
+                    >
+                      <Plus className="w-5 h-5 rotate-45" />
+                    </button>
+                  )}
+                  <button 
+                    onClick={() => handleSearchVideos(null, globalSearchQuery)}
+                    disabled={!globalSearchQuery || isGlobalSearching}
+                    className="p-3 bg-orange-500 text-white rounded-xl shadow-lg shadow-orange-500/20 hover:bg-orange-600 transition-all disabled:opacity-50"
+                  >
+                    {isGlobalSearching ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto custom-scrollbar -mx-2 px-2">
+              <AnimatePresence mode="wait">
+                {isGlobalSearching ? (
+                  <motion.div 
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="h-full flex flex-col items-center justify-center py-20"
+                  >
+                    <div className="w-16 h-16 border-4 border-orange-500/10 border-t-orange-500 rounded-full animate-spin mb-6" />
+                    <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500 animate-pulse">Scanning Cloud Archives...</p>
+                  </motion.div>
+                ) : globalSearchResults.length > 0 ? (
+                  <motion.div 
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-4 pb-10"
+                  >
+                    {globalSearchResults.map((video, vIdx) => {
+                      const ytId = getYouTubeId(video.url);
+                      return (
+                        <motion.div
+                          key={vIdx}
+                          initial={{ opacity: 0, scale: 0.95 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          transition={{ delay: vIdx * 0.05 }}
+                          onClick={() => setActiveVideo({ url: video.url, title: video.title })}
+                          className="group/video bg-zinc-950 border border-white/5 rounded-[28px] overflow-hidden hover:border-orange-500/30 transition-all flex flex-col shadow-xl cursor-pointer"
+                        >
+                          <div className="relative aspect-video overflow-hidden border-b border-white/5">
+                            <img 
+                              src={ytId ? `https://img.youtube.com/vi/${ytId}/mqdefault.jpg` : "https://images.unsplash.com/photo-1517836357463-d25dfeac3438?w=800&auto=format&fit=crop&q=60"} 
+                              className="w-full h-full object-cover opacity-60 group-hover/video:opacity-80 transition-opacity"
+                              referrerPolicy="no-referrer"
+                            />
+                            <div className="absolute inset-0 bg-black/20" />
+                            <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/video:opacity-100 transition-opacity pointer-events-none">
+                              <Play className="w-10 h-10 text-white fill-current drop-shadow-2xl" />
+                            </div>
+                            <button 
+                              onClick={() => handleAddFromSearch(video)}
+                              className="absolute top-4 right-4 p-3 bg-orange-500 text-white rounded-2xl shadow-xl transform scale-0 group-hover/video:scale-100 transition-all hover:bg-orange-600 active:scale-95"
+                              title="Add to Protocol"
+                            >
+                              <Plus className="w-5 h-5 font-bold" />
+                            </button>
+                          </div>
+                          <div className="p-5 flex-1 flex flex-col justify-between space-y-3">
+                            <h5 className="text-[11px] font-black uppercase italic tracking-tighter text-zinc-300 leading-tight group-hover/video:text-white transition-colors line-clamp-2">
+                              {video.title}
+                            </h5>
+                            <div className="flex items-center justify-between">
+                              <span className="text-[8px] font-black text-zinc-600 uppercase tracking-widest flex items-center gap-1">
+                                <Search className="w-3 h-3" />
+                                Certified Demo
+                              </span>
+                              <a 
+                                href={video.url} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                className="text-[8px] font-black text-orange-500 uppercase tracking-widest hover:underline"
+                              >
+                                Preview Original
+                              </a>
+                            </div>
+                          </div>
+                        </motion.div>
+                      );
+                    })}
+                  </motion.div>
+                ) : (
+                  <div className="h-full flex flex-col items-center justify-center py-20 text-center px-10">
+                    <div className="w-20 h-20 rounded-full bg-zinc-950 border border-white/5 flex items-center justify-center mb-6">
+                      <Search className="w-8 h-8 text-zinc-800" />
+                    </div>
+                    <p className="text-xs font-black uppercase text-zinc-500 tracking-widest mb-2">Search The Vault</p>
+                    <p className="text-[10px] text-zinc-700 font-medium leading-relaxed">
+                      Enter any exercise name above to pull high-quality demonstration videos directly from our curated YouTube cloud intelligence.
+                    </p>
+                  </div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            {/* Hub Footer */}
+            <div className="pt-6 border-t border-white/5 text-center">
+              <div className="flex items-center justify-center gap-2 mb-2 text-red-500 group cursor-help" title="Suggestions are powered by Gemini Cloud Search">
+                <Youtube className="w-4 h-4" />
+                <span className="text-[9px] font-black uppercase tracking-[0.2em]">Suggestions via AI Cloud Engine</span>
+              </div>
+              <p className="text-[8px] text-zinc-600 font-medium uppercase tracking-widest">
+                Import from our YouTube suggestions
+              </p>
+            </div>
           </div>
         </div>
       </div>
@@ -5560,46 +5744,53 @@ function WorkoutManager({ client, initialDate, initialWorkout, onSave, showToast
       {/* Template Modal */}
       <AnimatePresence>
         {showTemplateModal && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setShowTemplateModal(false)}
-              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+              className="absolute inset-0 bg-black/95 backdrop-blur-xl"
             />
             <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="relative w-full max-w-2xl bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-4xl bg-zinc-900 border border-white/10 rounded-[48px] shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
             >
-              <div className="p-6 border-b border-zinc-800 flex items-center justify-between">
-                <h3 className="font-bold text-xl">Workout Templates</h3>
-                <button onClick={() => setShowTemplateModal(false)} className="text-zinc-500 hover:text-white">
-                  <Plus className="w-6 h-6 rotate-45" />
+              <div className="p-8 border-b border-white/5 flex items-center justify-between">
+                <div>
+                  <h3 className="font-black text-2xl uppercase italic tracking-tighter text-white">Elite Protocol Vault</h3>
+                  <p className="text-orange-500 text-[10px] font-black uppercase tracking-[0.2em] mt-1">Access curated training strategies</p>
+                </div>
+                <button onClick={() => setShowTemplateModal(false)} className="p-3 bg-zinc-950 rounded-2xl text-zinc-500 hover:text-white transition-all">
+                  <X className="w-7 h-7" />
                 </button>
               </div>
 
-              <div className="p-6 space-y-6 overflow-y-auto custom-scrollbar">
-                <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-800 space-y-4">
-                  <label className="text-xs font-bold text-zinc-500 uppercase">Save Current as New Template</label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-1">
-                      <label className="text-[10px] text-zinc-500 uppercase font-bold">Template Name</label>
+              <div className="p-8 space-y-10 overflow-y-auto custom-scrollbar">
+                {/* Save New Template */}
+                <div className="bg-zinc-950/50 p-8 rounded-[40px] border border-white/5 space-y-6">
+                  <div className="flex items-center gap-3">
+                    <Save className="w-4 h-4 text-orange-500" />
+                    <h4 className="text-xs font-black text-zinc-500 uppercase tracking-[0.2em]">Archive Current Strategy</h4>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <label className="text-[10px] text-zinc-600 uppercase font-bold pl-1">Protocol Title</label>
                       <input
                         value={templateName}
                         onChange={(e) => setTemplateName(e.target.value)}
-                        placeholder="e.g. Leg Day - Hypertrophy"
-                        className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-orange-500"
+                        placeholder="e.g. Hypertrophy A: Legs"
+                        className="w-full bg-zinc-900 border border-white/5 rounded-2xl px-5 py-4 text-sm font-bold text-white outline-none focus:border-orange-500/30 transition-all"
                       />
                     </div>
-                    <div className="space-y-1">
-                      <label className="text-[10px] text-zinc-500 uppercase font-bold">Category</label>
+                    <div className="space-y-2">
+                      <label className="text-[10px] text-zinc-600 uppercase font-bold pl-1">System Category</label>
                       <select
                         value={templateCategory}
                         onChange={(e) => setTemplateCategory(e.target.value)}
-                        className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-orange-500"
+                        className="w-full bg-zinc-900 border border-white/5 rounded-2xl px-5 py-4 text-sm font-bold text-white outline-none focus:border-orange-500/30 transition-all appearance-none"
                       >
                         {categories.filter(c => c !== 'All').map(c => (
                           <option key={c} value={c}>{c}</option>
@@ -5607,33 +5798,37 @@ function WorkoutManager({ client, initialDate, initialWorkout, onSave, showToast
                       </select>
                     </div>
                   </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] text-zinc-500 uppercase font-bold">Description</label>
+                  <div className="space-y-2">
+                    <label className="text-[10px] text-zinc-600 uppercase font-bold pl-1">Architecture Summary</label>
                     <textarea
                       value={templateDescription}
                       onChange={(e) => setTemplateDescription(e.target.value)}
-                      placeholder="What is this workout for?"
-                      className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-orange-500 min-h-[60px]"
+                      placeholder="Briefly describe the intent behind this protocol..."
+                      className="w-full bg-zinc-900 border border-white/5 rounded-2xl px-5 py-4 text-sm font-medium text-zinc-400 outline-none focus:border-orange-500/30 transition-all min-h-[80px] resize-none"
                     />
                   </div>
                   <button
                     onClick={handleSaveTemplate}
                     disabled={!templateName.trim() || saving}
-                    className="w-full bg-orange-500 text-white font-bold py-2 rounded-lg hover:bg-orange-600 disabled:opacity-50 transition-all"
+                    className="w-full bg-orange-500 text-white font-black py-4 rounded-2xl hover:bg-orange-600 disabled:opacity-50 transition-all flex items-center justify-center gap-3 shadow-xl shadow-orange-500/20"
                   >
-                    Save Template
+                    {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
+                    <span className="uppercase text-xs tracking-widest">Commit to Vault</span>
                   </button>
                 </div>
 
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-bold text-zinc-500 uppercase">Your Templates</label>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-zinc-500 uppercase font-bold">Filter:</span>
+                <div className="space-y-6">
+                  <div className="flex items-center justify-between px-2">
+                    <div className="flex items-center gap-3">
+                      <LayoutDashboard className="w-4 h-4 text-orange-500" />
+                      <h4 className="text-xs font-black text-zinc-500 uppercase tracking-[0.2em]">Stored Protocols</h4>
+                    </div>
+                    <div className="flex items-center gap-3 bg-zinc-950 p-1.5 rounded-xl border border-white/5">
+                      <span className="text-[10px] text-zinc-600 uppercase font-black px-2 tracking-widest">Filter by:</span>
                       <select
                         value={filterCategory}
                         onChange={(e) => setFilterCategory(e.target.value)}
-                        className="bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1 text-xs outline-none"
+                        className="bg-transparent text-[10px] font-black uppercase text-zinc-400 outline-none pr-4"
                       >
                         {categories.map(c => (
                           <option key={c} value={c}>{c}</option>
@@ -5642,62 +5837,64 @@ function WorkoutManager({ client, initialDate, initialWorkout, onSave, showToast
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pb-12">
                     {filteredTemplates.map((t) => (
-                      <div key={t.id} className="flex flex-col p-4 bg-zinc-950 border border-zinc-800 rounded-xl group hover:border-zinc-700 transition-all">
-                        <div className="flex items-start justify-between mb-2">
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="font-bold text-base">{t.name}</span>
-                              <span className="px-2 py-0.5 bg-orange-500/10 text-orange-500 text-[10px] font-bold rounded-full uppercase">
-                                {t.category || 'General'}
-                              </span>
-                            </div>
+                      <div key={t.id} className="flex flex-col p-6 bg-zinc-950 border border-white/5 rounded-[40px] group hover:border-orange-500/30 transition-all gap-4">
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <span className="px-2.5 py-1 bg-orange-500/10 text-orange-500 text-[8px] font-black rounded-lg uppercase tracking-widest mb-3 inline-block">
+                              {t.category || 'General'}
+                            </span>
+                            <h5 className="font-black text-lg text-white uppercase italic tracking-tighter leading-tight">{t.name}</h5>
                             {t.description && (
-                              <p className="text-xs text-zinc-500 mt-1">{t.description}</p>
+                              <p className="text-xs text-zinc-600 mt-2 font-medium line-clamp-2 italic">"{t.description}"</p>
                             )}
                           </div>
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => {
-                                importTemplate(t);
-                                setShowTemplateModal(false);
-                              }}
-                              className="p-2 bg-zinc-900 rounded-lg text-zinc-400 hover:text-orange-500 transition-colors"
-                              title="Import"
-                            >
-                              <Download className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={() => duplicateTemplate(t)}
-                              className="p-2 bg-zinc-900 rounded-lg text-zinc-400 hover:text-blue-500 transition-colors"
-                              title="Duplicate"
-                            >
-                              <Copy className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={() => deleteTemplate(t.id!)}
-                              className="p-2 bg-zinc-900 rounded-lg text-zinc-400 hover:text-red-500 transition-colors"
-                              title="Delete"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
                         </div>
-                        <div className="text-[10px] text-zinc-600 uppercase font-bold">
-                          {t.exercises.length} Exercises
+
+                        <div className="flex items-center gap-2 mt-2 pt-4 border-t border-white/5">
+                          <button
+                            onClick={() => {
+                              importTemplate(t);
+                              setShowTemplateModal(false);
+                            }}
+                            className="flex-1 px-4 py-3 bg-white/5 rounded-2xl text-zinc-400 hover:text-white hover:bg-white/10 transition-all text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2"
+                          >
+                            <Download className="w-3 h-3" />
+                            Deploy
+                          </button>
+                          <button
+                            onClick={() => duplicateTemplate(t)}
+                            className="p-3 bg-white/5 rounded-2xl text-zinc-400 hover:text-blue-500 hover:bg-white/10 transition-all border border-transparent"
+                            title="Duplicate"
+                          >
+                            <Copy className="w-3 h-3" />
+                          </button>
+                          <button
+                            onClick={() => deleteTemplate(t.id!)}
+                            className="p-3 bg-white/5 rounded-2xl text-zinc-400 hover:text-red-500 hover:bg-white/10 transition-all border border-transparent"
+                            title="Expunge"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+                        
+                        <div className="flex items-center justify-between text-[8px] font-black text-zinc-700 uppercase tracking-[0.2em] px-2">
+                          <span>Payload: {t.exercises.length} Units</span>
+                          <span>Archived: {t.createdAt ? format(t.createdAt.toDate(), 'MMM d') : 'Recent'}</span>
                         </div>
                       </div>
                     ))}
                     {filteredTemplates.length === 0 && (
-                      <div className="text-center py-12 bg-zinc-950/50 border border-dashed border-zinc-800 rounded-xl space-y-4">
-                        <p className="text-zinc-500 text-sm">No templates found in this category.</p>
+                      <div className="col-span-full py-20 text-center bg-zinc-950/50 border border-dashed border-white/5 rounded-[40px] space-y-4">
+                        <Layout className="w-10 h-10 text-zinc-800 mx-auto opacity-30" />
+                        <p className="text-zinc-600 text-xs font-black uppercase tracking-widest">Vault is currently empty</p>
                         {templates.length === 0 && (
                           <button
                             onClick={seedSamples}
-                            className="text-orange-500 text-xs font-bold hover:underline"
+                            className="text-orange-500 text-[10px] font-black uppercase tracking-widest hover:underline"
                           >
-                            Seed Sample Templates
+                            Provision Sample Strategies
                           </button>
                         )}
                       </div>
@@ -5707,6 +5904,60 @@ function WorkoutManager({ client, initialDate, initialWorkout, onSave, showToast
               </div>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {activeVideo && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setActiveVideo(null)}
+              className="absolute inset-0 bg-black/95 backdrop-blur-xl"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative w-full max-w-5xl aspect-video bg-black rounded-[40px] overflow-hidden border border-white/10 shadow-2xl"
+            >
+              <iframe
+                src={`https://www.youtube.com/embed/${getYouTubeId(activeVideo.url)}?autoplay=1&mute=1&rel=0`}
+                className="w-full h-full"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+              />
+              <div className="absolute top-6 left-6 right-6 flex items-start justify-between pointer-events-none">
+                <div className="bg-black/60 backdrop-blur-md px-6 py-3 rounded-2xl border border-white/10">
+                  <h3 className="text-sm font-black uppercase tracking-tight text-white">{activeVideo.title}</h3>
+                  <p className="text-[10px] text-orange-500 font-black uppercase tracking-widest mt-0.5">High Performance Demo</p>
+                </div>
+                <button 
+                  onClick={() => setActiveVideo(null)}
+                  className="p-3 bg-black/60 backdrop-blur-md rounded-2xl text-white hover:text-orange-500 border border-white/10 transition-all pointer-events-auto"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showDuplicateModal && initialWorkout && (
+          <DuplicateWorkoutModal
+            workout={initialWorkout}
+            clients={clients}
+            onClose={() => setShowDuplicateModal(false)}
+            onDuplicate={() => {
+              setShowDuplicateModal(false);
+              showToast('Protocol Replicated Successfully!');
+            }}
+            showToast={showToast}
+          />
         )}
       </AnimatePresence>
     </div>

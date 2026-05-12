@@ -73,6 +73,7 @@ export interface Workout {
   weekNumber: number;
   dayNumber: number;
   exercises: Exercise[];
+  notes?: string;
   scheduledDate?: any; // Timestamp or Date string
   createdAt?: any;
 }
@@ -95,6 +96,7 @@ export interface WorkoutTemplate {
   name: string;
   category?: string;
   description?: string;
+  notes?: string;
   exercises: Exercise[];
   createdAt?: any;
 }

@@ -9,7 +9,7 @@ import { doc, getDoc, setDoc, updateDoc, collection, query, where, onSnapshot, o
 import { auth, db } from './lib/firebase';
 import { UserProfile, UserRole } from './types';
 import { handleFirestoreError, OperationType } from './lib/firestoreErrors';
-import { LogIn, LogOut, Dumbbell, LayoutDashboard, CheckCircle, Calendar, MessageSquare, Plus, Edit2, Trash2, ExternalLink, ChevronRight, ChevronLeft, Menu, X, Trophy } from 'lucide-react';
+import { LogIn, LogOut, Dumbbell, LayoutDashboard, CheckCircle, Calendar, MessageSquare, Plus, Edit2, Trash2, ExternalLink, ChevronRight, ChevronLeft, Menu, X, Trophy, Shield } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
 import AdminDashboard from './components/AdminDashboard';
@@ -22,6 +22,8 @@ export default function App() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [signingIn, setSigningIn] = useState(false);
+  const [previewClientId, setPreviewClientId] = useState<string | null>(null);
+  const [previewProfile, setPreviewProfile] = useState<UserProfile | null>(null);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -91,6 +93,21 @@ export default function App() {
   };
 
   const handleLogout = () => signOut(auth);
+
+  useEffect(() => {
+    if (previewClientId) {
+      setLoading(true);
+      const docRef = doc(db, 'users', previewClientId);
+      getDoc(docRef).then((docSnap) => {
+        if (docSnap.exists()) {
+          setPreviewProfile({ uid: docSnap.id, ...docSnap.data() } as UserProfile);
+        }
+        setLoading(false);
+      });
+    } else {
+      setPreviewProfile(null);
+    }
+  }, [previewClientId]);
 
   if (loading) {
     return (
@@ -170,9 +187,30 @@ export default function App() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-8">
+        {previewClientId && previewProfile && (
+          <div className="mb-6 flex items-center justify-between bg-orange-500/10 border border-orange-500/20 p-4 rounded-2xl">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-orange-500/20 rounded-lg">
+                <Shield className="w-5 h-5 text-orange-500" />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-white leading-none">Admin Preview Mode</p>
+                <p className="text-xs text-orange-500/70 font-medium">Viewing dashboard as {previewProfile.displayName}</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setPreviewClientId(null)}
+              className="px-4 py-2 bg-orange-500 text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-orange-600 transition-all shadow-lg shadow-orange-500/20"
+            >
+              Exit Preview
+            </button>
+          </div>
+        )}
         <ErrorBoundary>
-          {profile.role === 'admin' ? (
-            <AdminDashboard user={user} profile={profile} />
+          {previewClientId && previewProfile ? (
+            <ClientDashboard user={user} profile={previewProfile} />
+          ) : profile.role === 'admin' ? (
+            <AdminDashboard user={user} profile={profile} onEnterPreview={(id) => setPreviewClientId(id)} />
           ) : !profile.onboardingComplete ? (
             <LandingPage 
               user={user} 

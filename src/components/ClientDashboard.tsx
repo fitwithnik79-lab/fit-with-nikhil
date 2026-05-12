@@ -17,6 +17,7 @@ import {
   Calendar as CalendarIcon, 
   Dumbbell, 
   ChevronRight, 
+  Clock,
   Sparkles, 
   Activity, 
   X,
@@ -29,7 +30,6 @@ import {
   Users,
   User as UserIcon,
   ChevronLeft,
-  Clock,
   ArrowRight,
   MessageCircle,
   Droplets,
@@ -101,6 +101,8 @@ const GoalsAndHabits = ({ habits, habitLogs, goals, user, profile, adminProfile,
   adminProfile: UserProfile | null,
   sendAutomatedCoachMessage: (text: string, type?: 'motivation' | 'reminder') => Promise<void>
 }) => {
+  const clientId = profile.uid;
+  const isPreview = user.uid !== profile.uid;
   const [showAddHabit, setShowAddHabit] = useState(false);
   const [showAddGoal, setShowAddGoal] = useState(false);
   const [newHabit, setNewHabit] = useState({ title: '', frequency: 'daily' as const, category: 'health', icon: 'zap' });
@@ -120,7 +122,7 @@ const GoalsAndHabits = ({ habits, habitLogs, goals, user, profile, adminProfile,
       } else {
         await addDoc(collection(db, 'habitLogs'), {
           habitId,
-          clientId: user.uid,
+          clientId: clientId,
           date: todayStr,
           completed: true,
           updatedAt: serverTimestamp()
@@ -136,7 +138,7 @@ const GoalsAndHabits = ({ habits, habitLogs, goals, user, profile, adminProfile,
     setIsSaving(true);
     try {
       await addDoc(collection(db, 'habits'), {
-        clientId: user.uid,
+        clientId: clientId,
         ...newHabit,
         active: true,
         createdAt: serverTimestamp()
@@ -155,7 +157,7 @@ const GoalsAndHabits = ({ habits, habitLogs, goals, user, profile, adminProfile,
     setIsSaving(true);
     try {
       await addDoc(collection(db, 'goals'), {
-        clientId: user.uid,
+        clientId: clientId,
         ...newGoal,
         currentValue: 0,
         status: 'in-progress',
@@ -463,7 +465,8 @@ const GoalsAndHabits = ({ habits, habitLogs, goals, user, profile, adminProfile,
     </div>
   );
 };
-const TasksAndReminders = ({ reminders, user, habits, goals }: { reminders: Reminder[], user: User, habits: Habit[], goals: Goal[] }) => {
+const TasksAndReminders = ({ reminders, user, profile, habits, goals }: { reminders: Reminder[], user: User, profile: UserProfile, habits: Habit[], goals: Goal[] }) => {
+  const clientId = profile.uid;
   const [showAdd, setShowAdd] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [newReminder, setNewReminder] = useState<Partial<Reminder>>({
@@ -480,7 +483,7 @@ const TasksAndReminders = ({ reminders, user, habits, goals }: { reminders: Remi
     setIsSaving(true);
     try {
       await addDoc(collection(db, 'reminders'), {
-        clientId: user.uid,
+        clientId: clientId,
         ...newReminder,
         active: true,
         createdAt: serverTimestamp()
@@ -1064,7 +1067,237 @@ interface ClientDashboardProps {
   profile: UserProfile;
 }
 
+function ExerciseHistoryView({ clientUid, exerciseName }: { clientUid: string, exerciseName: string }) {
+  const [history, setHistory] = useState<{ last: string, pb: string } | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchHistory = async () => {
+      try {
+        const q = query(
+          collection(db, 'workouts'),
+          where('clientId', '==', clientUid),
+          orderBy('scheduledDate', 'desc')
+        );
+        
+        const snapshot = await getDocs(q);
+        const workouts = snapshot.docs.map(d => d.data() as Workout);
+        
+        let lastPerformance = '';
+        let maxWeight = 0;
+        let pbString = '';
+
+        const parseWeight = (w: string) => {
+          const num = parseFloat(w.replace(/[^\d.]/g, ''));
+          return isNaN(num) ? 0 : num;
+        };
+
+        for (const w of workouts) {
+          const ex = w.exercises.find(e => e.name.toLowerCase() === exerciseName.toLowerCase() && e.isCompleted);
+          if (ex) {
+            if (!lastPerformance && ex.completedWeight) {
+              lastPerformance = `${ex.completedWeight} x ${ex.completedReps}`;
+            }
+            if (ex.completedWeight) {
+              const wVal = parseWeight(ex.completedWeight);
+              if (wVal > maxWeight) {
+                maxWeight = wVal;
+                pbString = `${ex.completedWeight} x ${ex.completedReps}`;
+              }
+            }
+          }
+        }
+
+        setHistory({ last: lastPerformance, pb: pbString });
+      } catch (error) {
+        console.error("Error fetching exercise history:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchHistory();
+  }, [clientUid, exerciseName]);
+
+  if (loading) return <div className="animate-pulse h-4 w-24 bg-zinc-800 rounded mt-1" />;
+  if (!history?.last && !history?.pb) return null;
+
+  return (
+    <div className="flex gap-4 mt-2">
+      {history.last && (
+        <div className="flex items-center gap-1.5 text-[10px] font-bold text-zinc-500">
+          <Clock className="w-3 h-3 text-zinc-600" />
+          LAST: <span className="text-zinc-300 uppercase tracking-tight">{history.last}</span>
+        </div>
+      )}
+      {history.pb && (
+        <div className="flex items-center gap-1.5 text-[10px] font-bold text-zinc-500">
+          <Trophy className="w-3 h-3 text-orange-500" />
+          PB: <span className="text-orange-500 uppercase tracking-tight italic">{history.pb}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PersonalBestsWall({ workouts }: { workouts: Workout[] }) {
+  const pbs = useMemo(() => {
+    const map: Record<string, { weight: number, display: string, date: string }> = {};
+    
+    const parseWeight = (w: string) => {
+      const num = parseFloat(w.replace(/[^\d.]/g, ''));
+      return isNaN(num) ? 0 : num;
+    };
+
+    workouts.forEach(w => {
+      w.exercises.forEach(ex => {
+        if (ex.isCompleted && ex.completedWeight) {
+          const wVal = parseWeight(ex.completedWeight);
+          if (!map[ex.name] || wVal > map[ex.name].weight) {
+            map[ex.name] = {
+              weight: wVal,
+              display: `${ex.completedWeight} x ${ex.completedReps}`,
+              date: w.scheduledDate || 'Unknown'
+            };
+          }
+        }
+      });
+    });
+
+    return Object.entries(map).sort((a, b) => b[1].weight - a[1].weight);
+  }, [workouts]);
+
+  if (pbs.length === 0) return null;
+
+  return (
+    <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 space-y-6">
+      <div>
+        <h3 className="text-xl font-bold flex items-center gap-2">
+          <Trophy className="w-5 h-5 text-orange-500" />
+          Personal Performance Records
+        </h3>
+        <p className="text-zinc-500 text-xs">Your all-time heaviest tactical achievements.</p>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {pbs.slice(0, 6).map(([name, data]) => (
+          <div key={name} className="flex items-center justify-between p-4 bg-zinc-950 border border-zinc-800 rounded-2xl group hover:border-orange-500/30 transition-all">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-widest text-zinc-600 mb-0.5">{name}</p>
+              <p className="text-lg font-black text-white italic tracking-tighter">{data.display}</p>
+            </div>
+            <div className="text-right">
+              <div className="w-8 h-8 rounded-full bg-orange-500/10 flex items-center justify-center text-orange-500 mb-1 ml-auto">
+                <Trophy className="w-4 h-4" />
+              </div>
+              <p className="text-[9px] font-bold text-zinc-700 tracking-wider">SET ON {data.date === 'Unknown' ? 'LOG' : format(parseISO(data.date), 'MMM d, yyyy')}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ConsistencyTracker({ workouts, feedback }: { workouts: Workout[], feedback: Feedback[] }) {
+  const thirtyDays = useMemo(() => {
+    const days = [];
+    for (let i = 29; i >= 0; i--) {
+      days.push(subDays(new Date(), i));
+    }
+    return days;
+  }, []);
+
+  const stats = useMemo(() => {
+    const scheduledCount = workouts.filter(w => {
+      if (!w.scheduledDate) return false;
+      const d = parseISO(w.scheduledDate);
+      return d <= new Date();
+    }).length;
+
+    const completedCount = feedback.length;
+    const rate = scheduledCount > 0 ? Math.round((completedCount / scheduledCount) * 100) : 0;
+    
+    return { scheduledCount, completedCount, rate };
+  }, [workouts, feedback]);
+
+  return (
+    <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-2xl font-bold flex items-center gap-2 tracking-tighter uppercase italic">
+            <Activity className="w-6 h-6 text-orange-500" />
+            Execution <span className="text-orange-500">Consistency</span>
+          </h3>
+          <p className="text-zinc-500 text-sm font-medium">Your tactical consistency over the last 30 days.</p>
+        </div>
+        <div className="text-right">
+          <div className="text-4xl font-black text-orange-500 italic tracking-tighter leading-none">{stats.rate}%</div>
+          <p className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest mt-1">Completion Rate</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+        <div className="bg-zinc-950/50 border border-zinc-800 p-4 rounded-2xl">
+          <div className="text-zinc-500 text-[10px] font-black uppercase tracking-widest mb-1">Assigned</div>
+          <div className="text-2xl font-bold text-white">{stats.scheduledCount}</div>
+        </div>
+        <div className="bg-zinc-950/50 border border-zinc-800 p-4 rounded-2xl">
+          <div className="text-zinc-500 text-[10px] font-black uppercase tracking-widest mb-1">Crushed</div>
+          <div className="text-2xl font-bold text-green-500">{stats.completedCount}</div>
+        </div>
+        <div className="bg-zinc-950/50 border border-zinc-800 p-4 rounded-2xl sm:col-span-1 col-span-2">
+          <div className="text-zinc-500 text-[10px] font-black uppercase tracking-widest mb-1">Consistency Tier</div>
+          <div className="text-2xl font-bold text-orange-500">
+            {stats.rate >= 90 ? 'Elite' : stats.rate >= 75 ? 'Advanced' : stats.rate >= 50 ? 'Intermediate' : 'Beginner'}
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Momentum Grid</span>
+          <div className="flex items-center gap-4 text-[9px] font-bold text-zinc-600 uppercase tracking-widest">
+            <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-sm bg-orange-500" /> DONE</div>
+            <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-sm bg-zinc-800" /> MISSED</div>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {thirtyDays.map((date, idx) => {
+            const dateStr = format(date, 'yyyy-MM-dd');
+            const wasScheduled = workouts.some(w => w.scheduledDate === dateStr);
+            const wasCompleted = feedback.some(f => {
+              if (!f.createdAt) return false;
+              const fDate = (f.createdAt as any).toDate ? (f.createdAt as any).toDate() : new Date(f.createdAt as any);
+              return isSameDay(fDate, date);
+            });
+
+            return (
+              <div 
+                key={idx}
+                className={cn(
+                  "w-8 h-8 rounded-lg flex items-center justify-center text-[10px] font-bold transition-all",
+                  wasCompleted ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : 
+                  wasScheduled && date < startOfDay(new Date()) ? "bg-zinc-800 text-zinc-600 border border-red-500/10" : 
+                  wasScheduled ? "bg-zinc-900 border border-orange-500/20 text-orange-500/50 animate-pulse" :
+                  "bg-zinc-950 border border-zinc-900 text-zinc-800"
+                )}
+                title={`${format(date, 'MMM d')}: ${wasCompleted ? 'Crushed' : wasScheduled ? 'Missed' : 'Rest Day'}`}
+              >
+                {format(date, 'd')}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ClientDashboard({ user, profile }: ClientDashboardProps) {
+  const isPreview = user.uid !== profile.uid;
+  const clientId = profile.uid;
+  
   const [currentWorkout, setCurrentWorkout] = useState<Workout | null>(null);
   const [allWorkouts, setAllWorkouts] = useState<Workout[]>([]);
   const [allFeedback, setAllFeedback] = useState<Feedback[]>([]);
@@ -1099,7 +1332,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     if (!profile.googleFitTokens) return;
     setSyncingFit(true);
     try {
-      const accessToken = await GoogleFitService.getValidAccessToken(user.uid);
+      const accessToken = await GoogleFitService.getValidAccessToken(clientId);
       if (!accessToken) {
         console.warn('Could not get valid Google Fit access token');
         setSyncingFit(false);
@@ -1109,7 +1342,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
       const steps = await GoogleFitService.fetchDailySteps(accessToken);
       
       const dateStr = format(new Date(), 'yyyy-MM-dd');
-      const q = query(collection(db, 'metrics'), where('clientId', '==', user.uid), where('date', '==', dateStr));
+      const q = query(collection(db, 'metrics'), where('clientId', '==', clientId), where('date', '==', dateStr));
       const snap = await getDocs(q);
       
       if (!snap.empty) {
@@ -1123,7 +1356,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
         }
       } else {
         await addDoc(collection(db, 'metrics'), {
-          clientId: user.uid,
+          clientId: clientId,
           date: dateStr,
           waterIntake: 0,
           stepCount: steps,
@@ -1147,12 +1380,12 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
       const interval = setInterval(syncGoogleFitSteps, 30 * 60 * 1000);
       return () => clearInterval(interval);
     }
-  }, [profile.googleFitTokens, loading, user.uid]);
+  }, [profile.googleFitTokens, loading, clientId]);
 
   const handleConnectGoogleFit = async () => {
     try {
       const tokens = await GoogleFitService.connect();
-      await GoogleFitService.saveTokens(user.uid, tokens);
+      await GoogleFitService.saveTokens(clientId, tokens);
       syncGoogleFitSteps();
     } catch (error: any) {
       console.error('Connection failed:', error);
@@ -1165,10 +1398,10 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   };
 
   useEffect(() => {
-    if (!user.uid) return;
+    if (!clientId) return;
     const q = query(
       collection(db, 'notifications'),
-      where('clientId', '==', user.uid),
+      where('clientId', '==', clientId),
       orderBy('createdAt', 'desc'),
       limit(50)
     );
@@ -1188,7 +1421,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     });
 
     return () => unsubscribe();
-  }, [user.uid]);
+  }, [clientId]);
 
   const markNotificationAsRead = async (id: string) => {
     try {
@@ -1209,17 +1442,17 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   const unreadNotificationsCount = useMemo(() => notifications.filter(n => !n.isRead).length, [notifications]);
 
   useEffect(() => {
-    if (user.uid) {
-      requestNotificationPermission(user.uid);
+    if (clientId) {
+      requestNotificationPermission(clientId);
       onForegroundMessage();
     }
-  }, [user.uid]);
+  }, [clientId]);
 
   useEffect(() => {
-    if (!user.uid) return;
+    if (!clientId) return;
     const q = query(
       collection(db, 'messages'),
-      where('receiverId', '==', user.uid),
+      where('receiverId', '==', clientId),
       orderBy('createdAt', 'desc'),
       limit(20)
     );
@@ -1234,7 +1467,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
         snapshot.docChanges().forEach((change) => {
           if (change.type === "added") {
             const msg = change.doc.data() as Message;
-            if (msg.senderId !== user.uid) {
+            if (msg.senderId !== clientId) {
               // Always play sound and vibrate for incoming messages
               playNotificationSound();
 
@@ -1253,7 +1486,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
       handleFirestoreError(error, OperationType.LIST, 'messages');
     });
     return () => unsubscribe();
-  }, [user.uid]);
+  }, [clientId]);
 
   const unreadCount = useMemo(() => messages.filter(m => !m.isRead).length, [messages]);
 
@@ -1266,8 +1499,8 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   }, [allFeedback, currentWorkout?.id]);
 
   useEffect(() => {
-    if (!user.uid) return;
-    const q = query(collection(db, 'nutritionPlans'), where('clientId', '==', user.uid), where('isActive', '==', true), limit(1));
+    if (!clientId) return;
+    const q = query(collection(db, 'nutritionPlans'), where('clientId', '==', clientId), where('isActive', '==', true), limit(1));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       if (!snapshot.empty) {
         setActiveNutritionPlan({ id: snapshot.docs[0].id, ...snapshot.docs[0].data() } as NutritionPlan);
@@ -1278,11 +1511,11 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
       handleFirestoreError(error, OperationType.GET, 'nutritionPlans');
     });
     return () => unsubscribe();
-  }, [user.uid]);
+  }, [clientId]);
 
   // Achievement Badge Logic
   useEffect(() => {
-    if (!user.uid || !profile) return;
+    if (!clientId || !profile) return;
     
     const checkBadges = async () => {
       const currentBadges = profile.badges || [];
@@ -1308,11 +1541,11 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
         updated = true;
       }
 
-      if (updated) {
+      if (updated && !isPreview) {
         try {
-          await updateDoc(doc(db, 'users', user.uid), { badges: newBadges });
+          await updateDoc(doc(db, 'users', clientId), { badges: newBadges });
         } catch (error) {
-          handleFirestoreError(error, OperationType.UPDATE, `users/${user.uid}`);
+          handleFirestoreError(error, OperationType.UPDATE, `users/${clientId}`);
         }
       }
     };
@@ -1320,7 +1553,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     if (!loading) {
       checkBadges();
     }
-  }, [profile?.streak, allFeedback.length, meals.length, user.uid, loading]);
+  }, [profile?.streak, allFeedback.length, meals.length, clientId, loading, isPreview]);
 
   const handleTogglePlannedMeal = async (mealId: string) => {
     if (!activeNutritionPlan?.id || !activeNutritionPlan.plannedMeals) return;
@@ -1354,7 +1587,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
         const adminUid = snap.docs[0].id;
         await addDoc(collection(db, 'messages'), {
           senderId: adminUid,
-          receiverId: user.uid,
+          receiverId: clientId,
           text,
           isRead: false,
           type,
@@ -1395,7 +1628,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     // Fetch metrics
     const q = query(
       collection(db, 'metrics'),
-      where('clientId', '==', user.uid),
+      where('clientId', '==', clientId),
       orderBy('date', 'desc'),
       limit(30)
     );
@@ -1412,13 +1645,13 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     });
 
     return () => unsubscribe();
-  }, [user.uid]);
+  }, [clientId]);
 
   useEffect(() => {
     // Fetch meals
     const q = query(
       collection(db, 'meals'),
-      where('clientId', '==', user.uid),
+      where('clientId', '==', clientId),
       orderBy('date', 'desc'),
       limit(50)
     );
@@ -1431,13 +1664,13 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     });
 
     return () => unsubscribe();
-  }, [user.uid]);
+  }, [clientId]);
   
   useEffect(() => {
-    if (!user.uid) return;
+    if (!clientId) return;
     
     // Fetch Habits
-    const qHabits = query(collection(db, 'habits'), where('clientId', '==', user.uid), where('active', '==', true));
+    const qHabits = query(collection(db, 'habits'), where('clientId', '==', clientId), where('active', '==', true));
     const unsubscribeHabits = onSnapshot(qHabits, (snapshot) => {
       setHabits(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as Habit));
       setHabitLoading(false);
@@ -1447,7 +1680,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
 
     // Fetch Habit Logs for last 7 days
     const sevenDaysAgo = format(subDays(new Date(), 7), 'yyyy-MM-dd');
-    const qLogs = query(collection(db, 'habitLogs'), where('clientId', '==', user.uid), where('date', '>=', sevenDaysAgo));
+    const qLogs = query(collection(db, 'habitLogs'), where('clientId', '==', clientId), where('date', '>=', sevenDaysAgo));
     const unsubscribeLogs = onSnapshot(qLogs, (snapshot) => {
       setHabitLogs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as HabitLog));
     }, (error) => {
@@ -1455,7 +1688,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     });
 
     // Fetch Goals
-    const qGoals = query(collection(db, 'goals'), where('clientId', '==', user.uid));
+    const qGoals = query(collection(db, 'goals'), where('clientId', '==', clientId));
     const unsubscribeGoals = onSnapshot(qGoals, (snapshot) => {
       setGoals(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as Goal));
     }, (error) => {
@@ -1463,7 +1696,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     });
 
     // Fetch Reminders
-    const qReminders = query(collection(db, 'reminders'), where('clientId', '==', user.uid));
+    const qReminders = query(collection(db, 'reminders'), where('clientId', '==', clientId));
     const unsubscribeReminders = onSnapshot(qReminders, (snapshot) => {
       setReminders(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Reminder)));
     }, (error) => {
@@ -1476,7 +1709,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
       unsubscribeGoals();
       unsubscribeReminders();
     };
-  }, [user.uid]);
+  }, [clientId]);
 
   const [toastNotification, setToastNotification] = useState<{title: string, message: string, type: string} | null>(null);
 
@@ -1498,25 +1731,27 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
 
         // Compare time
         if (reminder.time === currentTime && reminder.lastNotified !== todayKey) {
-          // Trigger notification
-          try {
-            playNotificationSound();
-          } catch (e) {
-            console.warn('Audio play failed:', e);
-          }
-          
-          setToastNotification({
-            title: reminder.title,
-            message: reminder.description || 'Time for your scheduled task!',
-            type: reminder.type
-          });
-
-          // Native Browser Notification
-          if ("Notification" in window && Notification.permission === "granted") {
-            new Notification(`Coach Nik Reminder: ${reminder.title}`, {
-              body: reminder.description || 'Execution required. Keep the momentum high.',
-              icon: '/favicon.ico'
+          // Only trigger actual notifications if NOT in preview mode
+          if (!isPreview) {
+            try {
+              playNotificationSound();
+            } catch (e) {
+              console.warn('Audio play failed:', e);
+            }
+            
+            setToastNotification({
+              title: reminder.title,
+              message: reminder.description || 'Time for your scheduled task!',
+              type: reminder.type
             });
+
+            // Native Browser Notification
+            if ("Notification" in window && Notification.permission === "granted") {
+              new Notification(`Coach Nik Reminder: ${reminder.title}`, {
+                body: reminder.description || 'Execution required. Keep the momentum high.',
+                icon: '/favicon.ico'
+              });
+            }
           }
 
           // Mark as notified for this minute to prevent multiple triggers
@@ -1533,7 +1768,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
 
     const interval = setInterval(checkReminders, 30000); // Check every 30 seconds
     return () => clearInterval(interval);
-  }, [reminders, user.uid]);
+  }, [reminders, clientId, isPreview]);
 
   useEffect(() => {
     if (toastNotification) {
@@ -1546,7 +1781,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     // Fetch all workouts for calendar and program
     const qAll = query(
       collection(db, 'workouts'),
-      where('clientId', '==', user.uid),
+      where('clientId', '==', clientId),
       orderBy('scheduledDate', 'desc')
     );
 
@@ -1572,14 +1807,14 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     });
 
     return () => unsubscribe();
-  }, [user.uid]);
+  }, [clientId]);
 
   useEffect(() => {
     // Get feedback for the last 30 days
     const thirtyDaysAgo = subDays(new Date(), 90);
     const q = query(
       collection(db, 'feedback'),
-      where('clientId', '==', user.uid),
+      where('clientId', '==', clientId),
       where('createdAt', '>=', thirtyDaysAgo),
       orderBy('createdAt', 'desc')
     );
@@ -1595,12 +1830,14 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     });
 
     return () => unsubscribe();
-  }, [user.uid]);
+  }, [clientId]);
 
   // Automated reminders for missed workouts/meals
   useEffect(() => {
     const checkMissedCheckins = async () => {
-      const lastCheckKey = `last_checkin_reminder_${user.uid}_${format(new Date(), 'yyyy-MM-dd')}`;
+      if (isPreview) return; // Don't send automated reminders in preview mode
+      
+      const lastCheckKey = `last_checkin_reminder_${clientId}_${format(new Date(), 'yyyy-MM-dd')}`;
       if (localStorage.getItem(lastCheckKey)) return;
 
       const yesterday = subDays(new Date(), 1);
@@ -1630,7 +1867,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     if (!loading && allWorkouts.length > 0 && allFeedback.length > 0) {
       checkMissedCheckins();
     }
-  }, [loading, allWorkouts, allFeedback, meals, user.uid]);
+  }, [loading, allWorkouts, allFeedback, meals, clientId, isPreview]);
 
   useEffect(() => {
     if ("Notification" in window && Notification.permission === "default") {
@@ -1669,7 +1906,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
       }
 
       await addDoc(collection(db, 'feedback'), {
-        clientId: user.uid,
+        clientId: clientId,
         workoutId: workout.id,
         weekNumber: workout.weekNumber,
         dayNumber: workout.dayNumber,
@@ -2088,34 +2325,35 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                            </div>
                         </div>
 
-                        <QuickLog 
-                          todayMetrics={todayMetrics} 
-                          profile={profile}
-                          syncingFit={syncingFit}
-                          onSyncFit={syncGoogleFitSteps}
-                          onLog={async (data) => {
-                            const dateStr = format(new Date(), 'yyyy-MM-dd');
-                            const q = query(collection(db, 'metrics'), where('clientId', '==', user.uid), where('date', '==', dateStr));
-                            const snap = await getDocs(q);
-                            
-                            if (!snap.empty) {
-                              await updateDoc(doc(db, 'metrics', snap.docs[0].id), {
-                                ...data,
-                                updatedAt: serverTimestamp()
-                              });
-                            } else {
-                              await addDoc(collection(db, 'metrics'), {
-                                clientId: user.uid,
-                                date: dateStr,
-                                waterIntake: 0,
-                                stepCount: 0,
-                                calories: 0,
-                                ...data,
-                                createdAt: serverTimestamp()
-                              });
-                            }
-                          }} 
-                        />
+                          <QuickLog 
+                            todayMetrics={todayMetrics} 
+                            profile={profile}
+                            syncingFit={syncingFit}
+                            onSyncFit={syncGoogleFitSteps}
+                            onLog={async (data) => {
+                              if (isPreview) return;
+                              const dateStr = format(new Date(), 'yyyy-MM-dd');
+                              const q = query(collection(db, 'metrics'), where('clientId', '==', clientId), where('date', '==', dateStr));
+                              const snap = await getDocs(q);
+                              
+                              if (!snap.empty) {
+                                await updateDoc(doc(db, 'metrics', snap.docs[0].id), {
+                                  ...data,
+                                  updatedAt: serverTimestamp()
+                                });
+                              } else {
+                                await addDoc(collection(db, 'metrics'), {
+                                  clientId: clientId,
+                                  date: dateStr,
+                                  waterIntake: 0,
+                                  stepCount: 0,
+                                  calories: 0,
+                                  ...data,
+                                  createdAt: serverTimestamp()
+                                });
+                              }
+                            }} 
+                          />
 
                         {lastFeedback?.motivationalMessage && (
                           <motion.div 
@@ -2138,19 +2376,20 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                         )}
 
                         {currentWorkout ? (
-                          <WorkoutCard 
-                            workout={currentWorkout} 
-                            onComplete={() => setShowFeedbackForm(true)}
-                            showFeedbackForm={showFeedbackForm}
-                            setShowFeedbackForm={setShowFeedbackForm}
-                            clientNote={clientNote}
-                            setClientNote={setClientNote}
-                            submitting={submitting}
-                            submittingError={submittingError}
-                            handleComplete={(feedback) => handleComplete(currentWorkout, feedback)}
-                            isCompletedToday={isWorkoutCompletedToday}
-                            setActiveVideo={setActiveVideo}
-                          />
+                            <WorkoutCard 
+                              workout={currentWorkout} 
+                              onComplete={() => setShowFeedbackForm(true)}
+                              showFeedbackForm={showFeedbackForm}
+                              setShowFeedbackForm={setShowFeedbackForm}
+                              clientNote={clientNote}
+                              setClientNote={setClientNote}
+                              submitting={submitting}
+                              submittingError={submittingError}
+                              handleComplete={(feedback) => handleComplete(currentWorkout, feedback)}
+                              isCompletedToday={isWorkoutCompletedToday}
+                              setActiveVideo={setActiveVideo}
+                              clientUid={clientId}
+                            />
                         ) : (
                           <div className="p-12 md:p-20 bg-zinc-950 border border-white/5 border-dashed rounded-[48px] flex flex-col items-center justify-center text-center space-y-6">
                             <div className="w-20 h-20 bg-zinc-900 rounded-full flex items-center justify-center group">
@@ -2206,14 +2445,15 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                             </div>
                             <button 
                               onClick={() => {
+                                if (isPreview) return;
                                 const newAmount = (todayMetrics?.waterIntake || 0) + 250;
                                 const dateStr = format(new Date(), 'yyyy-MM-dd');
-                                const q = query(collection(db, 'metrics'), where('clientId', '==', user.uid), where('date', '==', dateStr));
+                                const q = query(collection(db, 'metrics'), where('clientId', '==', clientId), where('date', '==', dateStr));
                                 getDocs(q).then(snap => {
                                   if (!snap.empty) {
                                     updateDoc(doc(db, 'metrics', snap.docs[0].id), { waterIntake: newAmount, updatedAt: serverTimestamp() });
                                   } else {
-                                    addDoc(collection(db, 'metrics'), { clientId: user.uid, date: dateStr, waterIntake: newAmount, stepCount: 0, calories: 0, createdAt: serverTimestamp() });
+                                    addDoc(collection(db, 'metrics'), { clientId: clientId, date: dateStr, waterIntake: newAmount, stepCount: 0, calories: 0, createdAt: serverTimestamp() });
                                   }
                                 });
                               }}
@@ -2621,6 +2861,13 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                   </div>
                 </div>
 
+                <ConsistencyTracker 
+                  workouts={allWorkouts} 
+                  feedback={allFeedback} 
+                />
+
+                <PersonalBestsWall workouts={allWorkouts} />
+
                 <MetricsTracker 
                   user={user} 
                   profile={profile}
@@ -2823,6 +3070,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                 <TasksAndReminders 
                   reminders={reminders}
                   user={user}
+                  profile={profile}
                   habits={habits}
                   goals={goals}
                 />
@@ -2910,6 +3158,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                     return isSameDay(fDate, new Date());
                   })}
                   setActiveVideo={setActiveVideo}
+                  clientUid={user.uid}
                 />
               </div>
             </motion.div>
@@ -3589,7 +3838,8 @@ function WorkoutCard({
   submittingError,
   handleComplete,
   isCompletedToday,
-  setActiveVideo
+  setActiveVideo,
+  clientUid
 }: { 
   workout: Workout, 
   onComplete: () => void,
@@ -3607,7 +3857,8 @@ function WorkoutCard({
     isCompleted: boolean 
   }>) => void,
   isCompletedToday: boolean,
-  setActiveVideo: (v: { url: string, title?: string } | null) => void
+  setActiveVideo: (v: { url: string, title?: string } | null) => void,
+  clientUid: string
 }) {
   const [showConfirm, setShowConfirm] = useState(false);
   const [exerciseFeedback, setExerciseFeedback] = useState<Record<number, { completedWeight: string, completedReps: string, completedSets: number, clientNote: string, isCompleted: boolean }>>({});
@@ -3704,6 +3955,7 @@ function WorkoutCard({
                   <h3 className={cn("text-xl font-bold transition-colors", exerciseFeedback[idx]?.isCompleted && "text-zinc-500 line-through")}>
                     {ex.name}
                   </h3>
+                  <ExerciseHistoryView clientUid={clientUid} exerciseName={ex.name} />
                   <div className="flex flex-wrap gap-3 mt-2">
                     <div className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-950 rounded-lg border border-zinc-800 text-xs font-bold text-zinc-400">
                       <span className="text-orange-500">{ex.sets}</span> SETS
@@ -4932,6 +5184,10 @@ function ProfileSection({ user, profile, setShowChat, onConnectGoogleFit, isGoog
   };
 
   const handleSave = async () => {
+    if (user.uid !== profile.uid) {
+      setMessage({ text: 'Preview mode: profile updates disabled.', type: 'error' });
+      return;
+    }
     setIsSaving(true);
     setMessage(null);
     try {
