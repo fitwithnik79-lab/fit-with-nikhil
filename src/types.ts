@@ -60,6 +60,7 @@ export interface Exercise {
   weight: string;
   rest: string;
   coachNote: string;
+  block?: string;
   completedWeight?: string;
   completedReps?: string;
   completedSets?: number;

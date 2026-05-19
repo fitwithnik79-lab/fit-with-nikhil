@@ -10,7 +10,7 @@ import { triggerPushNotification, sendInAppNotification } from '../lib/notificat
 import { SAMPLE_PROGRAMS, WEEKLY_PROGRAMS, WORKOUT_TEMPLATES } from '../constants/workoutTemplates';
 import { NUTRITION_TEMPLATES } from '../constants/nutritionTemplates';
 import { NutritionPlan, NutritionTemplate } from '../types';
-import { Plus, Users, Calendar, CheckCircle, ExternalLink, ChevronRight, Search, Activity, Clock, MessageSquare, Trash2, Edit2, ChevronDown, ChevronUp, Save, Download, Layout, Copy, ChevronLeft, Play, Sparkles, Loader2, Droplets, Footprints, Flame, Scale, LayoutDashboard, X, Bell, Send, BookOpen, Layers, Upload, Youtube, Utensils, Shield, Zap, ArrowRight, Check, Target, RefreshCcw, Circle, Settings, Camera, TrendingUp, Calculator, Dumbbell, FileSearch } from 'lucide-react';
+import { Plus, Users, Calendar, CheckCircle, ExternalLink, ChevronRight, Search, Activity, Clock, MessageSquare, Trash2, Edit2, ChevronDown, ChevronUp, Save, Download, Layout, Copy, ChevronLeft, Play, Sparkles, Loader2, Droplets, Footprints, Flame, Scale, LayoutDashboard, X, Bell, Send, BookOpen, Layers, Upload, Youtube, Utensils, Shield, Zap, ArrowRight, Check, Target, RefreshCcw, Circle, Settings, Camera, TrendingUp, Calculator, Dumbbell, FileSearch, FileType } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, playNotificationSound, getAvatarUrl } from '../lib/utils';
 import Chat from './Chat';
@@ -1179,7 +1179,7 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
           >
-            <TemplatesView clients={clients} showToast={showToast} />
+            <TemplatesView clients={clients} showToast={showToast} confirmAction={confirmAction} />
           </motion.div>
         )}
 
@@ -1479,58 +1479,91 @@ function FeedbackDetailModal({ feedback, workout, onClose }: { feedback: Feedbac
                 <p className="text-zinc-600 text-sm italic">Workout details could not be retrieved. The source document may have been removed.</p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 gap-4">
-                {workout.exercises.map((ex, idx) => (
-                  <div 
-                    key={idx}
-                    className={cn(
-                      "group p-6 rounded-[32px] border transition-all flex flex-col md:flex-row md:items-center justify-between gap-6",
-                      ex.isCompleted 
-                        ? "bg-zinc-900/50 border-white/5 hover:border-green-500/30" 
-                        : "bg-zinc-900/20 border-white/5 opacity-60 hover:opacity-100"
-                    )}
-                  >
-                    <div className="flex items-center gap-6">
-                      <div className={cn(
-                        "w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 border",
-                        ex.isCompleted ? "bg-green-500/10 border-green-500/20 text-green-500" : "bg-zinc-800 border-white/5 text-zinc-500"
-                      )}>
-                        {ex.isCompleted ? <Check className="w-6 h-6" /> : <Circle className="w-6 h-6" />}
+              <div className="space-y-12">
+                {(() => {
+                  const blockOrder = ['Warm-Up', 'Conditioning', 'Cool Down'];
+                  const grouped = workout.exercises.reduce((acc, ex, idx) => {
+                    const block = ex.block || 'Main Session';
+                    if (!acc[block]) acc[block] = [];
+                    acc[block].push({ ...ex, originalIndex: idx });
+                    return acc;
+                  }, {} as Record<string, (Exercise & { originalIndex: number })[]>);
+
+                  const sortedBlockNames = Object.keys(grouped).sort((a, b) => {
+                    const indexA = blockOrder.indexOf(a);
+                    const indexB = blockOrder.indexOf(b);
+                    if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+                    if (indexA !== -1) return -1;
+                    if (indexB !== -1) return 1;
+                    return a.localeCompare(b);
+                  });
+
+                  return sortedBlockNames.map((blockName) => (
+                    <div key={blockName} className="space-y-6">
+                      <div className="flex items-center gap-3">
+                        <div className="h-px w-8 bg-orange-500/30" />
+                        <span className="text-[10px] font-black uppercase tracking-[0.3em] text-zinc-500">
+                          {blockName}
+                        </span>
+                        <div className="h-px flex-1 bg-gradient-to-r from-orange-500/30 to-transparent" />
                       </div>
-                      <div>
-                        <h5 className="font-black text-lg text-white group-hover:text-orange-500 transition-colors uppercase tracking-tight">{ex.name}</h5>
-                        <div className="flex items-center gap-3 mt-1 text-[10px] font-black uppercase tracking-widest text-zinc-500">
-                          <span>Target: {ex.sets}x{ex.reps} @ {ex.weight || 'Bodyweight'}</span>
-                          {ex.rest && <span>• Rest: {ex.rest}</span>}
-                        </div>
+                      
+                      <div className="grid grid-cols-1 gap-4">
+                        {grouped[blockName].map(({ originalIndex, ...ex }) => (
+                          <div 
+                            key={originalIndex}
+                            className={cn(
+                              "group p-6 rounded-[32px] border transition-all flex flex-col md:flex-row md:items-center justify-between gap-6",
+                              ex.isCompleted 
+                                ? "bg-zinc-900/50 border-white/5 hover:border-green-500/30" 
+                                : "bg-zinc-900/20 border-white/5 opacity-60 hover:opacity-100"
+                            )}
+                          >
+                            <div className="flex items-center gap-6">
+                              <div className={cn(
+                                "w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 border",
+                                ex.isCompleted ? "bg-green-500/10 border-green-500/20 text-green-500" : "bg-zinc-800 border-white/5 text-zinc-500"
+                              )}>
+                                {ex.isCompleted ? <Check className="w-6 h-6" /> : <Circle className="w-6 h-6" />}
+                              </div>
+                              <div>
+                                <h5 className="font-black text-lg text-white group-hover:text-orange-500 transition-colors uppercase tracking-tight">{ex.name}</h5>
+                                <div className="flex items-center gap-3 mt-1 text-[10px] font-black uppercase tracking-widest text-zinc-500">
+                                  <span>Target: {ex.sets}x{ex.reps} @ {ex.weight || 'Bodyweight'}</span>
+                                  {ex.rest && <span>• Rest: {ex.rest}</span>}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-8 bg-zinc-950/80 px-8 py-4 rounded-[24px] border border-white/5">
+                              <div className="text-center">
+                                <p className="text-lg font-black text-white italic">{ex.completedSets || 0}</p>
+                                <p className="text-[9px] font-black uppercase text-zinc-600 tracking-tighter">Sets</p>
+                              </div>
+                              <div className="w-px h-8 bg-white/5" />
+                              <div className="text-center">
+                                <p className="text-lg font-black text-white italic">{ex.completedReps || '-'}</p>
+                                <p className="text-[9px] font-black uppercase text-zinc-600 tracking-tighter">Reps</p>
+                              </div>
+                              <div className="w-px h-8 bg-white/5" />
+                              <div className="text-center">
+                                <p className="text-lg font-black text-orange-500 italic">{ex.completedWeight || '-'}</p>
+                                <p className="text-[9px] font-black uppercase text-zinc-600 tracking-tighter">Load</p>
+                              </div>
+                            </div>
+
+                            {ex.clientNote && (
+                              <div className="md:max-w-xs text-right hidden xl:block">
+                                <p className="text-[10px] font-black uppercase text-zinc-600 mb-1">Exercise Note</p>
+                                <p className="text-xs text-zinc-400 italic">"{ex.clientNote}"</p>
+                              </div>
+                            )}
+                          </div>
+                        ))}
                       </div>
                     </div>
-
-                    <div className="flex items-center gap-8 bg-zinc-950/80 px-8 py-4 rounded-[24px] border border-white/5">
-                      <div className="text-center">
-                        <p className="text-lg font-black text-white italic">{ex.completedSets || 0}</p>
-                        <p className="text-[9px] font-black uppercase text-zinc-600 tracking-tighter">Sets</p>
-                      </div>
-                      <div className="w-px h-8 bg-white/5" />
-                      <div className="text-center">
-                        <p className="text-lg font-black text-white italic">{ex.completedReps || '-'}</p>
-                        <p className="text-[9px] font-black uppercase text-zinc-600 tracking-tighter">Reps</p>
-                      </div>
-                      <div className="w-px h-8 bg-white/5" />
-                      <div className="text-center">
-                        <p className="text-lg font-black text-orange-500 italic">{ex.completedWeight || '-'}</p>
-                        <p className="text-[9px] font-black uppercase text-zinc-600 tracking-tighter">Load</p>
-                      </div>
-                    </div>
-
-                    {ex.clientNote && (
-                      <div className="md:max-w-xs text-right hidden xl:block">
-                        <p className="text-[10px] font-black uppercase text-zinc-600 mb-1">Exercise Note</p>
-                        <p className="text-xs text-zinc-400 italic">"{ex.clientNote}"</p>
-                      </div>
-                    )}
-                  </div>
-                ))}
+                  ));
+                })()}
               </div>
             )}
           </div>
@@ -1549,7 +1582,7 @@ function FeedbackDetailModal({ feedback, workout, onClose }: { feedback: Feedbac
   );
 }
 
-function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToast: (m: string, t?: 'success' | 'error') => void }) {
+function TemplatesView({ clients, showToast, confirmAction }: { clients: UserProfile[], showToast: (m: string, t?: 'success' | 'error') => void, confirmAction: (t: string, m: string, c: () => void) => void }) {
   const [selectedTemplate, setSelectedTemplate] = useState<WorkoutTemplate | null>(null);
   const [selectedProgram, setSelectedProgram] = useState<ProgramTemplate | null>(null);
   const [selectedNutritionTemplate, setSelectedNutritionTemplate] = useState<NutritionTemplate | null>(null);
@@ -1561,7 +1594,11 @@ function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToa
   const [assignDate, setAssignDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [assigning, setAssigning] = useState(false);
   const [parsingFile, setParsingFile] = useState(false);
+  const [showPasteModal, setShowPasteModal] = useState(false);
+  const [pasteType, setPasteType] = useState<'workout' | 'nutrition'>('workout');
+  const [pastedText, setPastedText] = useState('');
   const [customPrograms, setCustomPrograms] = useState<ProgramTemplate[]>([]);
+  const [templates, setTemplates] = useState<WorkoutTemplate[]>([]);
   const [customNutrition, setCustomNutrition] = useState<NutritionTemplate[]>([]);
   const [templateTab, setTemplateTab] = useState<'workout' | 'nutrition'>('workout');
   const [isEditingTemplate, setIsEditingTemplate] = useState(false);
@@ -1574,8 +1611,11 @@ function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToa
   useEffect(() => {
     const q = query(collection(db, 'templates'), orderBy('createdAt', 'desc'));
     const unsubscribe = onSnapshot(q, (snap) => {
-      const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProgramTemplate));
-      setCustomPrograms(data);
+      const allData = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+      // Only keep weekly programs (those with 'weeks' array)
+      setCustomPrograms(allData.filter(p => 'weeks' in p));
+      // Keep single workouts
+      setTemplates(allData.filter(p => !('weeks' in p)));
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, 'templates');
     });
@@ -1597,6 +1637,38 @@ function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToa
   const [programDates, setProgramDates] = useState<Record<number, string>>({});
   const [programWorkoutsDraft, setProgramWorkoutsDraft] = useState<Record<number, Exercise[]>>({});
   const [activeEditingDay, setActiveEditingDay] = useState<number | null>(null);
+
+  const deleteTemplate = async (id: string, type: 'workout' | 'program' = 'workout') => {
+    confirmAction(
+      'Protocol Removal',
+      `Are you sure you want to permanently expunge this ${type} from the Vault?`,
+      async () => {
+        try {
+          await deleteDoc(doc(db, 'templates', id)).catch(err => handleFirestoreError(err, OperationType.DELETE, `templates/${id}`));
+          showToast(`${type.charAt(0).toUpperCase() + type.slice(1)} successfully removed from Vault`);
+        } catch (error) {
+          console.error(`Error deleting ${type}:`, error);
+          showToast(`Failed to expunge ${type}`, 'error');
+        }
+      }
+    );
+  };
+
+  const deleteNutritionTemplate = async (id: string) => {
+    confirmAction(
+      'Protocol Removal',
+      'Are you sure you want to permanently expunge this nutrition strategy from the Vault?',
+      async () => {
+        try {
+          await deleteDoc(doc(db, 'nutritionTemplates', id)).catch(err => handleFirestoreError(err, OperationType.DELETE, `nutritionTemplates/${id}`));
+          showToast('Nutrition strategy successfully removed');
+        } catch (error) {
+          console.error('Error deleting nutrition template:', error);
+          showToast('Failed to expunge strategy', 'error');
+        }
+      }
+    );
+  };
 
   // Initialize dates and exercises when program is selected
   useEffect(() => {
@@ -1792,7 +1864,8 @@ function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToa
         description: editingTemplateDescription,
         weeks: updatedWeeks,
         updatedAt: serverTimestamp(),
-        isCustom: true
+        isCustom: true,
+        type: 'program' // Add discriminator
       };
 
       if (selectedProgram.isCustom && selectedProgram.id) {
@@ -1898,44 +1971,134 @@ function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToa
     }
   };
 
+  const handleTextPaste = async (content: string) => {
+    setParsingFile(true);
+    try {
+      const parsedProgram = await parseWorkoutFile(content, "Pasted Content");
+      
+      if (parsedProgram) {
+        await addDoc(collection(db, 'templates'), {
+          ...parsedProgram,
+          createdAt: serverTimestamp(),
+          isCustom: true
+        });
+        showToast(`Custom program "${parsedProgram.name}" generated from paste and saved!`);
+      } else {
+        showToast('Failed to parse pasted text. Please ensure it contains workout details.', 'error');
+      }
+    } catch (error) {
+      console.error('Error parsing pasted text:', error);
+      showToast('Error processing content', 'error');
+    } finally {
+      setParsingFile(false);
+    }
+  };
+
+  const handleNutritionTextPaste = async (text: string) => {
+    if (!text.trim()) return;
+
+    setParsingFile(true);
+    try {
+      const response = await fetch('/api/nutrition/analyze-text', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || 'Failed to analyze nutrition strategy');
+      }
+
+      const analysis = await response.json();
+      
+      if (analysis) {
+        await addDoc(collection(db, 'nutritionTemplates'), {
+          name: analysis.name || 'Pasted Strategy',
+          description: analysis.description || 'AI analyzed nutrition strategy from manual entry',
+          targetMacros: analysis.targetMacros || { calories: 0, protein: 0, carbs: 0, fats: 0 },
+          guidelines: analysis.guidelines || [],
+          plannedMeals: analysis.plannedMeals || [],
+          recommendedFoods: analysis.recommendedFoods || [],
+          restrictedFoods: analysis.restrictedFoods || [],
+          createdAt: serverTimestamp(),
+          isCustom: true
+        });
+        showToast(`Nutrition protocol "${analysis.name || 'Custom'}" generated and saved to Vault!`);
+      } else {
+        showToast('Failed to parse nutrition strategy.', 'error');
+      }
+    } catch (error: any) {
+      console.error('Error parsing nutrition text:', error);
+      showToast(`Error: ${error.message}`, 'error');
+    } finally {
+      setParsingFile(false);
+    }
+  };
+
   const handleNutritionUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setParsingFile(true);
     try {
-      const reader = new FileReader();
-      reader.onload = async (event) => {
-        const content = event.target?.result as string;
-        const analysis = await analyzeNutritionFile(content, file.name);
-        
-        if (analysis) {
-          // Save to Firestore 'nutritionTemplates'
-          await addDoc(collection(db, 'nutritionTemplates'), {
-            name: analysis.name || file.name.replace(/\.[^/.]+$/, ""),
-            description: analysis.description || 'AI analyzed nutrition plan',
-            targetMacros: analysis.targetMacros,
-            guidelines: analysis.guidelines,
-            plannedMeals: analysis.plannedMeals || [],
-            createdAt: serverTimestamp(),
-            isCustom: true
-          });
-          showToast(`Nutrition protocol "${analysis.name}" generated and saved to Vault!`);
-        } else {
-          showToast('Failed to parse nutrition file. Please try a different format.', 'error');
-        }
-        setParsingFile(false);
-      };
-      reader.readAsText(file);
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const response = await fetch('/api/nutrition/analyze', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        console.error('Server error response:', text);
+        let errorData = {};
+        try {
+          errorData = JSON.parse(text);
+        } catch (e) {}
+        throw new Error((errorData as any).details || (errorData as any).error || `Failed to analyze nutrition plan (Status ${response.status})`);
+      }
+
+      const responseText = await response.text();
+      let analysis;
+      try {
+        analysis = JSON.parse(responseText);
+      } catch (e) {
+        console.error('Failed to parse analysis JSON. Response text:', responseText);
+        throw new Error('Server returned invalid data format. Check console for details.');
+      }
+      
+      if (analysis) {
+        // Save to Firestore 'nutritionTemplates'
+        await addDoc(collection(db, 'nutritionTemplates'), {
+          name: analysis.name || file.name.replace(/\.[^/.]+$/, ""),
+          description: analysis.description || 'AI analyzed nutrition strategy',
+          targetMacros: analysis.targetMacros || { calories: 0, protein: 0, carbs: 0, fats: 0 },
+          guidelines: analysis.guidelines || [],
+          plannedMeals: analysis.plannedMeals || [],
+          recommendedFoods: analysis.recommendedFoods || [],
+          restrictedFoods: analysis.restrictedFoods || [],
+          createdAt: serverTimestamp(),
+          isCustom: true
+        });
+        showToast(`Nutrition protocol "${analysis.name || 'Custom'}" generated and saved to Vault!`);
+      } else {
+        showToast('Failed to parse nutrition file. Gemini couldn\'t extract enough detail.', 'error');
+      }
     } catch (error) {
       console.error('Error uploading nutrition file:', error);
-      showToast('Error processing file', 'error');
+      showToast('Error processing file. Ensure it is a valid PDF or document.', 'error');
+    } finally {
       setParsingFile(false);
+      // Clear input
+      e.target.value = '';
     }
   };
 
   const allNutrition = [...NUTRITION_TEMPLATES, ...customNutrition];
   const allPrograms = [...WEEKLY_PROGRAMS, ...customPrograms];
+  const allWorkoutTemplates = [...WORKOUT_TEMPLATES, ...templates];
 
   return (
     <div className="space-y-12">
@@ -2003,6 +2166,23 @@ function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToa
                 )}
                 <input type="file" className="hidden" onChange={handleFileUpload} disabled={parsingFile} accept=".txt,.doc,.docx,.csv,.xls,.xlsx" />
               </label>
+
+              <button 
+                onClick={() => {
+                  setPasteType('workout');
+                  setShowPasteModal(true);
+                }}
+                disabled={parsingFile}
+                className="flex flex-col items-center justify-center border-2 border-dashed border-zinc-800 rounded-[32px] p-10 cursor-pointer hover:border-orange-500/50 transition-all bg-zinc-950 min-w-[300px] h-full"
+              >
+                <div className="p-4 bg-orange-500/10 rounded-2xl text-orange-500">
+                  <Sparkles className="w-8 h-8" />
+                </div>
+                <div className="text-center">
+                  <span className="block text-white font-bold">AI Text Import</span>
+                  <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mt-1">Paste Program Text</span>
+                </div>
+              </button>
             </div>
           </section>
 
@@ -2068,15 +2248,11 @@ function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToa
                     >
                       <Edit2 className="w-5 h-5" />
                     </button>
-                    {program.isCustom && (
+                    {program.id && !WEEKLY_PROGRAMS.some(wp => wp.id === program.id) && (
                       <button 
-                        onClick={async () => {
-                          if (confirm('Are you sure you want to delete this custom template?')) {
-                            await deleteDoc(doc(db, 'templates', program.id!));
-                            showToast('Template deleted');
-                          }
-                        }}
+                        onClick={() => deleteTemplate(program.id!, 'program')}
                         className="p-4 bg-zinc-800 text-zinc-500 hover:text-red-500 rounded-2xl transition-all"
+                        title="Delete Program"
                       >
                         <Trash2 className="w-5 h-5" />
                       </button>
@@ -2096,18 +2272,29 @@ function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToa
               <h2 className="text-2xl font-bold">Single Workouts</h2>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {WORKOUT_TEMPLATES.map((template) => (
+              {allWorkoutTemplates.map((template) => (
                 <div 
                   key={template.id} 
-                  className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 flex flex-col hover:border-orange-500/30 transition-all group"
+                  className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 flex flex-col hover:border-orange-500/30 transition-all group relative"
                 >
                   <div className="flex items-start justify-between mb-4">
                     <div className="p-3 bg-zinc-950 rounded-2xl text-zinc-500 group-hover:text-orange-500 transition-colors">
                       <BookOpen className="w-6 h-6" />
                     </div>
-                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest bg-zinc-950 px-3 py-1 rounded-full border border-zinc-800">
-                      {template.category}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest bg-zinc-950 px-3 py-1 rounded-full border border-zinc-800">
+                        {template.category}
+                      </span>
+                      {template.id && !WORKOUT_TEMPLATES.some(wt => wt.id === template.id) && (
+                        <button 
+                          onClick={() => deleteTemplate(template.id!)}
+                          className="p-3 bg-zinc-950 text-zinc-500 hover:text-red-500 rounded-xl border border-zinc-800 transition-all shadow-md active:scale-95"
+                          title="Expunge Strategy"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <h3 className="text-lg font-bold mb-2">{template.name}</h3>
                   <div className="flex-1" />
@@ -2198,6 +2385,25 @@ function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToa
                 )}
                 <input type="file" className="hidden" onChange={handleNutritionUpload} disabled={parsingFile} accept=".pdf,.doc,.docx,.txt,.jpg,.jpeg,.png" />
               </label>
+
+              <div className="flex flex-col gap-4 w-full md:w-64">
+                <button
+                  onClick={() => {
+                    setPasteType('nutrition');
+                    setShowPasteModal(true);
+                  }}
+                  disabled={parsingFile}
+                  className="flex items-center justify-center gap-3 p-6 bg-zinc-950 border border-zinc-800 rounded-[32px] hover:border-orange-500/50 transition-all group disabled:opacity-50"
+                >
+                  <div className="p-3 bg-zinc-900 rounded-xl text-zinc-500 group-hover:text-orange-500 transition-colors">
+                    <FileType className="w-6 h-6" />
+                  </div>
+                  <div className="text-left">
+                    <span className="block text-white font-bold text-sm">Paste Strategy</span>
+                    <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">JSON OR TEXT</span>
+                  </div>
+                </button>
+              </div>
             </div>
           </section>
 
@@ -2258,15 +2464,11 @@ function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToa
                     >
                       <Edit2 className="w-4 h-4" />
                     </button>
-                    {(plan as any).isCustom && (
+                    {plan.id && !NUTRITION_TEMPLATES.some(nt => nt.id === plan.id) && (
                       <button 
-                        onClick={async () => {
-                          if (confirm(`Are you sure you want to delete template "${plan.name}"?`)) {
-                            await deleteDoc(doc(db, 'nutritionTemplates', plan.id));
-                            showToast('Protocol deleted from Vault');
-                          }
-                        }}
-                        className="p-3 bg-zinc-950 border border-white/5 text-zinc-600 hover:text-red-500 transition-all rounded-xl"
+                        onClick={() => deleteNutritionTemplate(plan.id!)}
+                        className="p-3 bg-zinc-950 border border-white/5 text-zinc-500 hover:text-red-500 transition-all rounded-xl"
+                        title="Delete Protocol"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -2279,6 +2481,90 @@ function TemplatesView({ clients, showToast }: { clients: UserProfile[], showToa
         </section>
       </>
     )}
+
+      {/* Paste Modal */}
+      <AnimatePresence>
+        {showPasteModal && (
+          <div className="fixed inset-0 z-[300] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowPasteModal(false)}
+              className="absolute inset-0 bg-black/90 backdrop-blur-md"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-2xl bg-zinc-950 border border-white/10 rounded-[40px] shadow-2xl overflow-hidden"
+            >
+              <div className="p-8 border-b border-white/5 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="p-3 bg-orange-500 rounded-2xl text-white">
+                    <Sparkles className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black uppercase tracking-tight">
+                      Paste {pasteType === 'workout' ? 'Workout Program' : 'Nutrition Protocol'}
+                    </h3>
+                    <p className="text-zinc-500 text-[10px] font-bold uppercase tracking-widest">Nik's AI will parse your raw data</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setShowPasteModal(false)}
+                  className="p-3 bg-zinc-900 text-zinc-500 hover:text-white rounded-2xl transition-all"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              <div className="p-8 space-y-6">
+                <div className="space-y-4">
+                  <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-2">Raw Text or JSON Content</label>
+                  <textarea
+                    value={pastedText}
+                    onChange={(e) => setPastedText(e.target.value)}
+                    placeholder={`Paste your ${pasteType} details here...`}
+                    className="w-full h-64 bg-zinc-900 border border-white/5 rounded-3xl p-6 text-zinc-300 placeholder:text-zinc-700 focus:outline-none focus:border-orange-500/50 transition-all font-mono text-xs"
+                  />
+                </div>
+
+                <div className="flex gap-4">
+                  <button
+                    onClick={() => setShowPasteModal(false)}
+                    className="flex-1 py-4 bg-zinc-900 text-zinc-500 font-bold rounded-2xl hover:bg-zinc-800 transition-all uppercase text-xs tracking-widest"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={async () => {
+                      if (!pastedText.trim()) return;
+                      const textToProcess = pastedText;
+                      setPastedText('');
+                      setShowPasteModal(false);
+                      if (pasteType === 'workout') {
+                        await handleTextPaste(textToProcess);
+                      } else {
+                        await handleNutritionTextPaste(textToProcess);
+                      }
+                    }}
+                    disabled={!pastedText.trim() || parsingFile}
+                    className="flex-[2] py-4 bg-orange-500 text-white font-black rounded-2xl hover:bg-orange-600 transition-all flex items-center justify-center gap-3 shadow-xl shadow-orange-500/20 uppercase text-xs tracking-widest disabled:opacity-50"
+                  >
+                    {parsingFile ? (
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                    ) : (
+                      <Zap className="w-5 h-5" />
+                    )}
+                    Generate Strategy
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Message Templates Section */}
       <section className="space-y-6 pt-12 border-t border-zinc-800">
@@ -4987,9 +5273,12 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
   const categories = ['All', 'General', 'Strength', 'Hypertrophy', 'Mobility', 'Flexibility', 'HIIT', 'Resistance Band'];
 
   useEffect(() => {
+    // Only fetch templates of type 'workout' or those without a type (legacy)
     const q = query(collection(db, 'templates'), orderBy('createdAt', 'desc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      setTemplates(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as WorkoutTemplate));
+      const allTemplates = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as WorkoutTemplate);
+      // Filter here to handle legacy data and the shared collection issue
+      setTemplates(allTemplates.filter(t => !('weeks' in t))); 
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, 'templates');
     });
@@ -5150,7 +5439,8 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
         description: templateDescription,
         notes: workoutNotes,
         exercises: exercises.filter(e => e.name.trim() !== ''),
-        createdAt: serverTimestamp()
+        createdAt: serverTimestamp(),
+        type: 'workout' // Add discriminator
       }).catch(err => handleFirestoreError(err, OperationType.CREATE, 'templates'));
       setTemplateName('');
       setTemplateDescription('');
@@ -5173,12 +5463,10 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
     setSaving(true);
     try {
       await addDoc(collection(db, 'templates'), {
+        ...template,
         name: `${template.name} (Copy)`,
-        category: template.category || 'General',
-        description: template.description || '',
-        notes: template.notes || '',
-        exercises: template.exercises,
-        createdAt: serverTimestamp()
+        createdAt: serverTimestamp(),
+        type: 'workout'
       }).catch(err => handleFirestoreError(err, OperationType.CREATE, 'templates'));
       showToast('Template duplicated!');
     } catch (error) {
@@ -5190,11 +5478,16 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
 
   const deleteTemplate = async (id: string) => {
     confirmAction(
-      'Delete Template',
-      'Are you sure you want to delete this template?',
+      'Strategy Deletion',
+      'Are you sure you want to permanently expunge this protocol from the Vault?',
       async () => {
-        await deleteDoc(doc(db, 'templates', id)).catch(err => handleFirestoreError(err, OperationType.DELETE, `templates/${id}`));
-        showToast('Template deleted');
+        try {
+          await deleteDoc(doc(db, 'templates', id)).catch(err => handleFirestoreError(err, OperationType.DELETE, `templates/${id}`));
+          showToast('Template successfully removed from Vault');
+        } catch (error) {
+          console.error('Error deleting template:', error);
+          showToast('Failed to expunge strategy', 'error');
+        }
       }
     );
   };
@@ -5272,7 +5565,8 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
       for (const sample of samples) {
         await addDoc(collection(db, 'templates'), {
           ...sample,
-          createdAt: serverTimestamp()
+          createdAt: serverTimestamp(),
+          type: 'workout'
         });
       }
       showToast('Sample templates added!');
@@ -5504,6 +5798,19 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
                                 onChange={(e) => updateExercise(idx, 'rest', e.target.value)}
                                 className="w-full bg-zinc-950 border border-white/5 rounded-xl px-4 py-3 text-xs font-bold text-white outline-none focus:border-orange-500/30 transition-all"
                               />
+                            </div>
+                            <div className="space-y-1.5">
+                              <label className="text-[8px] font-black text-zinc-500 uppercase tracking-widest pl-1">Session Block</label>
+                              <select
+                                value={ex.block || 'Conditioning'}
+                                onChange={(e) => updateExercise(idx, 'block', e.target.value)}
+                                className="w-full bg-zinc-950 border border-white/5 rounded-xl px-4 py-3 text-xs font-bold text-white outline-none focus:border-orange-500/30 transition-all appearance-none cursor-pointer"
+                              >
+                                <option value="Warm-Up">Warm-Up</option>
+                                <option value="Conditioning">Conditioning</option>
+                                <option value="Cool Down">Cool Down</option>
+                                <option value="Main Session">Main Session</option>
+                              </select>
                             </div>
                           </div>
 
@@ -5880,7 +6187,7 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
                         </div>
                         
                         <div className="flex items-center justify-between text-[8px] font-black text-zinc-700 uppercase tracking-[0.2em] px-2">
-                          <span>Payload: {t.exercises.length} Units</span>
+                          <span>Payload: {t.exercises?.length || 0} Units</span>
                           <span>Archived: {t.createdAt ? format(t.createdAt.toDate(), 'MMM d') : 'Recent'}</span>
                         </div>
                       </div>

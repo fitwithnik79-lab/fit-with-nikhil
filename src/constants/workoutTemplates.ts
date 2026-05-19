@@ -2,22 +2,22 @@ import { WorkoutTemplate, Exercise, ProgramTemplate } from '../types';
 
 // Base Components
 const warmUp: Exercise[] = [
-  { name: 'Foam Rolling (Quads, Hamstrings, Calves)', youtubeLink: 'https://www.youtube.com/watch?v=8caF1Keg2XU', sets: 1, reps: '3 mins', weight: 'Bodyweight', rest: 'None', coachNote: 'Focus on tight spots' },
-  { name: 'Cat-Camel', youtubeLink: 'https://www.youtube.com/watch?v=CX6S6m_f2_o', sets: 2, reps: '10', weight: 'Bodyweight', rest: '30s', coachNote: 'Spinal mobility focus' },
-  { name: 'Bird-Dog', youtubeLink: 'https://www.youtube.com/watch?v=wiFNA3sqjCA', sets: 2, reps: '8/side', weight: 'Bodyweight', rest: '30s', coachNote: 'Core stability' },
-  { name: 'Wall Angles', youtubeLink: 'https://www.youtube.com/watch?v=pYpE_p61O3Q', sets: 2, reps: '15', weight: 'Bodyweight', rest: '30s', coachNote: 'Shoulder mobility' }
+  { name: 'Foam Rolling (Quads, Hamstrings, Calves)', block: 'Warm-Up', youtubeLink: 'https://www.youtube.com/watch?v=8caF1Keg2XU', sets: 1, reps: '3 mins', weight: 'Bodyweight', rest: 'None', coachNote: 'Focus on tight spots' },
+  { name: 'Cat-Camel', block: 'Warm-Up', youtubeLink: 'https://www.youtube.com/watch?v=CX6S6m_f2_o', sets: 2, reps: '10', weight: 'Bodyweight', rest: '30s', coachNote: 'Spinal mobility focus' },
+  { name: 'Bird-Dog', block: 'Warm-Up', youtubeLink: 'https://www.youtube.com/watch?v=wiFNA3sqjCA', sets: 2, reps: '8/side', weight: 'Bodyweight', rest: '30s', coachNote: 'Core stability' },
+  { name: 'Wall Angles', block: 'Warm-Up', youtubeLink: 'https://www.youtube.com/watch?v=pYpE_p61O3Q', sets: 2, reps: '15', weight: 'Bodyweight', rest: '30s', coachNote: 'Shoulder mobility' }
 ];
 
 const coreActivation: Exercise[] = [
-  { name: 'Dead Bug', youtubeLink: 'https://www.youtube.com/watch?v=g_BYB0R-4Ws', sets: 3, reps: '10', weight: 'Bodyweight', rest: '45s', coachNote: 'Keep lower back flat' },
-  { name: 'Inclined Plank', youtubeLink: 'https://www.youtube.com/watch?v=vV_u_x77v-U', sets: 3, reps: '20s hold', weight: 'Bodyweight', rest: '45s', coachNote: 'Maintain straight line' },
-  { name: 'Pelvic Tilts', youtubeLink: 'https://www.youtube.com/watch?v=7uV8Z_9V_6U', sets: 2, reps: '10', weight: 'Bodyweight', rest: '30s', coachNote: 'Engage deep core' }
+  { name: 'Dead Bug', block: 'Conditioning', youtubeLink: 'https://www.youtube.com/watch?v=g_BYB0R-4Ws', sets: 3, reps: '10', weight: 'Bodyweight', rest: '45s', coachNote: 'Keep lower back flat' },
+  { name: 'Inclined Plank', block: 'Conditioning', youtubeLink: 'https://www.youtube.com/watch?v=vV_u_x77v-U', sets: 3, reps: '20s hold', weight: 'Bodyweight', rest: '45s', coachNote: 'Maintain straight line' },
+  { name: 'Pelvic Tilts', block: 'Conditioning', youtubeLink: 'https://www.youtube.com/watch?v=7uV8Z_9V_6U', sets: 2, reps: '10', weight: 'Bodyweight', rest: '30s', coachNote: 'Engage deep core' }
 ];
 
 const coolDown: Exercise[] = [
-  { name: 'Hamstring Stretch', youtubeLink: 'https://www.youtube.com/watch?v=L_xrDAtykMI', sets: 3, reps: '20s/side', weight: 'Bodyweight', rest: 'None', coachNote: 'Gentle pull' },
-  { name: 'Piriformis Stretch', youtubeLink: 'https://www.youtube.com/watch?v=2qZ517Rw7ME', sets: 3, reps: '20s/side', weight: 'Bodyweight', rest: 'None', coachNote: 'Deep glute stretch' },
-  { name: 'Cobra Stretch', youtubeLink: 'https://www.youtube.com/watch?v=JDcdhTuycOI', sets: 3, reps: '20s', weight: 'Bodyweight', rest: 'None', coachNote: 'Abdominal stretch' }
+  { name: 'Hamstring Stretch', block: 'Cool Down', youtubeLink: 'https://www.youtube.com/watch?v=L_xrDAtykMI', sets: 3, reps: '20s/side', weight: 'Bodyweight', rest: 'None', coachNote: 'Gentle pull' },
+  { name: 'Piriformis Stretch', block: 'Cool Down', youtubeLink: 'https://www.youtube.com/watch?v=2qZ517Rw7ME', sets: 3, reps: '20s/side', weight: 'Bodyweight', rest: 'None', coachNote: 'Deep glute stretch' },
+  { name: 'Cobra Stretch', block: 'Cool Down', youtubeLink: 'https://www.youtube.com/watch?v=JDcdhTuycOI', sets: 3, reps: '20s', weight: 'Bodyweight', rest: 'None', coachNote: 'Abdominal stretch' }
 ];
 
 export const WORKOUT_TEMPLATES: WorkoutTemplate[] = [
@@ -166,7 +166,66 @@ export const WORKOUT_TEMPLATES: WorkoutTemplate[] = [
   }
 ];
 
+export const RECOVERY_PROGRAM_EXERCISES = {
+  day1: [
+    { name: 'Foam Roller: Calves & Hamstrings', block: 'Warm-Up', youtubeLink: 'https://www.youtube.com/watch?v=8caF1Keg2XU', sets: 1, reps: '60s per side', weight: 'BW', rest: '0s', coachNote: 'Find tender spots and hold. Relieve calf tightness.' },
+    { name: 'Half-Kneeling Ankle Wall Mobilization', block: 'Warm-Up', youtubeLink: 'https://www.youtube.com/watch?v=1F9_PAnU_Wk', sets: 2, reps: '10 reps', weight: 'BW', rest: '30s', coachNote: 'Drive knee forward over 2nd toe. Keep heel glued down.' },
+    { name: 'Short Foot Arch Activation', block: 'Warm-Up', youtubeLink: 'https://www.youtube.com/watch?v=7uV8Z_9V_6U', sets: 2, reps: '10 reps (5s hold)', weight: 'BW', rest: '0s', coachNote: 'Pull ball of foot toward heel. Grip the floor; do not curl toes.' },
+    { name: 'Side-Lying Clamshells', block: 'Warm-Up', youtubeLink: 'https://www.youtube.com/watch?v=rep-qVOkqgk', sets: 2, reps: '15 reps', weight: 'BW', rest: '30s', coachNote: 'Focus heavily on the Left side to wake up the weak glute.' },
+    { name: 'Glute Bridge (Two Legs to Single Leg)', block: 'Conditioning', youtubeLink: 'https://www.youtube.com/watch?v=wiFNA3sqjCA', sets: 3, reps: '12-15 reps', weight: 'BW', rest: '45s', coachNote: 'Drive through heels. Squeeze glutes. Ensure hips stay level.' },
+    { name: 'DB Goblet Box Squat (To parallel box)', block: 'Conditioning', youtubeLink: 'https://www.youtube.com/watch?v=MeIiIdhvXT4', sets: 3, reps: '10-12 reps', weight: 'Medium', rest: '60s', coachNote: 'Box limits depth so restricted ankle mobility won\'t cause pain.' },
+    { name: 'DB Romanian Deadlift (RDL)', block: 'Conditioning', youtubeLink: 'https://www.youtube.com/watch?v=JCXUYuzwfHU', sets: 3, reps: '10-12 reps', weight: 'Medium', rest: '60s', coachNote: 'Soft knee bend, hinge at hips. Stop if hamstrings feel tight.' },
+    { name: 'Band-Resisted Terminal Knee Extension', block: 'Conditioning', youtubeLink: 'https://www.youtube.com/watch?v=K-y35L2B0-I', sets: 3, reps: '15 reps', weight: 'Band', rest: '45s', coachNote: 'Build quad endurance. Focus on a hard lock-out at the top.' },
+    { name: 'Supported Single-Leg Balance', block: 'Conditioning', youtubeLink: 'https://www.youtube.com/watch?v=p_w-NnNn_XI', sets: 3, reps: '30-45s', weight: 'BW', rest: '45s', coachNote: 'Stand barefoot. Maintain "short foot". Do not let ankle collapse.' },
+    { name: 'Standing Calf Stretch (Gastrocnemius)', block: 'Cool Down', youtubeLink: 'https://www.youtube.com/watch?v=-M4-G8p8fmc', sets: 2, reps: '30s per side', weight: 'BW', rest: '0s', coachNote: 'Keep back leg straight, heel down. Do not force pain.' },
+    { name: 'Seated Hamstring Stretch', block: 'Cool Down', youtubeLink: 'https://www.youtube.com/watch?v=L_xrDAtykMI', sets: 2, reps: '30s per side', weight: 'BW', rest: '0s', coachNote: 'Hinge from hips, keep spine neutral. Target tight hamstrings.' }
+  ],
+  day2: [
+    { name: 'Cat-Cow Stretch', block: 'Warm-Up', youtubeLink: 'https://www.youtube.com/watch?v=CX6S6m_f2_o', sets: 1, reps: '10 cycles', weight: 'BW', rest: '0s', coachNote: 'Mobilize the spine. Breathe deeply.' },
+    { name: 'Bird-Dog', block: 'Warm-Up', youtubeLink: 'https://www.youtube.com/watch?v=wiFNA3sqjCA', sets: 2, reps: '8 reps per side', weight: 'BW', rest: '30s', coachNote: 'Drive opposite arm/leg out. Keep hips completely square.' },
+    { name: 'Deadbug (Heel Taps Only)', block: 'Warm-Up', youtubeLink: 'https://www.youtube.com/watch?v=g_BYB0R-4Ws', sets: 2, reps: '10 reps per side', weight: 'BW', rest: '30s', coachNote: 'Press lower back aggressively flat into the floor.' },
+    { name: 'Ankle Alphabet (A to Z)', block: 'Warm-Up', youtubeLink: 'https://www.youtube.com/watch?v=nL_XN_X_X_X', sets: 1, reps: '1 x per side', weight: 'BW', rest: '0s', coachNote: 'Move only from the ankle joint to increase synovial fluid.' },
+    { name: 'RKC Plank (Hardstyle Plank)', block: 'Conditioning', youtubeLink: 'https://www.youtube.com/watch?v=vV_u_x77v-U', sets: 3, reps: '15-20s', weight: 'BW', rest: '45s', coachNote: 'Squeeze glutes, quads, and abs intensely. Short & brutal.' },
+    { name: 'Side Plank (Knees Bent)', block: 'Conditioning', youtubeLink: 'https://www.youtube.com/watch?v=nL_XN_X_X_X', sets: 3, reps: '20-30s per side', weight: 'BW', rest: '45s', coachNote: 'Bent knees reduce stress on the injured ankle joint.' },
+    { name: 'Pallof Press (Cable or Band)', block: 'Conditioning', youtubeLink: 'https://www.youtube.com/watch?v=nL_XN_X_X_X', sets: 3, reps: '10 reps per side', weight: 'Band', rest: '45s', coachNote: 'Stand tall, resist rotation. Rebuilds deep core endurance.' },
+    { name: 'DB Farmer\'s Carry (Light-Moderate)', block: 'Conditioning', youtubeLink: 'https://www.youtube.com/watch?v=nL_XN_X_X_X', sets: 3, reps: '30 meters', weight: 'Light/Med', rest: '60s', coachNote: 'Step intentionally heel-to-toe. Focus on vertical posture.' },
+    { name: 'Bird-Dog Isometric Hold', block: 'Conditioning', youtubeLink: 'https://www.youtube.com/watch?v=wiFNA3sqjCA', sets: 3, reps: '20s hold per side', weight: 'BW', rest: '45s', coachNote: 'Hold end-range position. Do not allow lower back to arch.' },
+    { name: 'Child\'s Pose', block: 'Cool Down', youtubeLink: 'https://www.youtube.com/watch?v=L_xrDAtykMI', sets: 1, reps: '60s', weight: 'BW', rest: '0s', coachNote: 'Sit back on heels, stretch arms forward. Relax the lower back.' },
+    { name: 'Prone Cobra / Sphinx Pose', block: 'Cool Down', youtubeLink: 'https://www.youtube.com/watch?v=JDcdhTuycOI', sets: 2, reps: '30s', weight: 'BW', rest: '0s', coachNote: 'Gentle abdominal stretch. Do not pinch the lower back.' }
+  ],
+  day3: [
+    { name: 'Lacrosse Ball Plantar Fascia Release', block: 'Warm-Up', youtubeLink: 'https://www.youtube.com/watch?v=nL_XN_X_X_X', sets: 1, reps: '60s per foot', weight: 'Ball', rest: '0s', coachNote: 'Roll under the foot arch to loosen tight connective tissue.' },
+    { name: 'YTWL Shoulder Warm-up', block: 'Warm-Up', youtubeLink: 'https://www.youtube.com/watch?v=pYpE_p61O3Q', sets: 2, reps: '8 reps each', weight: 'BW', rest: '30s', coachNote: 'Target lower traps and rotator cuff for upper body prep.' },
+    { name: 'Seated Ankle Eversion Circles', block: 'Warm-Up', youtubeLink: 'https://www.youtube.com/watch?v=nL_XN_X_X_X', sets: 2, reps: '12 reps', weight: 'BW', rest: '0s', coachNote: 'Avoid painful inversion. Focus on pain-free outer tracking.' },
+    { name: 'World\'s Greatest Stretch (Modified)', block: 'Warm-Up', youtubeLink: 'https://www.youtube.com/watch?v=-CiYIqL1uU4', sets: 2, reps: '5 reps per side', weight: 'BW', rest: '30s', coachNote: 'Step out gently; focus on thoracic rotation and hip opening.' },
+    { name: 'Seated Dumbbell Shoulder Press', block: 'Conditioning', youtubeLink: 'https://www.youtube.com/watch?v=2yjwXTZQDDI', sets: 3, reps: '10-12 reps', weight: 'Medium', rest: '60s', coachNote: 'Seated to completely eliminate any lower body/ankle axial loading.' },
+    { name: 'Chest-Supported Dumbbell Row', block: 'Conditioning', youtubeLink: 'https://www.youtube.com/watch?v=roCP6wCXPqo', sets: 3, reps: '12 reps', weight: 'Medium', rest: '60s', coachNote: 'Pull elbows to ceiling, squeeze shoulder blades. Flat bench.' },
+    { name: 'Standing Eccentric Calf Raises', block: 'Conditioning', youtubeLink: 'https://www.youtube.com/watch?v=-M4-G8p8fmc', sets: 3, reps: '10 reps', weight: 'BW', rest: '45s', coachNote: '4-second lowering phase to build calf tendon tissue length.' },
+    { name: 'Kneeling Lat Pulldown / Band Pulls', block: 'Conditioning', youtubeLink: 'https://www.youtube.com/watch?v=CAwf7n6Luuc', sets: 3, reps: '12-15 reps', weight: 'Band', rest: '45s', coachNote: 'Keep core braced. Works upper back strength.' },
+    { name: 'Passive Ankle Dorsiflexion Stretch', block: 'Conditioning', youtubeLink: 'https://www.youtube.com/watch?v=nL_XN_X_X_X', sets: 3, reps: '45s hold', weight: 'BW/Strap', rest: '30s', coachNote: 'Use a strap or wall to stretch the Soleus (bent knee calf stretch).' },
+    { name: 'Doorway Chest Stretch', block: 'Cool Down', youtubeLink: 'https://www.youtube.com/watch?v=nL_XN_X_X_X', sets: 2, reps: '30s per side', weight: 'BW', rest: '0s', coachNote: 'Keep shoulders down, step forward gently to stretch pectorals.' },
+    { name: 'Cross-Body Shoulder Stretch', block: 'Cool Down', youtubeLink: 'https://www.youtube.com/watch?v=2qZ517Rw7ME', sets: 2, reps: '30s per side', weight: 'BW', rest: '0s', coachNote: 'Pull arm across chest to stretch posterior capsule.' },
+    { name: 'Kneeling Hip Flexor Stretch', block: 'Cool Down', youtubeLink: 'https://www.youtube.com/watch?v=nL_XN_X_X_X', sets: 2, reps: '30s per side', weight: 'BW', rest: '0s', coachNote: 'Tuck pelvis under, squeeze glute to feel stretch in front of hip.' }
+  ]
+};
+
 export const WEEKLY_PROGRAMS: ProgramTemplate[] = [
+  {
+    id: 'elite-tactical-recovery',
+    name: 'Elite Ankle & Lower Body Tactical Recovery',
+    category: 'Recovery',
+    description: 'A professional-grade 3-day split designed to rebuild ankle stability, posterior chain strength, and core endurance while respecting injury limitations.',
+    weeks: [
+      {
+        weekNumber: 1,
+        days: [
+          { dayNumber: 1, exercises: RECOVERY_PROGRAM_EXERCISES.day1, label: 'Strength Focus' },
+          { dayNumber: 2, exercises: RECOVERY_PROGRAM_EXERCISES.day2, label: 'Core & Stability' },
+          { dayNumber: 3, exercises: RECOVERY_PROGRAM_EXERCISES.day3, label: 'Mobility & Upper' }
+        ]
+      }
+    ]
+  },
   {
     id: 'full-body-strength-3day',
     name: '3-Day Full Body Strength',

@@ -3,7 +3,7 @@ import { User } from 'firebase/auth';
 import { collection, query, where, onSnapshot, addDoc, serverTimestamp, orderBy, limit, getDocs, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db, storage } from '../lib/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { BodyMetrics, Workout, Feedback, UserProfile, NutritionPlan, Message, Habit, HabitLog, Goal } from '../types';
+import { BodyMetrics, Workout, Exercise, Feedback, UserProfile, NutritionPlan, Message, Habit, HabitLog, Goal } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { 
   Maximize2,
@@ -3926,172 +3926,205 @@ function WorkoutCard({
         />
       </div>
 
-      <div className="space-y-4">
-        {workout.exercises.map((ex, idx) => (
-          <motion.div
-            key={idx}
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: idx * 0.1 }}
-            className={cn(
-              "group bg-zinc-900 border rounded-2xl p-5 hover:border-zinc-700 transition-all",
-              exerciseFeedback[idx]?.isCompleted ? "border-orange-500/50 bg-orange-500/[0.02]" : "border-zinc-800"
-            )}
-          >
-            <div className="flex items-start justify-between gap-4 mb-4">
-              <div className="flex-1 flex gap-4">
-                <button 
-                  onClick={() => updateExerciseFeedback(idx, 'isCompleted', !exerciseFeedback[idx]?.isCompleted)}
-                  className={cn(
-                    "mt-1 w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all flex-shrink-0",
-                    exerciseFeedback[idx]?.isCompleted 
-                      ? "bg-orange-500 border-orange-500 text-white" 
-                      : "border-zinc-700 hover:border-orange-500"
-                  )}
-                >
-                  {exerciseFeedback[idx]?.isCompleted && <Check className="w-4 h-4" />}
-                </button>
-                <div>
-                  <h3 className={cn("text-xl font-bold transition-colors", exerciseFeedback[idx]?.isCompleted && "text-zinc-500 line-through")}>
-                    {ex.name}
-                  </h3>
-                  <ExerciseHistoryView clientUid={clientUid} exerciseName={ex.name} />
-                  <div className="flex flex-wrap gap-3 mt-2">
-                    <div className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-950 rounded-lg border border-zinc-800 text-xs font-bold text-zinc-400">
-                      <span className="text-orange-500">{ex.sets}</span> SETS
+      <div className="space-y-8">
+        {(() => {
+          const blockOrder = ['Warm-Up', 'Conditioning', 'Cool Down'];
+          const grouped = workout.exercises.reduce((acc, ex, idx) => {
+            const block = ex.block || 'Main Session';
+            if (!acc[block]) acc[block] = [];
+            acc[block].push({ ...ex, originalIndex: idx });
+            return acc;
+          }, {} as Record<string, (Exercise & { originalIndex: number })[]>);
+
+          const sortedBlockNames = Object.keys(grouped).sort((a, b) => {
+            const indexA = blockOrder.indexOf(a);
+            const indexB = blockOrder.indexOf(b);
+            if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+            if (indexA !== -1) return -1;
+            if (indexB !== -1) return 1;
+            return a.localeCompare(b);
+          });
+
+          return sortedBlockNames.map((blockName, blockIdx) => (
+            <div key={blockName} className="space-y-4">
+              <div className="flex items-center gap-3 px-2">
+                <div className="h-px flex-1 bg-gradient-to-r from-transparent to-zinc-800" />
+                <span className="text-[10px] font-black uppercase tracking-[.3em] text-zinc-500 bg-zinc-950 px-3 py-1 rounded-full border border-zinc-800">
+                  {blockName}
+                </span>
+                <div className="h-px flex-1 bg-gradient-to-l from-transparent to-zinc-800" />
+              </div>
+              
+              <div className="space-y-4">
+                {grouped[blockName].map(({ originalIndex, ...ex }, groupIdx) => (
+                  <motion.div
+                    key={originalIndex}
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: (groupIdx + blockIdx) * 0.1 }}
+                    className={cn(
+                      "group bg-zinc-900 border rounded-2xl p-5 hover:border-zinc-700 transition-all",
+                      exerciseFeedback[originalIndex]?.isCompleted ? "border-orange-500/50 bg-orange-500/[0.02]" : "border-zinc-800"
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-4 mb-4">
+                      <div className="flex-1 flex gap-4">
+                        <button 
+                          onClick={() => updateExerciseFeedback(originalIndex, 'isCompleted', !exerciseFeedback[originalIndex]?.isCompleted)}
+                          className={cn(
+                            "mt-1 w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all flex-shrink-0",
+                            exerciseFeedback[originalIndex]?.isCompleted 
+                              ? "bg-orange-500 border-orange-500 text-white" 
+                              : "border-zinc-700 hover:border-orange-500"
+                          )}
+                        >
+                          {exerciseFeedback[originalIndex]?.isCompleted && <Check className="w-4 h-4" />}
+                        </button>
+                        <div>
+                          <h3 className={cn("text-xl font-bold transition-colors", exerciseFeedback[originalIndex]?.isCompleted && "text-zinc-500 line-through")}>
+                            {ex.name}
+                          </h3>
+                          <ExerciseHistoryView clientUid={clientUid} exerciseName={ex.name} />
+                          <div className="flex flex-wrap gap-3 mt-2">
+                            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-950 rounded-lg border border-zinc-800 text-xs font-bold text-zinc-400">
+                              <span className="text-orange-500">{ex.sets}</span> SETS
+                            </div>
+                            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-950 rounded-lg border border-zinc-800 text-xs font-bold text-zinc-400">
+                              <span className="text-orange-500">{ex.reps}</span> REPS
+                            </div>
+                            {ex.weight && (
+                              <div className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-950 rounded-lg border border-zinc-800 text-xs font-bold text-zinc-400">
+                                <span className="text-orange-500">{ex.weight}</span>
+                              </div>
+                            )}
+                            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-950 rounded-lg border border-zinc-800 text-xs font-bold text-zinc-400">
+                              <span className="text-orange-500">{ex.rest}</span> REST
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      {ex.youtubeLink && (
+                        <div className="flex flex-col gap-2">
+                          <button 
+                            onClick={() => setActiveVideo({ url: ex.youtubeLink!, title: ex.name })}
+                            className="flex items-center gap-2 text-orange-500 hover:text-orange-400 transition-colors text-sm font-bold"
+                          >
+                            <Play className="w-4 h-4" />
+                            Watch Exercise Video
+                          </button>
+                        </div>
+                      )}
                     </div>
-                    <div className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-950 rounded-lg border border-zinc-800 text-xs font-bold text-zinc-400">
-                      <span className="text-orange-500">{ex.reps}</span> REPS
-                    </div>
-                    {ex.weight && (
-                      <div className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-950 rounded-lg border border-zinc-800 text-xs font-bold text-zinc-400">
-                        <span className="text-orange-500">{ex.weight}</span>
+
+                    {ex.coachNote && (
+                      <div className="flex gap-2 items-start bg-zinc-950/50 p-3 rounded-xl border border-zinc-800/50 text-sm text-zinc-400 mb-4">
+                        <MessageSquare className="w-4 h-4 mt-0.5 flex-shrink-0 text-orange-500/50" />
+                        <p>{ex.coachNote}</p>
                       </div>
                     )}
-                    <div className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-950 rounded-lg border border-zinc-800 text-xs font-bold text-zinc-400">
-                      <span className="text-orange-500">{ex.rest}</span> REST
+
+                    {ex.youtubeLink && (
+                      <button 
+                        onClick={() => setActiveVideo({ url: ex.youtubeLink!, title: ex.name })}
+                        className="block relative aspect-video rounded-xl overflow-hidden border border-zinc-800 bg-zinc-950 group/vid mb-4 text-left w-full"
+                      >
+                        {resolveThumbnail(ex.youtubeLink) ? (
+                          <img 
+                            src={resolveThumbnail(ex.youtubeLink)!}
+                            alt="Exercise Video"
+                            className="w-full h-full object-cover opacity-60 group-hover/vid:opacity-80 transition-opacity"
+                            referrerPolicy="no-referrer"
+                          />
+                        ) : (
+                          <div className="w-full h-full bg-zinc-900 flex flex-col items-center justify-center opacity-40 group-hover/vid:opacity-60 transition-opacity">
+                            <Play className="w-8 h-8 text-zinc-500 mb-2" />
+                            <span className="text-[10px] font-black tracking-widest text-zinc-600 uppercase italic">Media Available</span>
+                          </div>
+                        )}
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <div className="w-12 h-12 rounded-full bg-orange-500 text-white flex items-center justify-center shadow-xl shadow-orange-500/20 group-hover/vid:scale-110 transition-transform">
+                            <Play className="w-6 h-6 fill-current" />
+                          </div>
+                        </div>
+                        <div className="absolute bottom-3 left-3 px-2 py-1 bg-black/50 backdrop-blur-md rounded text-[10px] font-bold text-white border border-white/10 flex items-center gap-2">
+                          <div className="w-1 h-1 rounded-full bg-orange-500 animate-pulse" />
+                          WATCH DEMO
+                        </div>
+                      </button>
+                    )}
+
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6 pt-6 border-t border-zinc-800/50">
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-1">
+                          <div className="w-4 h-4 bg-zinc-800 rounded-md flex items-center justify-center">
+                            <Activity className="w-2.5 h-2.5" />
+                          </div>
+                          Actual Sets
+                        </div>
+                        <input 
+                          type="number"
+                          placeholder={ex.sets.toString()}
+                          disabled={isCompletedToday}
+                          value={exerciseFeedback[originalIndex]?.completedSets || ''}
+                          onChange={(e) => updateExerciseFeedback(originalIndex, 'completedSets', Number(e.target.value))}
+                          className="w-full bg-zinc-950/50 border border-zinc-800 rounded-2xl px-4 py-3 text-sm focus:ring-1 focus:ring-orange-500 outline-none transition-all disabled:opacity-50 hover:bg-zinc-950"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-1">
+                          <div className="w-4 h-4 bg-zinc-800 rounded-md flex items-center justify-center">
+                            <Zap className="w-2.5 h-2.5" />
+                          </div>
+                          Actual Reps
+                        </div>
+                        <input 
+                          type="text"
+                          placeholder={ex.reps}
+                          disabled={isCompletedToday}
+                          value={exerciseFeedback[originalIndex]?.completedReps || ''}
+                          onChange={(e) => updateExerciseFeedback(originalIndex, 'completedReps', e.target.value)}
+                          className="w-full bg-zinc-950/50 border border-zinc-800 rounded-2xl px-4 py-3 text-sm focus:ring-1 focus:ring-orange-500 outline-none transition-all disabled:opacity-50 hover:bg-zinc-950"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-1">
+                          <div className="w-4 h-4 bg-zinc-800 rounded-md flex items-center justify-center">
+                            <Dumbbell className="w-2.5 h-2.5" />
+                          </div>
+                          Weight Used
+                        </div>
+                        <input 
+                          type="text"
+                          placeholder={ex.weight || '0kg'}
+                          disabled={isCompletedToday}
+                          value={exerciseFeedback[originalIndex]?.completedWeight || ''}
+                          onChange={(e) => updateExerciseFeedback(originalIndex, 'completedWeight', e.target.value)}
+                          className="w-full bg-zinc-950/50 border border-zinc-800 rounded-2xl px-4 py-3 text-sm focus:ring-1 focus:ring-orange-500 outline-none transition-all disabled:opacity-50 hover:bg-zinc-950"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-1">
+                          <div className="w-4 h-4 bg-zinc-800 rounded-md flex items-center justify-center">
+                            <MessageSquare className="w-2.5 h-2.5" />
+                          </div>
+                          Personal Note
+                        </div>
+                        <input 
+                          type="text"
+                          placeholder="How did it feel?"
+                          disabled={isCompletedToday}
+                          value={exerciseFeedback[originalIndex]?.clientNote || ''}
+                          onChange={(e) => updateExerciseFeedback(originalIndex, 'clientNote', e.target.value)}
+                          className="w-full bg-zinc-950/50 border border-zinc-800 rounded-2xl px-4 py-3 text-sm focus:ring-1 focus:ring-orange-500 outline-none transition-all disabled:opacity-50 hover:bg-zinc-950"
+                        />
+                      </div>
                     </div>
-                  </div>
-                </div>
-              </div>
-              {ex.youtubeLink && (
-                <div className="flex flex-col gap-2">
-                  <button 
-                    onClick={() => setActiveVideo({ url: ex.youtubeLink!, title: ex.name })}
-                    className="flex items-center gap-2 text-orange-500 hover:text-orange-400 transition-colors text-sm font-bold"
-                  >
-                    <Play className="w-4 h-4" />
-                    Watch Exercise Video
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {ex.coachNote && (
-              <div className="flex gap-2 items-start bg-zinc-950/50 p-3 rounded-xl border border-zinc-800/50 text-sm text-zinc-400 mb-4">
-                <MessageSquare className="w-4 h-4 mt-0.5 flex-shrink-0 text-orange-500/50" />
-                <p>{ex.coachNote}</p>
-              </div>
-            )}
-
-            {ex.youtubeLink && (
-              <button 
-                onClick={() => setActiveVideo({ url: ex.youtubeLink!, title: ex.name })}
-                className="block relative aspect-video rounded-xl overflow-hidden border border-zinc-800 bg-zinc-950 group/vid mb-4 text-left w-full"
-              >
-                {resolveThumbnail(ex.youtubeLink) ? (
-                  <img 
-                    src={resolveThumbnail(ex.youtubeLink)!}
-                    alt="Exercise Video"
-                    className="w-full h-full object-cover opacity-60 group-hover/vid:opacity-80 transition-opacity"
-                    referrerPolicy="no-referrer"
-                  />
-                ) : (
-                  <div className="w-full h-full bg-zinc-900 flex flex-col items-center justify-center opacity-40 group-hover/vid:opacity-60 transition-opacity">
-                    <Play className="w-8 h-8 text-zinc-500 mb-2" />
-                    <span className="text-[10px] font-black tracking-widest text-zinc-600 uppercase italic">Media Available</span>
-                  </div>
-                )}
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="w-12 h-12 rounded-full bg-orange-500 text-white flex items-center justify-center shadow-xl shadow-orange-500/20 group-hover/vid:scale-110 transition-transform">
-                    <Play className="w-6 h-6 fill-current" />
-                  </div>
-                </div>
-                <div className="absolute bottom-3 left-3 px-2 py-1 bg-black/50 backdrop-blur-md rounded text-[10px] font-bold text-white border border-white/10 flex items-center gap-2">
-                  <div className="w-1 h-1 rounded-full bg-orange-500 animate-pulse" />
-                  WATCH DEMO
-                </div>
-              </button>
-            )}
-
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6 pt-6 border-t border-zinc-800/50">
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-1">
-                  <div className="w-4 h-4 bg-zinc-800 rounded-md flex items-center justify-center">
-                    <Activity className="w-2.5 h-2.5" />
-                  </div>
-                  Actual Sets
-                </div>
-                <input 
-                  type="number"
-                  placeholder={ex.sets.toString()}
-                  disabled={isCompletedToday}
-                  value={exerciseFeedback[idx]?.completedSets || ''}
-                  onChange={(e) => updateExerciseFeedback(idx, 'completedSets', Number(e.target.value))}
-                  className="w-full bg-zinc-950/50 border border-zinc-800 rounded-2xl px-4 py-3 text-sm focus:ring-1 focus:ring-orange-500 outline-none transition-all disabled:opacity-50 hover:bg-zinc-950"
-                />
-              </div>
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-1">
-                  <div className="w-4 h-4 bg-zinc-800 rounded-md flex items-center justify-center">
-                    <Zap className="w-2.5 h-2.5" />
-                  </div>
-                  Actual Reps
-                </div>
-                <input 
-                  type="text"
-                  placeholder={ex.reps}
-                  disabled={isCompletedToday}
-                  value={exerciseFeedback[idx]?.completedReps || ''}
-                  onChange={(e) => updateExerciseFeedback(idx, 'completedReps', e.target.value)}
-                  className="w-full bg-zinc-950/50 border border-zinc-800 rounded-2xl px-4 py-3 text-sm focus:ring-1 focus:ring-orange-500 outline-none transition-all disabled:opacity-50 hover:bg-zinc-950"
-                />
-              </div>
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-1">
-                  <div className="w-4 h-4 bg-zinc-800 rounded-md flex items-center justify-center">
-                    <Dumbbell className="w-2.5 h-2.5" />
-                  </div>
-                  Weight Used
-                </div>
-                <input 
-                  type="text"
-                  placeholder={ex.weight || '0kg'}
-                  disabled={isCompletedToday}
-                  value={exerciseFeedback[idx]?.completedWeight || ''}
-                  onChange={(e) => updateExerciseFeedback(idx, 'completedWeight', e.target.value)}
-                  className="w-full bg-zinc-950/50 border border-zinc-800 rounded-2xl px-4 py-3 text-sm focus:ring-1 focus:ring-orange-500 outline-none transition-all disabled:opacity-50 hover:bg-zinc-950"
-                />
-              </div>
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-1">
-                  <div className="w-4 h-4 bg-zinc-800 rounded-md flex items-center justify-center">
-                    <MessageSquare className="w-2.5 h-2.5" />
-                  </div>
-                  Personal Note
-                </div>
-                <input 
-                  type="text"
-                  placeholder="How did it feel?"
-                  disabled={isCompletedToday}
-                  value={exerciseFeedback[idx]?.clientNote || ''}
-                  onChange={(e) => updateExerciseFeedback(idx, 'clientNote', e.target.value)}
-                  className="w-full bg-zinc-950/50 border border-zinc-800 rounded-2xl px-4 py-3 text-sm focus:ring-1 focus:ring-orange-500 outline-none transition-all disabled:opacity-50 hover:bg-zinc-950"
-                />
+                  </motion.div>
+                ))}
               </div>
             </div>
-          </motion.div>
-        ))}
+          ));
+        })()}
       </div>
 
       <AnimatePresence mode="wait">

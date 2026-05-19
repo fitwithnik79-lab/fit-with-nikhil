@@ -8,7 +8,9 @@ import dotenv from 'dotenv';
 import admin from 'firebase-admin';
 import { getFirestore as getAdminFirestore, FieldValue } from 'firebase-admin/firestore';
 import { format } from 'date-fns';
-import multer from 'multer';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const multer = require('multer');
 import { GoogleGenAI } from '@google/genai';
 
 dotenv.config();
@@ -17,7 +19,14 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Initialize Gemini
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+const ai = new GoogleGenAI({ 
+  apiKey: process.env.GEMINI_API_KEY,
+  httpOptions: {
+    headers: {
+      'User-Agent': 'aistudio-build',
+    }
+  }
+});
 
 // Multer for file uploads
 const upload = multer({ storage: multer.memoryStorage() });
@@ -52,6 +61,376 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  // Global Request Logger
+  app.use((req, res, next) => {
+    const isVite = req.url.includes('/@vite') || req.url.includes('/src/') || req.url.includes('node_modules');
+    if (!isVite) {
+      console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+    }
+    next();
+  });
+
+  app.use(express.json({ limit: '10mb' }));
+
+  // Shared Gemini API routes for client functionality
+  app.post('/api/gemini/motivate', async (req, res) => {
+    const { clientName, weekNumber } = req.body;
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: [{ role: 'user', parts: [{ text: `You are Nik, a high-energy fitness coach. Write a short, powerful motivational message for your client ${clientName} who just finished Week ${weekNumber} of their program. Keep it under 3 sentences. Be specific about their progress and encourage them for next week.` }] }]
+      });
+      res.json({ text: response.text || "Great job this week! Keep pushing!" });
+    } catch (error: any) {
+      console.error("Motivational message error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/gemini/search-videos', async (req, res) => {
+    const { exerciseName } = req.body;
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: [{ role: 'user', parts: [{ text: `Find 3 high-quality YouTube demonstration video links for the exercise: "${exerciseName}". 
+        
+        CRITICAL VIDEO SELECTION CRITERIA:
+        1. RELEVANCE: The video must be exactly about "${exerciseName}".
+        2. CONCISE: Prioritize "YouTube Shorts" or very short, direct explanatory videos (under 2 minutes) that show proper form without long intros.
+        3. QUALITY: Select videos from reputable fitness channels.
+        
+        Return the result as a JSON array of objects, each with 'title' and 'url' properties.` }]}],
+        config: { responseMimeType: "application/json" }
+      });
+      res.json(JSON.parse(response.text || "[]"));
+    } catch (error: any) {
+      console.error("Search videos error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/gemini/analyze-meal-image', async (req, res) => {
+    const { image, mimeType } = req.body;
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: [{
+          role: 'user',
+          parts: [
+            { inlineData: { data: image, mimeType } },
+            { text: "Analyze this meal image. Identify the food items and estimate calories, protein, carbs, and fats FOR EACH ITEM separately. Return the result as a JSON object with a 'mealName' and an 'items' array. Each item should have 'name', 'calories', 'protein', 'carbs', and 'fats'. Also include a general 'advice' string." }
+          ]
+        }],
+        config: { responseMimeType: "application/json" }
+      });
+      res.json(JSON.parse(response.text || "{}"));
+    } catch (error: any) {
+      console.error("Analyze meal image error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/gemini/analyze-meal-text', async (req, res) => {
+    const { mealDescription } = req.body;
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: [{ role: 'user', parts: [{ text: `You are an elite performance nutritionist. Analyze the following meal description: "${mealDescription}". 
+        
+        CRITICAL INSTRUCTION: Be extremely detailed. If a user enters a simple item like "Tea", "Coffee", "Pasta", or "Cereal", do NOT just analyze the dry ingredient. 
+        - "Tea" usually means milk tea (assume 100ml milk + 2 tsp sugar unless they say black).
+        - "Coffee" usually means with milk/cream + sugar.
+        - "Pasta" implies sauce, oil, and cheese.
+        Break down the implicit ingredients that make up the real-world version of this meal.
+        
+        Return the result as a JSON object with a 'mealName' and an 'items' array. 
+        Each item should have 'name', 'calories', 'protein', 'carbs', and 'fats'. 
+        Also include a general 'advice' string.` }]}],
+        config: { responseMimeType: "application/json" }
+      });
+      res.json(JSON.parse(response.text || "{}"));
+    } catch (error: any) {
+      console.error("Analyze meal text error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/gemini/batch-macros', async (req, res) => {
+    const { items } = req.body;
+    const itemsDescription = items.map((i: any) => `${i.quantity} of ${i.name}`).join(", ");
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: [{ role: 'user', parts: [{ text: `Calculate the calories, protein, carbs, and fats for the following food items and their specific quantities: "${itemsDescription}". 
+        Return the result as a JSON object with an 'items' array. 
+        Each item should have 'name', 'quantity', 'calories', 'protein', 'carbs', and 'fats'.` }]}],
+        config: { responseMimeType: "application/json" }
+      });
+      res.json(JSON.parse(response.text || "{}"));
+    } catch (error: any) {
+      console.error("Batch macros error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/gemini/analyze-daily-nutrition', async (req, res) => {
+    const { summary, goals } = req.body;
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: [{ role: 'user', parts: [{ text: `You are Nik, a world-class performance nutritionist. Analyze today's logged meals for this client and provide personalized actionable advice.
+        
+        Client Goals: ${goals}
+        Today's Meals:
+        ${summary}
+        
+        Provide your response in JSON format focusing on:
+        1. Overall Score (1-10)
+        2. Key Wins (what they did well)
+        3. Areas for Improvement
+        4. Specific suggestions for tomorrow or their next meal (e.g., "Add 30g more protein", "Swap white rice for quinoa")
+        5. Educational tip related to their goal.` }]}],
+        config: { responseMimeType: "application/json" }
+      });
+      res.json(JSON.parse(response.text || "{}"));
+    } catch (error: any) {
+      console.error("Daily nutrition analysis error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/gemini/parse-workout-file', async (req, res) => {
+    const { fileContent, fileName } = req.body;
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: [{ role: 'user', parts: [{ text: `You are an expert fitness coach. Parse the following workout routine content from a file named "${fileName}". 
+        The content might be a list of exercises, a spreadsheet-like structure, or a document.
+        Convert it into a structured Program Template.
+        
+        CRITICAL INSTRUCTIONS:
+        1. Be extremely accurate to the original plan. If it says "Day 1: Legs", ensure Day 1 is Legs.
+        2. For EVERY exercise identified, find a high-quality YouTube demonstration video link.
+        3. VIDEO SELECTION: Prioritize "YouTube Shorts" or very short, direct explanatory videos (under 2 minutes) that show proper form immediately. Ensure the video is highly relevant to the specific exercise.
+        4. Populate the 'youtubeLink' field for every exercise.
+        5. Identify the session "block" for each exercise based on the layout or section title (e.g., "Warm-Up", "Conditioning", "Cool Down"). If no block is evident, default to "Conditioning".
+        
+        Content:
+        ${fileContent}
+        
+        Return a JSON object representing a ProgramTemplate.` }]}],
+        config: { responseMimeType: "application/json" }
+      });
+      res.json(JSON.parse(response.text || "{}"));
+    } catch (error: any) {
+      console.error("Parse workout file error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/gemini/analyze-nutrition-file', async (req, res) => {
+    const { fileContent, fileName } = req.body;
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: [{ role: 'user', parts: [{ text: `Analyze the performance nutrition plan from "${fileName}" as a professional sports nutritionist. 
+        
+        EXTRACTION REQUIREMENTS:
+        1. FULL 7-DAY ROTATION: Extract exactly 7 days of scheduling if the plan is varied.
+        2. PRECISE TIMING: Use 24h format strings (e.g., "07:30", "13:00").
+        3. INGREDIENT SPECIFICS: Include full quantities and prep notes in the 'notes' field.
+        4. MACRO PRECISION: Extract target Calories, Protein, Carbs, and Fats.
+        
+        Content Source:
+        ${fileContent}
+        
+        Format the scientific data as a JSON object:
+        - name: string (Professional protocol title)
+        - description: string (Systematic strategy summary)
+        - targetMacros: { calories: number, protein: number, carbs: number, fats: number }
+        - guidelines: string[] (The foundational rules of the system)
+        - recommendedFoods: string[]
+        - restrictedFoods: string[]
+        - plannedMeals: array of { id: string, dayNumber: number, time: string, name: string, notes: string }` }]}],
+        config: { responseMimeType: "application/json" }
+      });
+      res.json(JSON.parse(response.text || "{}"));
+    } catch (error: any) {
+      console.error("Analyze nutrition file error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Health check
+  app.get('/api/health', (req, res) => {
+    res.json({ status: 'ok', environment: process.env.NODE_ENV, timestamp: new Date().toISOString() });
+  });
+
+  app.get('/api/test-get', (req, res) => {
+    res.json({ message: 'API is responding to GET' });
+  });
+
+  // API to analyze nutrition plan from raw text or JSON
+  app.post('/api/nutrition/analyze-text', async (req, res) => {
+    const { text } = req.body;
+    if (!text) {
+      console.log('Nutrition Analysis (Text): No text received in body. req.body keys:', Object.keys(req.body || {}));
+      return res.status(400).json({ error: 'No text provided' });
+    }
+
+    console.log(`Nutrition Analysis: Received text input (${text.length} characters)`);
+
+    try {
+      if (!process.env.GEMINI_API_KEY) {
+        throw new Error('GEMINI_API_KEY is not configured on the server');
+      }
+
+      const prompt = `Analyze the following nutrition plan as a professional sports nutritionist.
+      
+      The input might be raw text OR a specific JSON format used by Nikhil (The Coach). 
+      If the input is Nikhil's JSON (containing 'planSummary' and 'dietPlan'), map his data exactly to the output structure below.
+      
+      MAPPING FOR NIKHIL'S JSON:
+      - 'planSummary.targetCalories' -> targetMacros.calories
+      - 'planSummary.coachingNotes' -> description
+      - 'planSummary.keyMaintenancePoints' -> guidelines
+      - 'planSummary.shoppingList' -> recommendedFoods
+      - For 'dietPlan': Flatten all meals from all days into 'plannedMeals'. 
+      - If multiple options exist (Option 1/Option 2), include both but prefix the meal name with "Option 1:" or "Option 2:".
+      - Extract 'portionAndQuantity', 'recipe', and 'macros' into the 'notes' field for each meal.
+      
+      REQUIRED OUTPUT STRUCTURE:
+      - name: string (A strong title for this protocol)
+      - description: string (The strategic summary)
+      - targetMacros: { calories: number, protein: number, carbs: number, fats: number }
+      - guidelines: string[]
+      - recommendedFoods: string[]
+      - restrictedFoods: string[]
+      - plannedMeals: array of { id: string, dayNumber: number, time: string, name: string, notes: string }
+      
+      TIMING FORMAT: Always use 24h format (e.g. "08:30", "13:00", "20:30").
+      
+      Input:
+      ${text}
+      
+      Return ONLY the JSON.`;
+
+      const result = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        config: {
+          responseMimeType: "application/json",
+        }
+      });
+
+      const responseText = result.text;
+      console.log('Nutrition Analysis (Text): Gemini response received');
+
+      if (!responseText) throw new Error('No response from Gemini');
+      
+      try {
+        const analysis = JSON.parse(responseText.replace(/```json|```/g, '').trim());
+        res.json(analysis);
+      } catch (parseError: any) {
+        console.error('Nutrition Analysis (Text): JSON Parse Error:', responseText);
+        throw new Error(`Failed to parse analysis: ${parseError.message}`);
+      }
+
+    } catch (error: any) {
+      console.error('Nutrition Analysis (Text) Error:', error);
+      res.status(500).json({ 
+        error: 'Failed to analyze nutrition plan', 
+        details: error.message 
+      });
+    }
+  });
+
+  // API to analyze nutrition plan from file
+  app.post('/api/nutrition/analyze', upload.single('file'), async (req, res) => {
+    const file = req.file;
+    if (!file) {
+      console.log('Nutrition Analysis: No file received');
+      return res.status(400).json({ error: 'No file provided' });
+    }
+
+    console.log(`Nutrition Analysis: Received file ${file.originalname} (${file.mimetype}, ${file.size} bytes)`);
+
+    try {
+      if (!process.env.GEMINI_API_KEY) {
+        throw new Error('GEMINI_API_KEY is not configured on the server');
+      }
+
+      const prompt = `Analyze the performance nutrition plan from "${file.originalname}" as a professional sports nutritionist. 
+      
+      The input might be raw text OR a specific JSON format used by Nikhil (The Coach). 
+      If the input is Nikhil's JSON (containing 'planSummary' and 'dietPlan'), map his data exactly to the output structure below.
+      
+      MAPPING FOR NIKHIL'S JSON:
+      - 'planSummary.targetCalories' -> targetMacros.calories
+      - 'planSummary.coachingNotes' -> description
+      - 'planSummary.keyMaintenancePoints' -> guidelines
+      - 'planSummary.shoppingList' -> recommendedFoods
+      - For 'dietPlan': Flatten all meals from all days into 'plannedMeals'. 
+      - If multiple options exist (Option 1/Option 2), include both but prefix the meal name with "Option 1:" or "Option 2:".
+      - Extract 'portionAndQuantity', 'recipe', and 'macros' into the 'notes' field for each meal.
+      
+      REQUIRED OUTPUT STRUCTURE:
+      - name: string (A strong title for this protocol)
+      - description: string (The strategic summary)
+      - targetMacros: { calories: number, protein: number, carbs: number, fats: number }
+      - guidelines: string[]
+      - recommendedFoods: string[]
+      - restrictedFoods: string[]
+      - plannedMeals: array of { id: string, dayNumber: number, time: string, name: string, notes: string }
+      
+      TIMING FORMAT: Always use 24h format (e.g. "08:30", "13:00", "20:30").
+      
+      Return ONLY the JSON.`;
+
+      const result = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              { text: prompt },
+              {
+                inlineData: {
+                  data: file.buffer.toString('base64'),
+                  mimeType: file.mimetype
+                }
+              }
+            ]
+          }
+        ],
+        config: {
+          responseMimeType: "application/json",
+        }
+      });
+
+      const responseText = result.text;
+      console.log('Nutrition Analysis: Gemini response received');
+
+      if (!responseText) throw new Error('No response from Gemini');
+      
+      try {
+        const analysis = JSON.parse(responseText.replace(/```json|```/g, '').trim());
+        res.json(analysis);
+      } catch (parseError: any) {
+        console.error('Nutrition Analysis: JSON Parse Error:', responseText);
+        throw new Error(`Failed to parse analysis: ${parseError.message}`);
+      }
+
+    } catch (error: any) {
+      console.error('Nutrition Analysis Error:', error);
+      res.status(500).json({ 
+        error: 'Failed to analyze nutrition plan', 
+        details: error.message,
+        type: error.constructor.name
+      });
+    }
+  });
+
   // Google OAuth Config
   const CLIENT_ID = process.env.GOOGLE_FIT_CLIENT_ID;
   const CLIENT_SECRET = process.env.GOOGLE_FIT_CLIENT_SECRET;
@@ -65,8 +444,6 @@ async function startServer() {
     const host = req.get('host');
     return `${protocol}://${host}/auth/callback`;
   };
-
-  app.use(express.json());
 
   // API to get Authorization URL
   app.get('/api/auth/google-fit/url', (req, res) => {
@@ -320,6 +697,9 @@ async function startServer() {
     }
   });
 
+  // API to analyze nutrition plan from file
+  // Moved to top for reliability
+  
   /**
    * EXTERNAL INTEGRATION API
    * Endpoint for Nik's other apps to sync nutrition plans.
@@ -355,17 +735,20 @@ async function startServer() {
 
       const result = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
-        contents: {
-          parts: [
-            { text: prompt },
-            {
-              inlineData: {
-                data: file.buffer.toString('base64'),
-                mimeType: file.mimetype
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              { text: prompt },
+              {
+                inlineData: {
+                  data: file.buffer.toString('base64'),
+                  mimeType: file.mimetype
+                }
               }
-            }
-          ]
-        }
+            ]
+          }
+        ]
       });
 
       const text = result.text;
@@ -403,6 +786,12 @@ async function startServer() {
     }
   });
 
+  // Catch-all for unmatched /api routes
+  app.all('/api/*', (req, res) => {
+    console.log(`404: Unmatched API route: ${req.method} ${req.url}`);
+    res.status(404).json({ error: `API route not found: ${req.method} ${req.url}` });
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
@@ -418,6 +807,16 @@ async function startServer() {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
+
+  // Global Error Handler
+  app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    console.error('SERVER ERROR:', err);
+    res.status(err.status || 500).json({
+      error: 'Internal Server Error',
+      details: err.message,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
+  });
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running at http://localhost:${PORT}`);
