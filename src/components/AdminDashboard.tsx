@@ -1675,7 +1675,8 @@ function TemplatesView({ clients, showToast, confirmAction }: { clients: UserPro
     if (selectedProgram && selectedProgram.weeks && selectedProgram.weeks.length > 0) {
       const initialDates: Record<number, string> = {};
       const initialExercises: Record<number, Exercise[]> = {};
-      selectedProgram.weeks[0].days.forEach((day, i) => {
+      const days = selectedProgram.weeks[0].days || [];
+      days.forEach((day, i) => {
         initialDates[i] = format(addDays(new Date(), i), 'yyyy-MM-dd');
         const template = WORKOUT_TEMPLATES.find(t => t.id === day.workoutTemplateId);
         initialExercises[i] = template ? JSON.parse(JSON.stringify(template.exercises)) : (day.exercises || []);
@@ -1797,7 +1798,7 @@ function TemplatesView({ clients, showToast, confirmAction }: { clients: UserPro
     if (!selectedProgram || !selectedClient || !selectedProgram.weeks || selectedProgram.weeks.length === 0) return;
     
     // Check if all dates are selected
-    const workoutsToCreate = selectedProgram.weeks[0].days;
+    const workoutsToCreate = selectedProgram.weeks[0]?.days || [];
     if (Object.keys(programDates).length < workoutsToCreate.length) {
       showToast('Please select dates for all workouts', 'error');
       return;
@@ -2301,7 +2302,7 @@ function TemplatesView({ clients, showToast, confirmAction }: { clients: UserPro
                   <div className="space-y-3 mt-4">
                     <div className="flex items-center justify-between text-xs text-zinc-400">
                       <span>Exercises</span>
-                      <span className="font-bold">{template.exercises.length}</span>
+                      <span className="font-bold">{template.exercises?.length || 0}</span>
                     </div>
                     <div className="flex gap-2">
                       <button 
@@ -2322,7 +2323,7 @@ function TemplatesView({ clients, showToast, confirmAction }: { clients: UserPro
                             description: template.description || '',
                             weeks: [{
                               weekNumber: 1,
-                              days: [{ dayNumber: 1, label: 'Workout', exercises: template.exercises }]
+                              days: [{ dayNumber: 1, label: 'Workout', exercises: template.exercises || [] }]
                             }],
                             isCustom: false
                           };
@@ -2827,7 +2828,7 @@ function TemplatesView({ clients, showToast, confirmAction }: { clients: UserPro
                                 </button>
                                 <button 
                                   onClick={(e) => { e.stopPropagation(); moveDay(i, 'down'); }}
-                                  disabled={i === selectedProgram.weeks[0].days.length - 1}
+                                  disabled={i === (selectedProgram.weeks[0].days || []).length - 1}
                                   className="p-1 text-zinc-600 hover:text-orange-500 disabled:opacity-20 transition-colors"
                                   title="Move Day Down"
                                 >
@@ -2876,7 +2877,7 @@ function TemplatesView({ clients, showToast, confirmAction }: { clients: UserPro
                         <button 
                           onClick={() => {
                             const newWeeks = [...selectedProgram.weeks];
-                            const newDayNum = newWeeks[0].days.length + 1;
+                            const newDayNum = (newWeeks[0].days || []).length + 1;
                             newWeeks[0].days.push({ dayNumber: newDayNum, label: `Day ${newDayNum}`, exercises: [] });
                             setSelectedProgram({...selectedProgram, weeks: newWeeks});
                             setProgramWorkoutsDraft(prev => ({ ...prev, [newDayNum - 1]: [] }));
@@ -5662,7 +5663,7 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
       {/* Main Split Layout */}
       <div className="flex-1 flex flex-col md:flex-row overflow-hidden bg-zinc-950">
         {/* Left: Planning Dashboard */}
-        <div className="flex-1 overflow-y-auto custom-scrollbar p-0 md:p-1 border-r border-white/5">
+        <div className="flex-1 overflow-y-auto custom-scrollbar p-0 md:p-1">
           <div className="p-6 md:p-8 space-y-10">
             {/* Instructions */}
             <div className="space-y-4">
@@ -5905,7 +5906,7 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
         </div>
 
         {/* Right: YouTube Hub */}
-        <div className="w-full md:w-[450px] lg:w-[550px] bg-zinc-900/50 flex flex-col border-l border-white/5">
+        <div className="hidden bg-zinc-900/50 flex flex-col border-l border-white/5">
           <div className="p-6 md:p-8 space-y-6 flex flex-col h-full">
             <div className="space-y-4">
               <div className="flex items-center justify-between">

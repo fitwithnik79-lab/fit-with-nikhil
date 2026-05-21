@@ -90,21 +90,50 @@ async function startServer() {
   app.post('/api/gemini/search-videos', async (req, res) => {
     const { exerciseName } = req.body;
     try {
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: [{ role: 'user', parts: [{ text: `Find 3 high-quality YouTube demonstration video links for the exercise: "${exerciseName}". 
-        
-        CRITICAL VIDEO SELECTION CRITERIA:
-        1. RELEVANCE: The video must be exactly about "${exerciseName}".
-        2. CONCISE: Prioritize "YouTube Shorts" or very short, direct explanatory videos (under 2 minutes) that show proper form without long intros.
-        3. QUALITY: Select videos from reputable fitness channels.
-        
-        Return the result as a JSON array of objects, each with 'title' and 'url' properties.` }]}],
-        config: { responseMimeType: "application/json" }
-      });
-      res.json(JSON.parse(response.text || "[]"));
+      // Direct, fast, and free heuristic generation without active search grounding tools (prevents 429 quota exhaustion)
+      try {
+        const fallbackResponse = await ai.models.generateContent({
+          model: "gemini-3.5-flash",
+          contents: [{ role: 'user', parts: [{ text: `Generate 3 high-quality YouTube search or demonstration links for the exercise: "${exerciseName}".
+          You must generate highly specific YouTube search query URLs or standard demonstration titles from elite fitness channels (like Athlean-X, Squat University, Jeff Nippard, Mountain Dog, or standard YouTube Search Query URLs) which are reliable query targets.
+          
+          Return the result as a JSON array of objects, each with 'title' and 'url' properties.
+          Example item formats:
+          { "title": "Proper Form Demonstration (Squat University)", "url": "https://www.youtube.com/results?search_query=how+to+squat+squat+university" }
+          { "title": "Full Exercise Guide (Athlean-X)", "url": "https://www.youtube.com/results?search_query=bicep+curls+athlean-x" }
+  
+          Do NOT fail. Provide exactly 3 valid video search options and match the JSON format exactly.` }]}],
+          config: { 
+            responseMimeType: "application/json" 
+          }
+        });
+        const parsedFallback = JSON.parse(fallbackResponse.text || "[]");
+        if (parsedFallback && parsedFallback.length > 0) {
+          res.json(parsedFallback);
+          return;
+        }
+      } catch (fallbackError) {
+        console.error("Heuristic fallback failed:", fallbackError);
+      }
+
+      // Fallback 2: Fail-safe programmatic search query mapping (Always succeeds, no API calls needed)
+      const encodedQuery = encodeURIComponent(exerciseName);
+      res.json([
+        {
+          title: `How-to: ${exerciseName} (YouTube Search)`,
+          url: `https://www.youtube.com/results?search_query=${encodedQuery}+exercise+form`
+        },
+        {
+          title: `${exerciseName} Form Checklist (Squat University / Jeff Nippard)`,
+          url: `https://www.youtube.com/results?search_query=${encodedQuery}+squat+university+tutorial`
+        },
+        {
+          title: `${exerciseName} Common Mistakes (Athlean-X / Scott Herman)`,
+          url: `https://www.youtube.com/results?search_query=${encodedQuery}+athlean-x+mistakes`
+        }
+      ]);
     } catch (error: any) {
-      console.error("Search videos error:", error);
+      console.error("Critical fallback search videos error:", error);
       res.status(500).json({ error: error.message });
     }
   });
@@ -202,24 +231,29 @@ async function startServer() {
   app.post('/api/gemini/parse-workout-file', async (req, res) => {
     const { fileContent, fileName } = req.body;
     try {
+      // Unified quota-safe parser leveraging programmatic YouTube search links (avoids 429 quota exhaustion)
       const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+        model: "gemini-3.5-flash",
         contents: [{ role: 'user', parts: [{ text: `You are an expert fitness coach. Parse the following workout routine content from a file named "${fileName}". 
         The content might be a list of exercises, a spreadsheet-like structure, or a document.
         Convert it into a structured Program Template.
         
+        CRITICAL INSTRUCTION FOR YOUTUBE VIDEOS:
+        Populate the 'youtubeLink' field for each exercise with a robust programmatic search URL pattern:
+        "https://www.youtube.com/results?search_query=" followed by the URL-encoded exercise name (e.g. "https://www.youtube.com/results?search_query=bench+press+proper+form"). Keep the query clean and direct.
+        
         CRITICAL INSTRUCTIONS:
         1. Be extremely accurate to the original plan. If it says "Day 1: Legs", ensure Day 1 is Legs.
-        2. For EVERY exercise identified, find a high-quality YouTube demonstration video link.
-        3. VIDEO SELECTION: Prioritize "YouTube Shorts" or very short, direct explanatory videos (under 2 minutes) that show proper form immediately. Ensure the video is highly relevant to the specific exercise.
-        4. Populate the 'youtubeLink' field for every exercise.
-        5. Identify the session "block" for each exercise based on the layout or section title (e.g., "Warm-Up", "Conditioning", "Cool Down"). If no block is evident, default to "Conditioning".
+        2. Populate the 'youtubeLink' field for every exercise in the template.
+        3. Identify the session "block" for each exercise based on the layout or section title (e.g., "Warm-Up", "Conditioning", "Cool Down"). If no block is evident, default to "Conditioning".
         
         Content:
         ${fileContent}
         
         Return a JSON object representing a ProgramTemplate.` }]}],
-        config: { responseMimeType: "application/json" }
+        config: { 
+          responseMimeType: "application/json" 
+        }
       });
       res.json(JSON.parse(response.text || "{}"));
     } catch (error: any) {

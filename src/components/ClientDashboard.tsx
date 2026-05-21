@@ -43,6 +43,8 @@ import {
   Upload,
   Camera,
   Settings,
+  Edit3,
+  Sliders,
   User as UserIcon2,
   LogOut,
   Info,
@@ -1314,6 +1316,20 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   const [adminProfile, setAdminProfile] = useState<UserProfile | null>(null);
   const [activeTab, setActiveTab] = useState<'dash' | 'calendar' | 'goals' | 'tasks' | 'program' | 'meal' | 'progress' | 'badges' | 'classes' | 'profile' | 'meal-ai' | 'nutrition'>('dash');
   const [selectedWorkout, setSelectedWorkout] = useState<Workout | null>(null);
+  const [isWorkoutFullScreen, setIsWorkoutFullScreen] = useState(true);
+  const [isEditingWorkout, setIsEditingWorkout] = useState(false);
+  const [editableExercises, setEditableExercises] = useState<Exercise[]>([]);
+  const [editableNotes, setEditableNotes] = useState('');
+  const [savingWorkout, setSavingWorkout] = useState(false);
+
+  useEffect(() => {
+    if (selectedWorkout) {
+      setEditableExercises(JSON.parse(JSON.stringify(selectedWorkout.exercises)));
+      setEditableNotes(selectedWorkout.notes || '');
+      setIsEditingWorkout(false);
+    }
+  }, [selectedWorkout]);
+
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [metrics, setMetrics] = useState<BodyMetrics[]>([]);
   const [todayMetrics, setTodayMetrics] = useState<BodyMetrics | null>(null);
@@ -3108,19 +3124,30 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
       {/* Workout Detail Modal */}
       <AnimatePresence>
         {selectedWorkout && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className={cn(
+            "fixed inset-0 z-[100] flex items-center justify-center transition-all duration-300",
+            isWorkoutFullScreen ? "p-0" : "p-4"
+          )}>
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => setSelectedWorkout(null)}
+              onClick={() => {
+                setSelectedWorkout(null);
+                setIsWorkoutFullScreen(false);
+              }}
               className="absolute inset-0 bg-black/90 backdrop-blur-sm"
             />
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-3xl bg-zinc-900 border border-zinc-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+              className={cn(
+                "relative bg-zinc-900 border border-zinc-800 shadow-2xl overflow-hidden flex flex-col transition-all duration-300",
+                isWorkoutFullScreen 
+                  ? "w-screen h-screen max-w-none max-h-none rounded-none border-none bg-zinc-950" 
+                  : "w-full max-w-3xl rounded-3xl max-h-[90vh]"
+              )}
             >
               <div className="p-8 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/50 backdrop-blur-xl relative">
                 <div className="absolute bottom-0 left-0 h-1 bg-orange-500 transition-all duration-500 ease-out" 
@@ -3133,33 +3160,308 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                   </div>
                   <h3 className="font-black text-3xl italic tracking-tighter uppercase leading-none">Assemble <span className="text-orange-500">Power</span></h3>
                 </div>
-                <button 
-                  onClick={() => setSelectedWorkout(null)}
-                  className="p-3 bg-zinc-800 hover:bg-zinc-700 rounded-2xl transition-all text-zinc-400 hover:text-white"
-                >
-                  <X className="w-6 h-6" />
-                </button>
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => setIsEditingWorkout(!isEditingWorkout)}
+                    className="p-3 px-4 bg-orange-500/10 hover:bg-orange-500/20 text-orange-500 rounded-2xl border border-orange-500/20 transition-all text-xs font-black uppercase tracking-wider flex items-center gap-2"
+                    title={isEditingWorkout ? "Cancel Editing" : "Modify Session Protocol"}
+                  >
+                    {isEditingWorkout ? (
+                      <>
+                        <X className="w-4 h-4" />
+                        <span>Cancel</span>
+                      </>
+                    ) : (
+                      <>
+                        <Edit3 className="w-4 h-4" />
+                        <span>Modify Workout</span>
+                      </>
+                    )}
+                  </button>
+                  <button 
+                    onClick={() => setIsWorkoutFullScreen(!isWorkoutFullScreen)}
+                    className="p-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white rounded-2xl transition-all"
+                    title={isWorkoutFullScreen ? "Exit Fullscreen" : "Fullscreen Mode"}
+                  >
+                    {isWorkoutFullScreen ? (
+                      <Minimize2 className="w-5 h-5 text-orange-500 animate-pulse" />
+                    ) : (
+                      <Maximize2 className="w-5 h-5" />
+                    )}
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setSelectedWorkout(null);
+                      setIsWorkoutFullScreen(false);
+                      setIsEditingWorkout(false);
+                    }}
+                    className="p-3 bg-zinc-800 hover:bg-zinc-700 rounded-2xl transition-all text-zinc-400 hover:text-white"
+                  >
+                    <X className="w-6 h-6" />
+                  </button>
+                </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
-                <WorkoutCard 
-                  workout={selectedWorkout} 
-                  onComplete={() => setShowFeedbackForm(true)}
-                  showFeedbackForm={showFeedbackForm}
-                  setShowFeedbackForm={setShowFeedbackForm}
-                  clientNote={clientNote}
-                  setClientNote={setClientNote}
-                  submitting={submitting}
-                  submittingError={submittingError}
-                  handleComplete={(feedback) => handleComplete(selectedWorkout, feedback)}
-                  isCompletedToday={allFeedback.some(f => {
-                    if (!f.createdAt || f.workoutId !== selectedWorkout.id) return false;
-                    const fDate = (f.createdAt as any).toDate ? (f.createdAt as any).toDate() : new Date(f.createdAt as any);
-                    return isSameDay(fDate, new Date());
-                  })}
-                  setActiveVideo={setActiveVideo}
-                  clientUid={user.uid}
-                />
+              <div className={cn(
+                "flex-1 overflow-y-auto custom-scrollbar transition-all duration-300",
+                isWorkoutFullScreen ? "p-8 md:p-12 max-w-5xl mx-auto w-full" : "p-6"
+              )}>
+                {isEditingWorkout ? (
+                  <div className="space-y-8 animate-fadeIn text-left">
+                    <div>
+                      <h4 className="text-sm font-black text-orange-500 uppercase tracking-[0.2em] mb-1">Edit Session Plan</h4>
+                      <p className="text-xs text-zinc-400">Rearrange and modify drills, targets, or overall notes for this training day.</p>
+                    </div>
+
+                    {/* Global Day Instructions */}
+                    <div className="bg-zinc-900/50 p-6 rounded-[28px] border border-zinc-800 space-y-3">
+                      <label className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-500 flex items-center gap-2">
+                        <MessageSquare className="w-3.5 h-3.5 text-orange-500" />
+                        Day Instructions / Coach Notes
+                      </label>
+                      <textarea
+                        value={editableNotes}
+                        onChange={(e) => setEditableNotes(e.target.value)}
+                        placeholder="Define general workout notes, specific goals, RPE rules, or details for the protocol today..."
+                        className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl p-5 text-sm text-zinc-300 outline-none focus:border-orange-500/30 min-h-[100px] resize-none transition-all italic"
+                      />
+                    </div>
+
+                    {/* Exercises Section */}
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-500 flex items-center gap-2 font-mono">
+                          <Dumbbell className="w-3.5 h-3.5" />
+                          Exercises Sequence
+                        </h4>
+                        <button
+                          onClick={() => {
+                            setEditableExercises([
+                              ...editableExercises,
+                              { name: 'New Exercise', sets: 3, reps: '10', weight: '', rest: '60s', block: 'Conditioning', coachNote: '', youtubeLink: '' }
+                            ]);
+                          }}
+                          className="flex items-center gap-2 px-4 py-2 bg-orange-500/10 hover:bg-orange-500/20 text-orange-500 font-black text-[10px] uppercase tracking-widest rounded-xl border border-orange-500/20 transition-all"
+                        >
+                          <Plus className="w-4 h-4" />
+                          Add Lift
+                        </button>
+                      </div>
+
+                      <div className="space-y-4">
+                        {editableExercises.map((ex, idx) => (
+                          <div key={idx} className="bg-zinc-900/50 border border-zinc-800 rounded-3xl p-6 relative group overflow-hidden">
+                            <div className="absolute top-4 right-4 flex items-center gap-2">
+                              <button
+                                onClick={() => {
+                                  setEditableExercises(editableExercises.filter((_, i) => i !== idx));
+                                }}
+                                className="p-2 bg-zinc-950 hover:bg-red-500/10 text-zinc-500 hover:text-red-500 rounded-xl border border-zinc-800 transition-all"
+                                title="Delete Exercise"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                              <div className="space-y-1.5">
+                                <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Exercise Name</label>
+                                <input
+                                  type="text"
+                                  value={ex.name}
+                                  onChange={(e) => {
+                                    const updated = [...editableExercises];
+                                    updated[idx].name = e.target.value;
+                                    setEditableExercises(updated);
+                                  }}
+                                  className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3 text-sm text-white focus:border-orange-500/40 outline-none transition-all"
+                                  placeholder="e.g. Barbell Bench Press"
+                                />
+                              </div>
+
+                              <div className="space-y-1.5">
+                                <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Block Type</label>
+                                <select
+                                  value={ex.block || 'Conditioning'}
+                                  onChange={(e) => {
+                                    const updated = [...editableExercises];
+                                    updated[idx].block = e.target.value;
+                                    setEditableExercises(updated);
+                                  }}
+                                  className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3 text-sm text-white focus:border-orange-500/40 outline-none transition-all cursor-pointer"
+                                >
+                                  <option value="Warm-Up">Warm-Up</option>
+                                  <option value="Conditioning">Conditioning</option>
+                                  <option value="Cool Down">Cool Down</option>
+                                </select>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                              <div className="space-y-1.5">
+                                <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Sets</label>
+                                <input
+                                  type="number"
+                                  value={ex.sets}
+                                  onChange={(e) => {
+                                    const updated = [...editableExercises];
+                                    updated[idx].sets = Number(e.target.value);
+                                    setEditableExercises(updated);
+                                  }}
+                                  className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3 text-sm text-white text-center focus:border-orange-500/40 outline-none transition-all"
+                                  placeholder="e.g. 3"
+                                />
+                              </div>
+
+                              <div className="space-y-1.5">
+                                <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Reps</label>
+                                <input
+                                  type="text"
+                                  value={ex.reps}
+                                  onChange={(e) => {
+                                    const updated = [...editableExercises];
+                                    updated[idx].reps = e.target.value;
+                                    setEditableExercises(updated);
+                                  }}
+                                  className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3 text-sm text-white text-center focus:border-orange-500/40 outline-none transition-all"
+                                  placeholder="e.g. 10 or 8-12"
+                                />
+                              </div>
+
+                              <div className="space-y-1.5">
+                                <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Target Weight</label>
+                                <input
+                                  type="text"
+                                  value={ex.weight || ''}
+                                  onChange={(e) => {
+                                    const updated = [...editableExercises];
+                                    updated[idx].weight = e.target.value;
+                                    setEditableExercises(updated);
+                                  }}
+                                  className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3 text-sm text-white text-center focus:border-orange-500/40 outline-none transition-all"
+                                  placeholder="e.g. 60kg or Bodyweight"
+                                />
+                              </div>
+
+                              <div className="space-y-1.5">
+                                <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Rest Interval</label>
+                                <input
+                                  type="text"
+                                  value={ex.rest}
+                                  onChange={(e) => {
+                                    const updated = [...editableExercises];
+                                    updated[idx].rest = e.target.value;
+                                    setEditableExercises(updated);
+                                  }}
+                                  className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3 text-sm text-white text-center focus:border-orange-500/40 outline-none transition-all font-mono text-xs"
+                                  placeholder="e.g. 90s"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 gap-4">
+                              <div className="space-y-1.5">
+                                <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Coach Notes / Tips</label>
+                                <textarea
+                                  value={ex.coachNote || ''}
+                                  onChange={(e) => {
+                                    const updated = [...editableExercises];
+                                    updated[idx].coachNote = e.target.value;
+                                    setEditableExercises(updated);
+                                  }}
+                                  placeholder="Add specific movement guidelines, tempo, or safety advices..."
+                                  className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl p-4 text-sm text-zinc-300 outline-none focus:border-orange-500/40 min-h-[70px] resize-none transition-all"
+                                />
+                              </div>
+
+                              <div className="space-y-1.5">
+                                <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">YouTube Video URL</label>
+                                <input
+                                  type="text"
+                                  value={ex.youtubeLink || ''}
+                                  onChange={(e) => {
+                                    const updated = [...editableExercises];
+                                    updated[idx].youtubeLink = e.target.value;
+                                    setEditableExercises(updated);
+                                  }}
+                                  className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3 text-sm text-zinc-400 focus:border-orange-500/40 outline-none transition-all placeholder:text-zinc-800 font-mono text-xs"
+                                  placeholder="https://www.youtube.com/watch?v=..."
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {editableExercises.length === 0 && (
+                        <div className="p-16 border border-dashed border-zinc-800 rounded-[32px] text-zinc-500 text-center">
+                          Drills catalog is empty. Click "Add Lift" to input a training task.
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Action Block Submit */}
+                    <div className="flex gap-4 pt-10 border-t border-zinc-800">
+                      <button
+                        onClick={async () => {
+                          setSavingWorkout(true);
+                          try {
+                            await updateDoc(doc(db, 'workouts', selectedWorkout.id), {
+                              exercises: editableExercises,
+                              notes: editableNotes
+                            });
+                            const updatedWorkout = {
+                              ...selectedWorkout,
+                              exercises: editableExercises,
+                              notes: editableNotes
+                            };
+                            setSelectedWorkout(updatedWorkout);
+                            setIsEditingWorkout(false);
+                            setToastNotification({
+                              title: 'Session Plan Saved',
+                              message: 'Workout modifications successfully synchronized to Firestore database.',
+                              type: 'success'
+                            });
+                          } catch (err) {
+                            console.error("Failed to save workout modifications:", err);
+                          } finally {
+                            setSavingWorkout(false);
+                          }
+                        }}
+                        disabled={savingWorkout}
+                        className="flex-1 py-4 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white font-black uppercase text-xs tracking-widest rounded-2xl transition-all shadow-xl shadow-orange-500/20 flex items-center justify-center gap-2"
+                      >
+                        {savingWorkout ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                        Commit Changes
+                      </button>
+                      <button
+                        onClick={() => setIsEditingWorkout(false)}
+                        className="px-8 py-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 font-black uppercase text-xs tracking-widest rounded-2xl transition-all"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <WorkoutCard 
+                    workout={selectedWorkout} 
+                    onComplete={() => setShowFeedbackForm(true)}
+                    showFeedbackForm={showFeedbackForm}
+                    setShowFeedbackForm={setShowFeedbackForm}
+                    clientNote={clientNote}
+                    setClientNote={setClientNote}
+                    submitting={submitting}
+                    submittingError={submittingError}
+                    handleComplete={(feedback) => handleComplete(selectedWorkout, feedback)}
+                    isCompletedToday={allFeedback.some(f => {
+                      if (!f.createdAt || f.workoutId !== selectedWorkout.id) return false;
+                      const fDate = (f.createdAt as any).toDate ? (f.createdAt as any).toDate() : new Date(f.createdAt as any);
+                      return isSameDay(fDate, new Date());
+                    })}
+                    setActiveVideo={setActiveVideo}
+                    clientUid={user.uid}
+                  />
+                )}
               </div>
             </motion.div>
           </div>
