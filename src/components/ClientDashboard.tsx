@@ -171,6 +171,7 @@ const GoalsAndHabits = ({ habits, habitLogs, goals, user, profile, adminProfile,
         await addDoc(collection(db, 'messages'), {
           senderId: user.uid,
           receiverId: adminProfile.uid,
+          participants: [user.uid, adminProfile.uid],
           text: `NEW GOAL SET! ${profile.displayName} has committed to a new target: "${newGoal.title}" (${newGoal.targetValue} ${newGoal.unit}). Let's help them get there! 🎯`,
           isRead: false,
           type: 'motivation',
@@ -208,6 +209,7 @@ const GoalsAndHabits = ({ habits, habitLogs, goals, user, profile, adminProfile,
           await addDoc(collection(db, 'messages'), {
             senderId: user.uid,
             receiverId: adminProfile.uid,
+            participants: [user.uid, adminProfile.uid],
             text: `GOAL ACHIEVED! ${profile.displayName} has completed their goal: "${goalDoc?.title}". Time to celebrate and set new targets!`,
             isRead: false,
             type: 'motivation',
@@ -1469,14 +1471,20 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     const q = query(
       collection(db, 'messages'),
       where('receiverId', '==', clientId),
-      orderBy('createdAt', 'desc'),
-      limit(20)
+      limit(100)
     );
     
     let isInitialLoad = true;
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const msgs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as Message);
+      const msgs = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }) as Message)
+        .sort((a, b) => {
+          const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt instanceof Date ? a.createdAt.getTime() : 0);
+          const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt instanceof Date ? b.createdAt.getTime() : 0);
+          return timeB - timeA; // Descending
+        })
+        .slice(0, 20); // Keep top 20 recent messages
       setMessages(msgs);
 
       if (!isInitialLoad) {
@@ -1604,6 +1612,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
         await addDoc(collection(db, 'messages'), {
           senderId: adminUid,
           receiverId: clientId,
+          participants: [adminUid, clientId],
           text,
           isRead: false,
           type,
@@ -1947,6 +1956,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
         await addDoc(collection(db, 'messages'), {
           senderId: user.uid,
           receiverId: adminProfile.uid,
+          participants: [user.uid, adminProfile.uid],
           text: `Workout Completed! ${profile.displayName || 'Client'} finished Week ${workout.weekNumber} Day ${workout.dayNumber}. Notes: ${clientNote || 'No notes provided.'}`,
           isRead: false,
           type: 'motivation',

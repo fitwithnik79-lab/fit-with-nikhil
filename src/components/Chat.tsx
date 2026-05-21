@@ -36,7 +36,7 @@ export default function Chat({ currentUser, otherUser, onClose }: ChatProps) {
   useEffect(() => {
     const q = query(
       collection(db, 'messages'),
-      where('senderId', 'in', [currentUser.uid, otherUser.uid]),
+      where('participants', 'array-contains', currentUser.uid),
       limit(200)
     );
 

@@ -231,26 +231,52 @@ async function startServer() {
   app.post('/api/gemini/parse-workout-file', async (req, res) => {
     const { fileContent, fileName } = req.body;
     try {
-      // Unified quota-safe parser leveraging programmatic YouTube search links (avoids 429 quota exhaustion)
+      // Direct, advanced professional workout parser with day analysis and elite styling rules
       const response = await ai.models.generateContent({
         model: "gemini-3.5-flash",
-        contents: [{ role: 'user', parts: [{ text: `You are an expert fitness coach. Parse the following workout routine content from a file named "${fileName}". 
-        The content might be a list of exercises, a spreadsheet-like structure, or a document.
-        Convert it into a structured Program Template.
+        contents: [{ role: 'user', parts: [{ text: `You are an elite, Olympic-level strength and conditioning coach specializing in athletic performance, biomechanical correction, and recovery. 
+        Your task is to analyze the following workout content from an uploaded file/document named "${fileName}".
         
-        CRITICAL INSTRUCTION FOR YOUTUBE VIDEOS:
-        Populate the 'youtubeLink' field for each exercise with a robust programmatic search URL pattern:
-        "https://www.youtube.com/results?search_query=" followed by the URL-encoded exercise name (e.g. "https://www.youtube.com/results?search_query=bench+press+proper+form"). Keep the query clean and direct.
+        Analyze the text thoroughly to identify the core design:
+        1. MULTI-DAY SPLIT ANALYSIS: Scrutinize the text to find training split days (e.g., "Day 1", "Day 2", "Monday", "Push Day", "Day A", "Leg Session", etc.).
+        2. EXERCISE GROUPING: Group exercises accurately under each identified day. Maintain the exact order.
+        3. NO DAYS FOUND FALLBACK: If the text is a simple flat list of exercises without any clear day divisions, intelligently segment them into a high-performance 3-day or 4-day split based on cohesive muscle groups, kinetic chains, or restorative focus.
         
-        CRITICAL INSTRUCTIONS:
-        1. Be extremely accurate to the original plan. If it says "Day 1: Legs", ensure Day 1 is Legs.
-        2. Populate the 'youtubeLink' field for every exercise in the template.
-        3. Identify the session "block" for each exercise based on the layout or section title (e.g., "Warm-Up", "Conditioning", "Cool Down"). If no block is evident, default to "Conditioning".
-        
+        For every single exercise identified:
+        - name: High-end professional nomenclature (e.g., 'DB Romanian Deadlift (RDL)', 'Goblet Box Squat', 'Pallof Press (Cable or Band)').
+        - block: Categorize the exercise into one of three structural training phases:
+          * 'Warm-Up': General mobilization, tissue activation, or light dynamic preparation.
+          * 'Conditioning': The heavy compound or targeted training stimulus of the session.
+          * 'Cool Down': Static stretching, positional releases, or recovery postures.
+        - sets: A realistic, top-tier target number of sets (integer, e.g. 1 to 5) (default to 3 if unspecified).
+        - reps: Precise target repetitions (string, e.g., '10-12 reps', '15 reps', '30-45s hold', '5 reps per side').
+        - weight: Realistic professional load suggestions or guidelines (string, e.g., 'BW', 'Light/Med', 'Medium', 'Heavy', 'Band', 'Dumbbell').
+        - rest: Athlete recovery intervals (string, e.g., '30s', '45s', '60s', '90s').
+        - coachNote: Elite actionable, biomechanical cueing written directly to the athlete (e.g., 'Soft knee bend, hinge from hips. Keep neutral spine and draw shoulder blades back.', 'Stand tall, squeeze glutes at the top to protect lower back. Breathe out as you press.').
+        - youtubeLink: Populate with a robust programmatic YouTube search URL:
+          "https://www.youtube.com/results?search_query=" followed by the URL-encoded exercise name (e.g. "https://www.youtube.com/results?search_query=bench+press+proper+form"). Keep the query clean and direct.
+
+        Structure the parsed data into a premium JSON representing a single ProgramTemplate:
+        - name: Give the program an elite, professional systematic name based on the content (e.g., "Full Body Compound Split", "Elite Ankle & Lower Body Tactical Recovery", or similar top-tier names).
+        - category: One of 'Strength' | 'Recovery' | 'Fat Loss' | 'Hypertrophy' | 'Athletic'.
+        - description: A sophisticated, high-performance coaching rationale explaining the logic, physiological target, and structure of this particular custom-designed routine.
+        - weeks: Must contain exactly 1 week object in the array with 'days' representing all the analyzed day-splits:
+          {
+            "weekNumber": 1,
+            "days": [
+              {
+                "dayNumber": 1,
+                "label": "Day Title (e.g., 'Upper Body Focus' or 'Core & Mobility' or 'Strength Focus')",
+                "exercises": [ ...array of exercises... ]
+              },
+              ...
+            ]
+          }
+
         Content:
         ${fileContent}
         
-        Return a JSON object representing a ProgramTemplate.` }]}],
+        Return ONLY valid JSON corresponding to the ProgramTemplate format.` }]}],
         config: { 
           responseMimeType: "application/json" 
         }

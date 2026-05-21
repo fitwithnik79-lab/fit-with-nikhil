@@ -117,7 +117,11 @@ service cloud.firestore {
     // ===============================================================
 
     match /users/{userId} {
-      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow read: if isSignedIn() && (
+        request.auth.uid == userId || 
+        resource.data.role == 'admin' || 
+        isAdmin()
+      );
       allow create: if isSignedIn() && request.auth.uid == userId && isValidUser(incoming());
       allow update: if isSignedIn() && (isAdmin() || (request.auth.uid == userId && incoming().role == existing().role));
     }
@@ -166,7 +170,12 @@ service cloud.firestore {
     }
 
     match /messages/{messageId} {
-      allow read: if isSignedIn() && (resource.data.senderId == request.auth.uid || resource.data.receiverId == request.auth.uid || isAdmin());
+      allow read: if isSignedIn() && (
+        resource.data.senderId == request.auth.uid || 
+        resource.data.receiverId == request.auth.uid || 
+        ('participants' in resource.data && request.auth.uid in resource.data.participants) || 
+        isAdmin()
+      );
       allow create: if isSignedIn() && incoming().senderId == request.auth.uid;
       allow update: if isAdmin() || (isSignedIn() && resource.data.receiverId == request.auth.uid);
     }

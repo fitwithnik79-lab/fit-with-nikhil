@@ -197,6 +197,7 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
             await addDoc(collection(db, 'messages'), {
               senderId: user.uid,
               receiverId: item.client.uid,
+              participants: [user.uid, item.client.uid],
               text: `Hey ${item.client.displayName?.split(' ')[0] || 'there'}! I noticed you signed up but haven't started a workout protocol yet. Feel free to ask me for a custom workout plan—I'm here to help you achieve your elite goals!`,
               createdAt: serverTimestamp(),
               type: 'motivation',
@@ -261,19 +262,25 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
   }, []);
 
   useEffect(() => {
-    // Fetch all messages for the coach to see unread or recent ones
+    // Fetch all messages for the coach to see unread or recent ones without requiring a composite index
     const q = query(
       collection(db, 'messages'), 
       where('receiverId', '==', user.uid),
-      orderBy('createdAt', 'desc'),
-      limit(20)
+      limit(100)
     );
     
     // Track initial load to avoid notifying for old messages
     let isInitialLoad = true;
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const messageData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as Message);
+      const messageData = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }) as Message)
+        .sort((a, b) => {
+          const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt instanceof Date ? a.createdAt.getTime() : 0);
+          const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt instanceof Date ? b.createdAt.getTime() : 0);
+          return timeB - timeA; // Descending
+        })
+        .slice(0, 20); // Keep top 20 recent messages
       setMessages(messageData);
       
       if (!isInitialLoad) {
@@ -3191,6 +3198,7 @@ function RemindersView({ clients, showToast, currentUser }: { clients: UserProfi
         addDoc(collection(db, 'messages'), {
           senderId: currentUser.uid,
           receiverId: clientId,
+          participants: [currentUser.uid, clientId],
           text: messageText,
           type: messageType,
           isRead: false,
@@ -3413,6 +3421,7 @@ function DuplicateWorkoutModal({ workout, clients, onClose, onDuplicate, showToa
       await addDoc(collection(db, 'messages'), {
         senderId: adminUid,
         receiverId: selectedClient.uid,
+        participants: [adminUid, selectedClient.uid],
         text: `Hey! I've assigned a new activity for you: Week ${workout.weekNumber}, Day ${workout.dayNumber} on ${targetDate}. Let's crush it! 🚀`,
         isRead: false,
         type: 'motivation',
@@ -5387,6 +5396,7 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
         await addDoc(collection(db, 'messages'), {
           senderId: adminUid,
           receiverId: client.uid,
+          participants: [adminUid, client.uid],
           text: `Hey! I've just assigned a new activity for you: Week ${week}, Day ${day}. Let's get to work! 🚀`,
           isRead: false,
           type: 'motivation',
