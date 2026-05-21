@@ -122,11 +122,18 @@ export default function Chat({ currentUser, otherUser, onClose }: ChatProps) {
       <div className="p-4 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/50">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-zinc-900 border border-zinc-800 overflow-hidden flex items-center justify-center font-bold text-white shadow-lg shadow-zinc-800/20">
-            <img 
-              src={getAvatarUrl(otherUser.email, otherUser.gender, otherUser.photoURL)} 
-              alt={otherUser.displayName}
-              className="w-full h-full object-cover"
-            />
+            {otherUser.photoURL ? (
+              <img 
+                src={otherUser.photoURL} 
+                alt={otherUser.displayName}
+                className="w-full h-full object-cover"
+                referrerPolicy="no-referrer"
+              />
+            ) : (
+              <span className="text-sm font-black uppercase text-orange-550">
+                {otherUser.displayName?.[0] || 'C'}
+              </span>
+            )}
           </div>
           <div>
             <h3 className="font-bold text-sm">{otherUser.displayName || 'Chat'}</h3>

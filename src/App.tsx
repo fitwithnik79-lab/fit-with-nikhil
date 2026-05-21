@@ -45,16 +45,22 @@ export default function App() {
           
           if (userDoc.exists()) {
             const userData = userDoc.data() as UserProfile;
-            // Update lastLogin in background
-            updateDoc(userDocRef, { lastLogin: serverTimestamp() }).catch(err => console.error("Error updating last login:", err));
+            const updateFields: any = { lastLogin: serverTimestamp() };
+            
+            // Sync photoURL if available from Google Auth but missing in database
+            if (user.photoURL && !userData.photoURL) {
+              updateFields.photoURL = user.photoURL;
+              userData.photoURL = user.photoURL;
+            }
             
             // Sync admin role if needed
             if (isAdminEmail && userData.role !== 'admin') {
-              const updatedProfile = { ...userData, role: 'admin' as UserRole };
-              updateDoc(userDocRef, { role: 'admin' }).catch(err => console.error("Error syncing admin role:", err));
+              const updatedProfile = { ...userData, ...updateFields, role: 'admin' as UserRole };
+              updateDoc(userDocRef, { ...updateFields, role: 'admin' }).catch(err => console.error("Error syncing admin role:", err));
               setProfile(updatedProfile);
             } else {
-              setProfile(userData);
+              updateDoc(userDocRef, updateFields).catch(err => console.error("Error updating last login:", err));
+              setProfile({ ...userData, ...updateFields });
             }
           } else {
             // New user
@@ -63,6 +69,7 @@ export default function App() {
               email: user.email || '',
               role: isAdminEmail ? 'admin' : 'client',
               displayName: user.displayName || '',
+              photoURL: user.photoURL || '',
               createdAt: serverTimestamp(),
             };
             await setDoc(userDocRef, newProfile).catch(err => handleFirestoreError(err, OperationType.CREATE, `users/${user.uid}`));

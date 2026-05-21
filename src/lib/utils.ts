@@ -35,12 +35,25 @@ export function playNotificationSound() {
 
 export function getAvatarUrl(email?: string, gender?: string, photoURL?: string) {
   if (photoURL) return photoURL;
-  const seed = email || 'default';
-  if (gender === 'female') {
-    return `https://api.dicebear.com/7.x/avataaars/svg?seed=${seed}&topType=longHair,turban,hijab`;
+  
+  let initials = 'A';
+  if (email) {
+    const rawName = email.split('@')[0].replace(/[._-]/g, ' ').trim();
+    const parts = rawName.split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) {
+      initials = (parts[0][0] + parts[1][0]).toUpperCase();
+    } else if (parts.length === 1) {
+      initials = parts[0].substring(0, Math.min(2, parts[0].length)).toUpperCase();
+    }
   }
-  if (gender === 'male') {
-    return `https://api.dicebear.com/7.x/avataaars/svg?seed=${seed}&topType=shortHair,sides,shavedSides`;
-  }
-  return `https://api.dicebear.com/7.x/avataaars/svg?seed=${seed}`;
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+    <rect width="100" height="100" fill="#18181b"/>
+    <circle cx="50" cy="50" r="45" fill="none" stroke="#f97316" stroke-width="2" opacity="0.3"/>
+    <text x="50" y="55" dominant-baseline="middle" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif" font-size="36" font-weight="900" fill="#f97316">
+      ${initials}
+    </text>
+  </svg>`;
+
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }

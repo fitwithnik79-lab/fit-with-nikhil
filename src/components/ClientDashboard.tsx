@@ -66,7 +66,6 @@ import {
   Circle,
   Bell
 } from 'lucide-react';
-import { GoogleFitService } from '../services/googleFitService';
 import { requestNotificationPermission, onForegroundMessage } from '../lib/notifications';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, playNotificationSound, getAvatarUrl } from '../lib/utils';
@@ -868,12 +867,9 @@ const StreakDisplay = ({ history }: { history: BodyMetrics[] }) => {
   );
 };
 
-const QuickLog = ({ todayMetrics, onLog, profile, onSyncFit, syncingFit }: { 
+const QuickLog = ({ todayMetrics, onLog }: { 
   todayMetrics: BodyMetrics | null, 
-  onLog: (data: Partial<BodyMetrics>) => void,
-  profile: UserProfile,
-  onSyncFit: () => void,
-  syncingFit: boolean
+  onLog: (data: Partial<BodyMetrics>) => void
 }) => {
   return (
     <motion.div 
@@ -909,25 +905,6 @@ const QuickLog = ({ todayMetrics, onLog, profile, onSyncFit, syncingFit }: {
             <Droplets className="w-4 h-4 text-orange-500" />
             +250ml Water
           </button>
-          
-          {profile.googleFitTokens ? (
-            <button 
-              onClick={onSyncFit}
-              disabled={syncingFit}
-              className="bg-black text-white px-8 py-4 rounded-[24px] font-black uppercase tracking-widest text-xs hover:bg-zinc-900 transition-all flex items-center gap-3 shadow-xl hover:scale-105 active:scale-95 disabled:opacity-50"
-            >
-              <RefreshCcw className={cn("w-4 h-4 text-orange-500", syncingFit && "animate-spin")} />
-              {syncingFit ? 'Syncing...' : 'Sync Steps'}
-            </button>
-          ) : (
-            <button 
-              onClick={() => onLog({ stepCount: (todayMetrics?.stepCount || 0) + 1000 })}
-              className="bg-black text-white px-8 py-4 rounded-[24px] font-black uppercase tracking-widest text-xs hover:bg-zinc-900 transition-all flex items-center gap-3 shadow-xl hover:scale-105 active:scale-95"
-            >
-              <Footprints className="w-4 h-4 text-orange-500" />
-              +1k Steps
-            </button>
-          )}
         </div>
       </div>
     </motion.div>
@@ -1338,82 +1315,12 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   const [meals, setMeals] = useState<any[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [activeNutritionPlan, setActiveNutritionPlan] = useState<NutritionPlan | null>(null);
-  const [syncingFit, setSyncingFit] = useState(false);
   const [habits, setHabits] = useState<Habit[]>([]);
   const [habitLogs, setHabitLogs] = useState<HabitLog[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [habitLoading, setHabitLoading] = useState(true);
   const [calendarViewDate, setCalendarViewDate] = useState(new Date());
-
-  const syncGoogleFitSteps = async () => {
-    if (!profile.googleFitTokens) return;
-    setSyncingFit(true);
-    try {
-      const accessToken = await GoogleFitService.getValidAccessToken(clientId);
-      if (!accessToken) {
-        console.warn('Could not get valid Google Fit access token');
-        setSyncingFit(false);
-        return;
-      }
-
-      const steps = await GoogleFitService.fetchDailySteps(accessToken);
-      
-      const dateStr = format(new Date(), 'yyyy-MM-dd');
-      const q = query(collection(db, 'metrics'), where('clientId', '==', clientId), where('date', '==', dateStr));
-      const snap = await getDocs(q);
-      
-      if (!snap.empty) {
-        // Only update if steps have increased or if they were 0
-        const currentSteps = snap.docs[0].data().stepCount || 0;
-        if (steps > currentSteps || currentSteps === 0) {
-          await updateDoc(doc(db, 'metrics', snap.docs[0].id), {
-            stepCount: steps,
-            updatedAt: serverTimestamp()
-          });
-        }
-      } else {
-        await addDoc(collection(db, 'metrics'), {
-          clientId: clientId,
-          date: dateStr,
-          waterIntake: 0,
-          stepCount: steps,
-          calories: 0,
-          createdAt: serverTimestamp()
-        });
-      }
-    } catch (error) {
-      console.error('Error syncing Google Fit:', error);
-    } finally {
-      setSyncingFit(false);
-    }
-  };
-
-  useEffect(() => {
-    if (profile.googleFitTokens && !loading) {
-      // Sync on mount if connected
-      syncGoogleFitSteps();
-      
-      // Also set up an interval to sync every 30 minutes
-      const interval = setInterval(syncGoogleFitSteps, 30 * 60 * 1000);
-      return () => clearInterval(interval);
-    }
-  }, [profile.googleFitTokens, loading, clientId]);
-
-  const handleConnectGoogleFit = async () => {
-    try {
-      const tokens = await GoogleFitService.connect();
-      await GoogleFitService.saveTokens(clientId, tokens);
-      syncGoogleFitSteps();
-    } catch (error: any) {
-      console.error('Connection failed:', error);
-      if (error.message?.includes('500') || error.message?.includes('configured')) {
-        alert('Google Fit is not fully configured in the environment variables. Please check GOOGLE_FIT_CLIENT_ID and GOOGLE_FIT_CLIENT_SECRET in Settings.');
-      } else {
-        alert('Failed to connect to Google Fit. Please try again.');
-      }
-    }
-  };
 
   useEffect(() => {
     if (!clientId) return;
@@ -2296,34 +2203,9 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                         </motion.div>
                       </div>
                     </div>
-
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                       <div className="lg:col-span-3 space-y-8">
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-                           <div className="bg-zinc-900 border border-white/5 rounded-[40px] p-8 flex flex-col justify-between transform hover:-translate-y-1 transition-all duration-500 group overflow-hidden relative shadow-2xl">
-                             <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:rotate-12 transition-transform">
-                               <Footprints className="w-32 h-32 text-orange-500" />
-                             </div>
-                             <div className="flex justify-between items-start mb-12">
-                               <div className="p-3 bg-orange-500/10 rounded-2xl">
-                                 <Footprints className="w-6 h-6 text-orange-500" />
-                               </div>
-                               {profile.googleFitTokens && (
-                                 <button 
-                                   onClick={syncGoogleFitSteps}
-                                   disabled={syncingFit}
-                                   className="p-2 bg-zinc-800 rounded-xl hover:bg-orange-500 transition-colors group/btn"
-                                 >
-                                   <RefreshCcw className={cn("w-4 h-4 text-zinc-400 group-hover/btn:text-white", syncingFit && "animate-spin")} />
-                                 </button>
-                               )}
-                             </div>
-                             <div>
-                               <p className="text-5xl font-black italic tracking-tighter mb-1">{todayMetrics?.stepCount || 0}</p>
-                               <p className="text-xs font-black uppercase tracking-widest text-zinc-500">Total Steps Today</p>
-                             </div>
-                           </div>
-
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                            <div className="bg-zinc-900 border border-white/5 rounded-[40px] p-8 flex flex-col justify-between transform hover:-translate-y-1 transition-all duration-500 group overflow-hidden relative shadow-2xl">
                              <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:rotate-12 transition-transform">
                                <Flame className="w-32 h-32 text-red-500" />
@@ -2353,9 +2235,6 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
 
                           <QuickLog 
                             todayMetrics={todayMetrics} 
-                            profile={profile}
-                            syncingFit={syncingFit}
-                            onSyncFit={syncGoogleFitSteps}
                             onLog={async (data) => {
                               if (isPreview) return;
                               const dateStr = format(new Date(), 'yyyy-MM-dd');
@@ -2378,7 +2257,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                                   createdAt: serverTimestamp()
                                 });
                               }
-                            }} 
+                            }}
                           />
 
                         {lastFeedback?.motivationalMessage && (
@@ -2494,26 +2373,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                           </div>
                         </div>
 
-                        {!profile.googleFitTokens && (
-                          <div className="bg-gradient-to-br from-zinc-900 to-black p-8 rounded-[40px] border border-orange-500/20 flex flex-col justify-between aspect-square group hover:border-orange-500/50 transition-all duration-700 shadow-2xl relative overflow-hidden">
-                            <div className="absolute -bottom-8 -right-8 p-8 opacity-10 blur-2xl bg-orange-500 w-32 h-32 rounded-full" />
-                            <div className="flex justify-between items-start relative z-10">
-                              <div className="p-4 bg-orange-500/10 rounded-[28px] border border-orange-500/20 ring-4 ring-orange-500/5">
-                                 <Footprints className="w-7 h-7 text-orange-500" />
-                              </div>
-                            </div>
-                            <div className="relative z-10 space-y-4">
-                              <h4 className="text-xl font-black leading-tight">Connect <br />Google Fit</h4>
-                              <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Auto-Sync Steps & Data</p>
-                              <button 
-                                onClick={handleConnectGoogleFit}
-                                className="w-full py-3 bg-orange-500 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:scale-105 transition-transform"
-                              >
-                                Connect Now
-                              </button>
-                            </div>
-                          </div>
-                        )}
+                        {/* Google Fit Connection Card Removed */}
                       </div>
                     </div>
                   </motion.div>
@@ -2530,8 +2390,6 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                   user={user} 
                   profile={profile} 
                   setShowChat={setShowChat} 
-                  onConnectGoogleFit={handleConnectGoogleFit}
-                  isGoogleFitConnected={!!profile.googleFitTokens}
                 />
               </motion.div>
             )}
@@ -3018,51 +2876,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                     </div>
                   </div>
 
-                  <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 space-y-6">
-                    <h3 className="font-bold text-lg flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <Footprints className="w-5 h-5 text-blue-500" />
-                        Step Count
-                      </div>
-                      {!profile.googleFitTokens ? (
-                        <button 
-                          onClick={handleConnectGoogleFit}
-                          className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-2 border border-zinc-700"
-                        >
-                          <Settings className="w-3 h-3" />
-                          Connect Fit
-                        </button>
-                      ) : (
-                        <button 
-                          onClick={syncGoogleFitSteps}
-                          disabled={syncingFit}
-                          className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-2 border border-zinc-700"
-                        >
-                          <RefreshCcw className={cn("w-3 h-3", syncingFit && "animate-spin")} />
-                          {syncingFit ? 'Syncing...' : 'Sync Now'}
-                        </button>
-                      )}
-                    </h3>
-                    <div className="h-[200px] w-full">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={[...metrics].reverse()}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
-                          <XAxis 
-                            dataKey="date" 
-                            stroke="#71717a" 
-                            fontSize={10} 
-                            tickFormatter={(str) => format(parseISO(str), 'MMM d')}
-                          />
-                          <YAxis stroke="#71717a" fontSize={10} />
-                          <Tooltip 
-                            contentStyle={{ backgroundColor: '#18181b', border: '1px solid #27272a', borderRadius: '12px' }}
-                            itemStyle={{ color: '#3b82f6' }}
-                          />
-                          <Line type="monotone" dataKey="stepCount" stroke="#3b82f6" strokeWidth={2} dot={{ fill: '#3b82f6' }} />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
+                  {/* Step count chart removed */}
                 </div>
               </motion.div>
             )}
@@ -3789,7 +3603,6 @@ function MetricsTracker({
   allFeedback: Feedback[]
 }) {
   const [water, setWater] = useState(todayMetrics?.waterIntake || 0);
-  const [steps, setSteps] = useState(todayMetrics?.stepCount || 0);
   const [calories, setCalories] = useState(todayMetrics?.calories || 0);
   const [protein, setProtein] = useState(todayMetrics?.protein || 0);
   const [carbs, setCarbs] = useState(todayMetrics?.carbs || 0);
@@ -3830,7 +3643,6 @@ function MetricsTracker({
   useEffect(() => {
     if (todayMetrics) {
       setWater(todayMetrics.waterIntake);
-      setSteps(todayMetrics.stepCount);
       setCalories(todayMetrics.calories);
       setProtein(todayMetrics.protein || 0);
       setCarbs(todayMetrics.carbs || 0);
@@ -3849,7 +3661,6 @@ function MetricsTracker({
         clientId: user.uid,
         date: todayStr,
         waterIntake: Number(water),
-        stepCount: Number(steps),
         calories: Number(calories),
         protein: Number(protein),
         carbs: Number(carbs),
@@ -3878,7 +3689,7 @@ function MetricsTracker({
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 space-y-4">
           <div className="flex items-center justify-between">
             <div className="p-2 bg-blue-500/10 rounded-xl text-blue-500">
@@ -3903,22 +3714,6 @@ function MetricsTracker({
               </button>
             ))}
           </div>
-        </div>
-
-        <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="p-2 bg-green-500/10 rounded-xl text-green-500">
-              <Footprints className="w-5 h-5" />
-            </div>
-            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Steps</span>
-          </div>
-          <input 
-            type="number" 
-            value={steps} 
-            onChange={(e) => setSteps(Number(e.target.value))}
-            className="w-full bg-black border border-zinc-800 rounded-xl px-4 py-2 text-xl font-bold focus:ring-1 focus:ring-green-500 outline-none"
-          />
-          <p className="text-[10px] text-zinc-500 font-medium">Goal: 10k</p>
         </div>
 
         <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 space-y-4">
@@ -5475,12 +5270,10 @@ function MealAI({
   );
 }
 
-function ProfileSection({ user, profile, setShowChat, onConnectGoogleFit, isGoogleFitConnected }: { 
+function ProfileSection({ user, profile, setShowChat }: { 
   user: User, 
   profile: UserProfile, 
-  setShowChat: (s: boolean) => void,
-  onConnectGoogleFit: () => void,
-  isGoogleFitConnected: boolean
+  setShowChat: (s: boolean) => void
 }) {
   const [formData, setFormData] = useState({
     displayName: profile.displayName || '',
@@ -5672,54 +5465,6 @@ function ProfileSection({ user, profile, setShowChat, onConnectGoogleFit, isGoog
             <MessageCircle className="w-5 h-5" />
             Message Nik
           </button>
-        </div>
-      </div>
-
-      {/* Google Fit Integration Section */}
-      <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 space-y-6">
-        <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-2xl bg-white/5 flex items-center justify-center">
-            <Footprints className="w-6 h-6 text-orange-500" />
-          </div>
-          <div>
-            <h3 className="text-xl font-bold font-black tracking-tight uppercase">Health <span className="text-orange-500">Integration</span></h3>
-            <p className="text-xs text-zinc-500 font-medium">Sync your elite activity data automatically with Coach Nik.</p>
-          </div>
-        </div>
-
-        <div className="p-6 bg-zinc-950 border border-zinc-800 rounded-[28px] flex flex-col sm:flex-row items-center justify-between gap-6 group hover:border-orange-500/30 transition-all duration-500">
-          <div className="flex items-center gap-5">
-             <div className="relative">
-               <div className={cn(
-                 "w-4 h-4 rounded-full",
-                 isGoogleFitConnected ? "bg-green-500 shadow-[0_0_15px_rgba(34,197,94,0.5)] animate-pulse" : "bg-zinc-800"
-               )} />
-             </div>
-             <div>
-               <p className="text-sm font-black text-white uppercase tracking-tight">Google Fit Sync</p>
-               <p className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest">
-                 {isGoogleFitConnected ? 'Status: Optimized & Connected' : 'Status: Link Required'}
-               </p>
-             </div>
-          </div>
-          
-          <button
-            onClick={onConnectGoogleFit}
-            className={cn(
-              "px-8 py-3.5 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] transition-all duration-500",
-              isGoogleFitConnected 
-                ? "bg-zinc-900 text-zinc-500 hover:text-white border border-white/5" 
-                : "bg-orange-500 text-white hover:scale-105 hover:bg-orange-400 shadow-2xl shadow-orange-500/20"
-            )}
-          >
-            {isGoogleFitConnected ? 'Reset Connection' : 'Activate Sync'}
-          </button>
-        </div>
-
-        <div className="px-6 py-4 bg-zinc-950/50 rounded-2xl border border-dashed border-zinc-800">
-          <p className="text-[9px] text-zinc-600 text-center uppercase font-black tracking-[0.3em] leading-relaxed">
-            Nik's high-performance infrastructure automatically scans and archives your daily metrics for consistent progress analysis.
-          </p>
         </div>
       </div>
     </div>

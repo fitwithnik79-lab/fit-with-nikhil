@@ -53,10 +53,11 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [confirmModal, setConfirmModal] = useState<{ title: string, message: string, onConfirm: () => void } | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [dailySteps, setDailySteps] = useState<Record<string, number>>({});
   const [clientHabits, setClientHabits] = useState<Habit[]>([]);
   const [clientGoals, setClientGoals] = useState<Goal[]>([]);
   const [clientHabitLogs, setClientHabitLogs] = useState<HabitLog[]>([]);
+  const [clientSearch, setClientSearch] = useState('');
+  const [clientStatusTab, setClientStatusTab] = useState<'active' | 'inactive' | 'all'>('active');
   
   // New states for intelligence logic
   const [allWorkouts, setAllWorkouts] = useState<Workout[]>([]);
@@ -67,6 +68,40 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
+  };
+
+  const sendScheduledExercisesReminder = async (client: UserProfile) => {
+    try {
+      const clientWorkouts = allWorkouts.filter(w => w.clientId === client.uid);
+      const clientGoals = allGoals.filter(g => g.clientId === client.uid && g.status === 'in-progress');
+      
+      const nextWorkout = clientWorkouts.find(w => {
+        const hasIncomplete = w.exercises?.some(e => !e.isCompleted) ?? false;
+        return hasIncomplete;
+      }) || clientWorkouts[0];
+      
+      const goalsText = clientGoals.slice(0, 2).map(g => `"${g.title}"`).join(', ');
+      const workoutText = nextWorkout 
+        ? `Week ${nextWorkout.weekNumber} Day ${nextWorkout.dayNumber} custom routine` 
+        : `your elite training routine`;
+        
+      const textMessage = `Hey ${client.displayName || 'athlete'}! This is your elite physical coach checking in. 🚀 Your active workout exercises are scheduled: ${workoutText}. Keep striving to crush your goals: ${goalsText || 'your customized targets'}. Consistency is absolute key to dominance. Hit the gym and log your progress! 💪🔥`;
+      
+      await addDoc(collection(db, 'messages'), {
+        senderId: user.uid,
+        receiverId: client.uid,
+        participants: [user.uid, client.uid],
+        text: textMessage,
+        isRead: false,
+        type: 'reminder',
+        createdAt: serverTimestamp()
+      });
+      
+      showToast(`Training reminder delivered to ${client.displayName}!`, 'success');
+    } catch (e) {
+      console.error("Error sending routine notification:", e);
+      showToast("Unable to deliver schedule notification.", "error");
+    }
   };
 
   const confirmAction = (title: string, message: string, onConfirm: () => void) => {
@@ -125,8 +160,12 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
     };
   }, []);
 
+  const activeClients = useMemo(() => {
+    return clients.filter(c => (c.status || 'active') === 'active');
+  }, [clients]);
+
   const expiringPlans = useMemo(() => {
-    return clients.map(client => {
+    return activeClients.map(client => {
       const clientWorkouts = allWorkouts.filter(w => w.clientId === client.uid);
       const latestWorkout = clientWorkouts[0]; // Ordered by createdAt desc
       const nutritionPlan = allNutritionPlans.find(np => np.clientId === client.uid && np.isActive);
@@ -147,10 +186,10 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
       }
       return null;
     }).filter(Boolean);
-  }, [clients, allWorkouts, allNutritionPlans, allGoals]);
+  }, [activeClients, allWorkouts, allNutritionPlans, allGoals]);
 
   const milestones = useMemo(() => {
-    return clients.map(client => {
+    return activeClients.map(client => {
       const goals = allGoals.filter(g => g.clientId === client.uid);
       const completedRecentGoal = goals.find(g => g.status === 'completed' && g.createdAt && differenceInDays(new Date(), g.createdAt.toDate ? g.createdAt.toDate() : new Date()) <= 7);
       
@@ -173,10 +212,10 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
       }
       return null;
     }).filter(Boolean);
-  }, [clients, allGoals, allHabitLogs]);
+  }, [activeClients, allGoals, allHabitLogs]);
 
   const programmingLeads = useMemo(() => {
-    return clients.filter(client => {
+    return activeClients.filter(client => {
       const hasWorkouts = allWorkouts.some(w => w.clientId === client.uid);
       return !hasWorkouts;
     }).map(client => {
@@ -184,7 +223,71 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
       const daysSinceSignup = differenceInDays(new Date(), signupDate);
       return { client, daysSinceSignup };
     }).sort((a, b) => b.daysSinceSignup - a.daysSinceSignup);
-  }, [clients, allWorkouts]);
+  }, [activeClients, allWorkouts]);
+
+  const athleteIntelligence = useMemo(() => {
+    return activeClients.map(client => {
+      const clientWorkouts = allWorkouts.filter(w => w.clientId === client.uid);
+      const totalAssigned = clientWorkouts.length;
+      
+      const clientFeedbacks = feedbacks.filter(f => f.clientId === client.uid);
+      const completedWorkouts = clientFeedbacks.filter(f => f.completionStatus).length;
+      
+      const adherenceRate = totalAssigned > 0 ? Math.round((completedWorkouts / totalAssigned) * 100) : 0;
+      
+      let status: 'Elite' | 'Good' | 'Needs Attention' = 'Needs Attention';
+      if (adherenceRate >= 85) status = 'Elite';
+      else if (adherenceRate >= 50) status = 'Good';
+      
+      const personalBests = clientFeedbacks.filter(f => {
+        const note = (f.clientNote || '').toLowerCase();
+        return note.includes('pr') || note.includes('pb') || note.includes('personal best') || note.includes('record') || note.includes('personal record') || note.includes('max') || note.includes('breakthrough');
+      }).map(f => ({
+        date: f.createdAt?.toDate ? f.createdAt.toDate() : new Date(),
+        note: f.clientNote,
+        workout: `Week ${f.weekNumber} Day ${f.dayNumber}`
+      }));
+      
+      const activeGoals = allGoals.filter(g => g.clientId === client.uid && g.status === 'in-progress');
+      const completedGoals = allGoals.filter(g => g.clientId === client.uid && g.status === 'completed');
+      
+      return {
+        client,
+        totalAssigned,
+        completedWorkouts,
+        adherenceRate,
+        status,
+        personalBests,
+        activeGoalsCount: activeGoals.length,
+        completedGoalsCount: completedGoals.length,
+        activeGoals,
+        completedGoals,
+        streak: client.streak || 0
+      };
+    });
+  }, [activeClients, allWorkouts, feedbacks, allGoals]);
+
+  const filteredClientsList = useMemo(() => {
+    return clients.filter((client) => {
+      const queryStr = clientSearch.toLowerCase().trim();
+      const nameMatch = client.displayName?.toLowerCase().includes(queryStr) || false;
+      const emailMatch = client.email?.toLowerCase().includes(queryStr) || false;
+      const matchesSearch = queryStr === '' || nameMatch || emailMatch;
+
+      const currentStatus = client.status || 'active';
+      let matchesStatus = true;
+      if (clientStatusTab === 'active') {
+        matchesStatus = currentStatus === 'active';
+      } else if (clientStatusTab === 'inactive') {
+        matchesStatus = currentStatus === 'inactive';
+      }
+
+      return matchesSearch && matchesStatus;
+    });
+  }, [clients, clientSearch, clientStatusTab]);
+
+  const activeClientsCount = useMemo(() => clients.filter(c => (c.status || 'active') === 'active').length, [clients]);
+  const inactiveClientsCount = useMemo(() => clients.filter(c => c.status === 'inactive').length, [clients]);
 
   useEffect(() => {
     if (loading || clients.length === 0) return;
@@ -310,23 +413,6 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
   }, [user.uid, clients]);
 
   useEffect(() => {
-    // Fetch today's steps for all clients
-    const today = format(new Date(), 'yyyy-MM-dd');
-    const q = query(collection(db, 'daily_steps'), where('date', '==', today));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const stepsMap: Record<string, number> = {};
-      snapshot.docs.forEach(doc => {
-        const data = doc.data();
-        stepsMap[data.clientId] = data.steps;
-      });
-      setDailySteps(stepsMap);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'daily_steps');
-    });
-    return () => unsubscribe();
-  }, []);
-
-  useEffect(() => {
     if (!selectedClient?.uid) {
       setClientHabits([]);
       setClientGoals([]);
@@ -357,23 +443,6 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
     };
   }, [selectedClient?.uid]);
 
-  const syncAthleteData = async () => {
-    setIsSyncing(true);
-    try {
-      const response = await fetch('/api/sync/all-steps', { method: 'POST' });
-      const data = await response.json();
-      if (data.success) {
-        showToast('Athlete data synchronized flawlessly', 'success');
-      } else {
-        showToast('Sync completed with discrepancies', 'error');
-      }
-    } catch (error) {
-      showToast('Synchronization failure', 'error');
-    } finally {
-      setIsSyncing(false);
-    }
-  };
-
   useEffect(() => {
     if ("Notification" in window && Notification.permission === "default") {
       Notification.requestPermission();
@@ -401,22 +470,10 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
               Elite <span className="text-orange-500 italic">Coach</span> <br /> 
               Interface <span className="font-serif italic lowercase font-normal text-zinc-700">v2.0</span>
             </h2>
-            <p className="text-zinc-500 font-medium text-lg">Overseeing {clients.length} athletes performing at peak capacity.</p>
+            <p className="text-zinc-500 font-medium text-lg">Overseeing {activeClients.length} active athletes performing at peak capacity.</p>
           </div>
           
           <div className="flex items-center gap-4 mt-6">
-            <button
-              onClick={syncAthleteData}
-              disabled={isSyncing}
-              className={cn(
-                "group flex items-center gap-3 px-6 py-3 bg-zinc-950 border border-white/10 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:border-orange-500/50 transition-all",
-                isSyncing && "opacity-50 cursor-not-allowed"
-              )}
-            >
-              <RefreshCcw className={cn("w-4 h-4 text-orange-500", isSyncing && "animate-spin")} />
-              <span>{isSyncing ? 'Syncing Athletes...' : 'Sync Elite Metrics'}</span>
-            </button>
-            <div className="h-8 w-px bg-white/5" />
             <div className="flex -space-x-3">
               {clients.slice(0, 5).map((c, i) => (
                 <div key={i} className="w-8 h-8 rounded-full border-2 border-zinc-900 overflow-hidden shadow-xl ring-2 ring-zinc-950">
@@ -476,7 +533,7 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
             {/* Mission Stats */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                {[
-                 { label: 'Active Athletes', value: clients.length, trend: '+12%', icon: Users, color: 'text-blue-500' },
+                 { label: 'Active Athletes', value: activeClients.length, trend: 'Formative', icon: Users, color: 'text-blue-500' },
                  { label: 'Workouts Today', value: feedbacks.filter(f => isToday(f.createdAt?.toDate ? f.createdAt.toDate() : new Date())).length, trend: 'Optimal', icon: Zap, color: 'text-orange-500' },
                  { label: 'Pending Feedback', value: feedbacks.filter(f => !f.motivationalMessage && !f.isRead).length, trend: 'High Priority', icon: MessageSquare, color: 'text-purple-500' },
                  { label: 'Squad Consistency', value: '88%', trend: 'Stable', icon: Activity, color: 'text-green-500' },
@@ -968,34 +1025,85 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
                 <input
                   type="text"
                   placeholder="Search clients..."
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-xl py-2 pl-10 pr-4 focus:outline-none focus:ring-2 focus:ring-orange-500/50 transition-all"
+                  value={clientSearch}
+                  onChange={(e) => setClientSearch(e.target.value)}
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded-xl py-2 pl-10 pr-4 focus:outline-none focus:ring-2 focus:ring-orange-500/50 transition-all text-sm"
                 />
               </div>
+
+              {/* Status Tabs */}
+              <div className="grid grid-cols-3 gap-1 bg-zinc-950 p-1 rounded-xl border border-zinc-800/80">
+                <button
+                  onClick={() => setClientStatusTab('active')}
+                  className={cn(
+                    "py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all text-center",
+                    clientStatusTab === 'active' ? "bg-orange-500 text-white" : "text-zinc-400 hover:text-white"
+                  )}
+                >
+                  Active ({activeClientsCount})
+                </button>
+                <button
+                  onClick={() => setClientStatusTab('inactive')}
+                  className={cn(
+                    "py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all text-center",
+                    clientStatusTab === 'inactive' ? "bg-orange-500 text-white" : "text-zinc-400 hover:text-white"
+                  )}
+                >
+                  Inactive ({inactiveClientsCount})
+                </button>
+                <button
+                  onClick={() => setClientStatusTab('all')}
+                  className={cn(
+                    "py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all text-center",
+                    clientStatusTab === 'all' ? "bg-orange-500 text-white" : "text-zinc-400 hover:text-white"
+                  )}
+                >
+                  All ({clients.length})
+                </button>
+              </div>
               
-              <div className="space-y-2 max-h-[calc(100vh-20rem)] overflow-y-auto custom-scrollbar pr-2">
-                {clients.map((client) => (
-                  <button
-                    key={client.uid}
-                    onClick={() => setSelectedClient(client)}
-                    className={cn(
-                      "w-full flex items-center justify-between p-4 rounded-xl border transition-all text-left",
-                      selectedClient?.uid === client.uid 
-                        ? "bg-orange-500/10 border-orange-500/50 text-white" 
-                        : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-white"
-                    )}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center font-bold text-orange-500">
-                        {client.displayName?.[0] || 'C'}
+              <div className="space-y-2 max-h-[calc(100vh-25rem)] overflow-y-auto custom-scrollbar pr-2">
+                {filteredClientsList.map((client) => {
+                  const isActive = (client.status || 'active') === 'active';
+                  return (
+                    <button
+                      key={client.uid}
+                      onClick={() => setSelectedClient(client)}
+                      className={cn(
+                        "w-full flex items-center justify-between p-4 rounded-xl border transition-all text-left relative overflow-hidden",
+                        selectedClient?.uid === client.uid 
+                          ? "bg-orange-500/10 border-orange-500/50 text-white" 
+                          : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-white"
+                      )}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="relative">
+                          <div className={cn(
+                            "w-10 h-10 rounded-full flex items-center justify-center font-bold text-white",
+                            isActive ? "bg-zinc-800 text-orange-500" : "bg-zinc-950 text-zinc-600 line-through"
+                          )}>
+                            {client.displayName?.[0] || 'C'}
+                          </div>
+                          <span className={cn(
+                            "absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border border-zinc-900",
+                            isActive ? "bg-emerald-500" : "bg-zinc-600"
+                          )} />
+                        </div>
+                        <div>
+                          <div className={cn("font-semibold", !isActive && "text-zinc-500")}>
+                            {client.displayName}
+                            {!isActive && <span className="ml-1.5 text-[9px] uppercase tracking-normal bg-zinc-800 text-zinc-500 px-1 py-0.2 rounded font-black pr-1">Inactive</span>}
+                          </div>
+                          <div className="text-xs opacity-60 truncate max-w-[120px]">{client.email}</div>
+                        </div>
                       </div>
-                      <div>
-                        <div className="font-semibold">{client.displayName}</div>
-                        <div className="text-xs opacity-60 truncate max-w-[120px]">{client.email}</div>
-                      </div>
-                    </div>
-                    <ChevronRight className="w-4 h-4 opacity-40" />
-                  </button>
-                ))}
+                      <ChevronRight className="w-4 h-4 opacity-40" />
+                    </button>
+                  );
+                })}
+                {filteredClientsList.length === 0 && (
+                  <p className="text-zinc-600 text-xs text-center py-8">No clients match this criteria.</p>
+                )}
               </div>
             </div>
 
@@ -1014,6 +1122,33 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
                     </div>
 
                     <div className="flex items-center gap-3">
+                      <button
+                        onClick={async () => {
+                          const currentStatus = selectedClient.status || 'active';
+                          const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
+                          try {
+                            await updateDoc(doc(db, 'users', selectedClient.uid), { status: newStatus });
+                            setSelectedClient(prev => prev && prev.uid === selectedClient.uid ? { ...prev, status: newStatus } : prev);
+                            showToast(`${selectedClient.displayName} is now marked as ${newStatus}!`, 'success');
+                          } catch (e) {
+                            showToast("Failed to update status", "error");
+                          }
+                        }}
+                        className={cn(
+                          "flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-black uppercase tracking-wider transition-all",
+                          (selectedClient.status || 'active') === 'active' 
+                            ? "bg-emerald-500/15 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/25" 
+                            : "bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-zinc-750"
+                        )}
+                        title="Click to toggle active status"
+                      >
+                        <span className={cn(
+                          "w-2 h-2 rounded-full",
+                          (selectedClient.status || 'active') === 'active' ? "bg-emerald-500" : "bg-zinc-500"
+                        )} />
+                        {(selectedClient.status || 'active') === 'active' ? 'Active Athlete' : 'Inactive'}
+                      </button>
+
                       {onEnterPreview && (
                         <button
                           onClick={() => onEnterPreview(selectedClient.uid)}
@@ -1147,9 +1282,155 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
                   </AnimatePresence>
                 </div>
               ) : (
-                <div className="h-full min-h-[400px] flex flex-col items-center justify-center bg-zinc-900/50 border border-dashed border-zinc-800 rounded-2xl text-zinc-500 p-8 text-center">
-                  <Users className="w-12 h-12 mb-4 opacity-20" />
-                  <p>Select a client to manage their program, workouts, and view progress.</p>
+                <div className="space-y-6">
+                  {/* Overview Cards */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div className="bg-zinc-900 border border-zinc-800/80 p-6 rounded-2xl flex items-center gap-4">
+                      <div className="w-12 h-12 bg-orange-500/10 rounded-full flex items-center justify-center">
+                        <Users className="w-6 h-6 text-orange-500" />
+                      </div>
+                      <div>
+                        <div className="text-2xl font-black">{activeClientsCount}</div>
+                        <div className="text-zinc-500 text-xs font-bold uppercase tracking-wider">Active Athletes</div>
+                      </div>
+                    </div>
+                    
+                    <div className="bg-zinc-900 border border-zinc-800/80 p-6 rounded-2xl flex items-center gap-4">
+                      <div className="w-12 h-12 bg-zinc-850 rounded-full flex items-center justify-center">
+                        <Users className="w-6 h-6 text-zinc-500" />
+                      </div>
+                      <div>
+                        <div className="text-2xl font-black text-zinc-400">{inactiveClientsCount}</div>
+                        <div className="text-zinc-500 text-xs font-bold uppercase tracking-wider">Inactive Athletes</div>
+                      </div>
+                    </div>
+
+                    <div className="bg-zinc-900 border border-zinc-800/80 p-6 rounded-2xl flex items-center gap-4">
+                      <div className="w-12 h-12 bg-emerald-500/10 rounded-full flex items-center justify-center">
+                        <Flame className="w-6 h-6 text-emerald-500" />
+                      </div>
+                      <div>
+                        <div className="text-2xl font-black text-emerald-400">
+                          {Math.max(...activeClients.map(c => c.streak || 0), 0)} Days
+                        </div>
+                        <div className="text-zinc-500 text-xs font-bold uppercase tracking-wider">Peak Streak</div>
+                      </div>
+                    </div>
+
+                    <div className="bg-zinc-900 border border-zinc-800/80 p-6 rounded-2xl flex items-center gap-4">
+                      <div className="w-12 h-12 bg-blue-500/10 rounded-full flex items-center justify-center">
+                        <Calendar className="w-6 h-6 text-blue-500" />
+                      </div>
+                      <div>
+                        <div className="text-2xl font-black text-blue-400">
+                          {athleteIntelligence.filter(a => a.adherenceRate >= 80).length} Athletes
+                        </div>
+                        <div className="text-zinc-500 text-xs font-bold uppercase tracking-wider">Consistent (&gt;80%)</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Highlights Grid */}
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    {/* Breakthroughs & Personal Record Updates */}
+                    <div className="lg:col-span-1 bg-zinc-900 border border-zinc-800 rounded-2xl p-6 space-y-4">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="w-5 h-5 text-orange-400 animate-pulse" />
+                        <h4 className="font-bold text-sm uppercase tracking-wider">Breakthroughs & PBs</h4>
+                      </div>
+                      <p className="text-zinc-500 text-xs leading-relaxed">System logs tracking active athletes pushing load boundaries or labeling achievements in logs.</p>
+                      
+                      <div className="space-y-3 max-h-[350px] overflow-y-auto custom-scrollbar pr-1">
+                        {athleteIntelligence.flatMap(a => 
+                          a.personalBests.map((pb, idx) => ({
+                            clientName: a.client.displayName,
+                            ...pb,
+                            id: `${a.client.uid}-${idx}`
+                          }))
+                        ).sort((a, b) => b.date.getTime() - a.date.getTime()).slice(0, 8).map((pb) => (
+                          <div key={pb.id} className="bg-zinc-950 p-3 rounded-xl border border-zinc-850 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-bold text-orange-450">{pb.clientName}</span>
+                              <span className="text-[9px] bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-500 font-bold uppercase tracking-wide">{pb.workout}</span>
+                            </div>
+                            <p className="text-xs text-zinc-300 italic font-medium leading-relaxed">"{pb.note}"</p>
+                          </div>
+                        ))}
+                        {athleteIntelligence.every(a => a.personalBests.length === 0) && (
+                          <div className="text-center py-12 text-zinc-650 text-xs bg-zinc-950 rounded-xl border border-zinc-850">
+                            No PBs logged recently. Athlete feedback containing 'PR' or 'PB' alerts here.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Routine Adherence Tracker */}
+                    <div className="lg:col-span-2 bg-zinc-900 border border-zinc-800 rounded-2xl p-6 space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Activity className="w-5 h-5 text-orange-500" />
+                          <h4 className="font-bold text-sm uppercase tracking-wider">Routine Adherence Tracker</h4>
+                        </div>
+                        <span className="text-[10px] text-zinc-500 uppercase tracking-widest font-bold">Consistency</span>
+                      </div>
+                      <p className="text-zinc-500 text-xs leading-relaxed">Workout fidelity based on logged user reviews. Send instant exercise or goal reminder triggers below.</p>
+
+                      <div className="space-y-3 max-h-[350px] overflow-y-auto custom-scrollbar pr-1">
+                        {athleteIntelligence.map(({ client, adherenceRate, totalAssigned, completedWorkouts, status, streak, activeGoalsCount }) => (
+                          <div key={client.uid} className="bg-zinc-950 p-4 rounded-xl border border-zinc-850 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-white text-sm">{client.displayName}</span>
+                                {streak > 0 && <span className="text-[10px] bg-orange-500/10 text-orange-400 px-2.5 py-0.5 rounded-full font-bold">🔥 {streak} Streak</span>}
+                              </div>
+                              <div className="flex items-center gap-3 text-xs text-zinc-500">
+                                <span>Adherence: {completedWorkouts} / {totalAssigned} workouts</span>
+                                <span>•</span>
+                                <span>Goals In-Progress: {activeGoalsCount}</span>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-4">
+                              <div className="text-right space-y-1">
+                                <span className={cn(
+                                  "text-[10px] font-bold px-2 py-0.5 rounded-full",
+                                  status === 'Elite' ? "bg-emerald-500/10 text-emerald-400" : status === 'Good' ? "bg-yellow-500/10 text-yellow-400" : "bg-rose-500/10 text-rose-450"
+                                )}>
+                                  {status === 'Elite' ? 'Elite Track' : status === 'Good' ? 'Steady Track' : 'Needs Stimulus'}
+                                </span>
+                                <div className="flex items-center gap-2">
+                                  <div className="w-20 bg-zinc-850 h-1 rounded-full overflow-hidden">
+                                    <div 
+                                      className={cn(
+                                        "h-full rounded-full transition-all",
+                                        status === 'Elite' ? "bg-emerald-500" : status === 'Good' ? "bg-yellow-500" : "bg-rose-500"
+                                      )}
+                                      style={{ width: `${adherenceRate}%` }}
+                                    />
+                                  </div>
+                                  <span className="text-xs font-black text-zinc-300">{adherenceRate}%</span>
+                                </div>
+                              </div>
+
+                              <button
+                                onClick={() => sendScheduledExercisesReminder(client)}
+                                className="px-3 py-2 bg-orange-600 hover:bg-orange-500 rounded-lg text-[10px] font-black uppercase tracking-wider text-white transition-all flex items-center gap-1.5"
+                                title="Send reminder about custom routines and active goals"
+                              >
+                                <Send className="w-3 h-3" />
+                                Nudge
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                        {athleteIntelligence.length === 0 && (
+                          <div className="text-center py-12 text-zinc-650 text-xs">
+                            No active athletes registered under management.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
@@ -1199,58 +1480,14 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
           >
             <div className="flex items-center justify-between">
                <h3 className="text-3xl font-black uppercase italic tracking-tighter flex items-center gap-3">
-                <Activity className="w-8 h-8 text-orange-500" />
-                Athlete <span className="text-zinc-700">Consistency Flow</span>
-              </h3>
-              <button 
-                onClick={syncAthleteData}
-                className="flex items-center gap-2 px-4 py-2 bg-zinc-900 border border-white/5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-zinc-800 transition-colors"
-              >
-                <RefreshCcw className={cn("w-3 h-3 text-orange-500", isSyncing && "animate-spin")} />
-                Refresh Flow
-              </button>
+                 <Activity className="w-8 h-8 text-orange-500" />
+                 Athlete <span className="text-zinc-700">Consistency Flow</span>
+               </h3>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-              {/* Daily Step Leaderboard */}
-              <div className="lg:col-span-1 space-y-6">
-                <div className="bg-zinc-900/50 border border-white/5 rounded-[40px] p-8 space-y-8">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-black uppercase tracking-widest text-zinc-500">Step Dominance</h4>
-                    <Footprints className="w-4 h-4 text-orange-500" />
-                  </div>
-                  <div className="space-y-6">
-                    {clients
-                      .sort((a, b) => (dailySteps[b.uid] || 0) - (dailySteps[a.uid] || 0))
-                      .slice(0, 10)
-                      .map((c, i) => (
-                      <div key={c.uid} className="flex items-center justify-between group">
-                        <div className="flex items-center gap-4">
-                          <span className="text-[10px] font-black text-zinc-700 w-4">#{(i + 1).toString().padStart(2, '0')}</span>
-                          <div className="w-10 h-10 rounded-xl overflow-hidden border border-white/5 shadow-xl">
-                            <img 
-                              src={getAvatarUrl(c.email || undefined, c.gender, c.photoURL)} 
-                              alt={c.displayName} 
-                              className="w-full h-full object-cover"
-                            />
-                          </div>
-                          <div>
-                            <p className="text-xs font-black text-white group-hover:text-orange-500 transition-colors uppercase truncate max-w-[80px]">{c.displayName}</p>
-                            <p className="text-[10px] font-black text-zinc-600 uppercase tracking-tighter">Athletic Rank</p>
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-sm font-black text-white italic">{(dailySteps[c.uid] || 0).toLocaleString()}</p>
-                          <p className="text-[9px] font-black text-zinc-600 uppercase">Steps</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
+            <div className="grid grid-cols-1 gap-6">
               {/* Feedback History Timeline */}
-              <div className="lg:col-span-3">
+              <div className="w-full">
                 <div className="bg-zinc-900 border border-white/5 rounded-[48px] overflow-hidden">
                   <div className="p-10 border-b border-white/5 flex items-center justify-between bg-zinc-950/50">
                     <div className="space-y-1">
@@ -5283,6 +5520,15 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
   const categories = ['All', 'General', 'Strength', 'Hypertrophy', 'Mobility', 'Flexibility', 'HIIT', 'Resistance Band'];
 
   useEffect(() => {
+    setWeek(initialWorkout?.weekNumber || 1);
+    setDay(initialWorkout?.dayNumber || 1);
+    setScheduledDate(initialWorkout?.scheduledDate || (initialDate ? format(initialDate, 'yyyy-MM-dd') : ''));
+    setExercises(initialWorkout?.exercises || [{ name: '', youtubeLink: '', sets: 3, reps: '12', weight: '', rest: '60s', coachNote: '' }]);
+    setWorkoutNotes(initialWorkout?.notes || '');
+    setExpandedIndex(0);
+  }, [initialWorkout, initialDate]);
+
+  useEffect(() => {
     // Only fetch templates of type 'workout' or those without a type (legacy)
     const q = query(collection(db, 'templates'), orderBy('createdAt', 'desc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -5410,7 +5656,11 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
           { type: 'workout', week, day }
         );
       }
-      onSave?.();
+      if (!onSave) {
+        showToast(initialWorkout?.id ? 'Workout updated successfully!' : 'Workout assigned successfully!', 'success');
+      } else {
+        onSave();
+      }
     } catch (error) {
       console.error('Error saving workout:', error);
     } finally {
@@ -5661,6 +5911,7 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
           )}
 
           <button
+            onClick={handleSaveWorkout}
             disabled={saving}
             className="flex-1 md:flex-none px-8 py-3 bg-orange-500 hover:bg-orange-600 text-white font-black uppercase text-xs tracking-widest rounded-2xl transition-all shadow-xl shadow-orange-500/20 flex items-center justify-center gap-3 shrink-0"
           >
