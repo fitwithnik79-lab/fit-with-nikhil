@@ -6,6 +6,7 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { UserProfile, Workout, Exercise, Feedback, WorkoutTemplate, BodyMetrics, Message, Habit, HabitLog, Goal, MessageTemplate } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { searchExerciseVideos, parseWorkoutFile, analyzeNutritionFile } from '../lib/gemini';
+import { getFileContentAsText } from '../lib/fileParser';
 import { triggerPushNotification, sendInAppNotification } from '../lib/notifications';
 import { SAMPLE_PROGRAMS, WEEKLY_PROGRAMS, WORKOUT_TEMPLATES } from '../constants/workoutTemplates';
 import { NUTRITION_TEMPLATES } from '../constants/nutritionTemplates';
@@ -2190,29 +2191,26 @@ function TemplatesView({ clients, showToast, confirmAction }: { clients: UserPro
 
     setParsingFile(true);
     try {
-      const reader = new FileReader();
-      reader.onload = async (event) => {
-        const content = event.target?.result as string;
-        const parsedProgram = await parseWorkoutFile(content, file.name);
-        
-        if (parsedProgram) {
-          // Save to Firestore
-          await addDoc(collection(db, 'templates'), {
-            ...parsedProgram,
-            createdAt: serverTimestamp(),
-            isCustom: true
-          });
-          showToast(`Custom program "${parsedProgram.name}" generated and saved!`);
-        } else {
-          showToast('Failed to parse workout file. Please try a different format.', 'error');
-        }
-        setParsingFile(false);
-      };
-      reader.readAsText(file);
+      const content = await getFileContentAsText(file);
+      const parsedProgram = await parseWorkoutFile(content, file.name);
+      
+      if (parsedProgram) {
+        // Save to Firestore
+        await addDoc(collection(db, 'templates'), {
+          ...parsedProgram,
+          createdAt: serverTimestamp(),
+          isCustom: true
+        });
+        showToast(`Custom program "${parsedProgram.name}" generated and saved!`);
+      } else {
+        showToast('Failed to parse workout file. Please try a different format.', 'error');
+      }
     } catch (error) {
       console.error('Error uploading workout file:', error);
       showToast('Error processing file', 'error');
+    } finally {
       setParsingFile(false);
+      e.target.value = '';
     }
   };
 
@@ -2287,31 +2285,49 @@ function TemplatesView({ clients, showToast, confirmAction }: { clients: UserPro
 
     setParsingFile(true);
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-
-      const response = await fetch('/api/nutrition/analyze', {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!response.ok) {
-        const text = await response.text();
-        console.error('Server error response:', text);
-        let errorData = {};
-        try {
-          errorData = JSON.parse(text);
-        } catch (e) {}
-        throw new Error((errorData as any).details || (errorData as any).error || `Failed to analyze nutrition plan (Status ${response.status})`);
-      }
-
-      const responseText = await response.text();
+      const extension = file.name.split('.').pop()?.toLowerCase();
       let analysis;
-      try {
-        analysis = JSON.parse(responseText);
-      } catch (e) {
-        console.error('Failed to parse analysis JSON. Response text:', responseText);
-        throw new Error('Server returned invalid data format. Check console for details.');
+
+      if (extension === 'xlsx' || extension === 'xls' || extension === 'csv') {
+        const textContent = await getFileContentAsText(file);
+        const response = await fetch('/api/nutrition/analyze-text', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: textContent }),
+        });
+        
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(text || `Failed to analyze nutrition sheet (Status ${response.status})`);
+        }
+        
+        analysis = await response.json();
+      } else {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const response = await fetch('/api/nutrition/analyze', {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!response.ok) {
+          const text = await response.text();
+          console.error('Server error response:', text);
+          let errorData = {};
+          try {
+            errorData = JSON.parse(text);
+          } catch (e) {}
+          throw new Error((errorData as any).details || (errorData as any).error || `Failed to analyze nutrition plan (Status ${response.status})`);
+        }
+
+        const responseText = await response.text();
+        try {
+          analysis = JSON.parse(responseText);
+        } catch (err) {
+          console.error('Failed to parse analysis JSON. Response text:', responseText);
+          throw new Error('Server returned invalid data format. Check console for details.');
+        }
       }
       
       if (analysis) {
@@ -2331,9 +2347,9 @@ function TemplatesView({ clients, showToast, confirmAction }: { clients: UserPro
       } else {
         showToast('Failed to parse nutrition file. Gemini couldn\'t extract enough detail.', 'error');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error uploading nutrition file:', error);
-      showToast('Error processing file. Ensure it is a valid PDF or document.', 'error');
+      showToast(error.message || 'Error processing file. Ensure it is a valid protocol.', 'error');
     } finally {
       setParsingFile(false);
       // Clear input
@@ -2624,11 +2640,11 @@ function TemplatesView({ clients, showToast, confirmAction }: { clients: UserPro
                     </div>
                     <div className="text-center">
                       <span className="block text-white font-bold">Upload Nutrition Plan</span>
-                      <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mt-1">PDF, DOC, TXT, IMAGE</span>
+                      <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mt-1">PDF, Excel/CSV, DOC, TXT, IMAGE</span>
                     </div>
                   </div>
                 )}
-                <input type="file" className="hidden" onChange={handleNutritionUpload} disabled={parsingFile} accept=".pdf,.doc,.docx,.txt,.jpg,.jpeg,.png" />
+                <input type="file" className="hidden" onChange={handleNutritionUpload} disabled={parsingFile} accept=".pdf,.doc,.docx,.txt,.jpg,.jpeg,.png,.xls,.xlsx,.csv" />
               </label>
 
               <div className="flex flex-col gap-4 w-full md:w-64">
@@ -4687,12 +4703,7 @@ function NutritionManager({ client, template, onSaveTemplate, showToast }: { cli
 
     setAnalyzingFile(true);
     try {
-      const content = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = (e) => resolve(e.target?.result as string);
-        reader.onerror = (e) => reject(new Error('Failed to read file'));
-        reader.readAsText(file);
-      });
+      const content = await getFileContentAsText(file);
 
       const analysis = await analyzeNutritionFile(content, file.name);
       if (analysis) {
@@ -4923,7 +4934,7 @@ function NutritionManager({ client, template, onSaveTemplate, showToast }: { cli
                         type="file" 
                         id="nutrition-upload" 
                         className="hidden" 
-                        accept="application/pdf,image/*,text/*"
+                        accept="application/pdf,image/*,text/*,.xls,.xlsx,.csv"
                         onChange={handleFileUpload}
                         disabled={analyzingFile}
                       />
@@ -4937,7 +4948,7 @@ function NutritionManager({ client, template, onSaveTemplate, showToast }: { cli
                         )}
                       >
                         {analyzingFile ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
-                        {analyzingFile ? 'AI IS ANALYZING PLAN...' : 'Upload Plan (PDF/Img)'}
+                        {analyzingFile ? 'AI IS ANALYZING PLAN...' : 'Upload Plan (PDF/Img/Excel)'}
                       </label>
                     </div>
                   </div>
