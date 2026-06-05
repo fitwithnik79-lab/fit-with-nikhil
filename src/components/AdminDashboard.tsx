@@ -2194,7 +2194,7 @@ function TemplatesView({ clients, showToast, confirmAction }: { clients: UserPro
       const content = await getFileContentAsText(file);
       const parsedProgram = await parseWorkoutFile(content, file.name);
       
-      if (parsedProgram) {
+      if (parsedProgram && !parsedProgram.error && parsedProgram.weeks) {
         // Save to Firestore
         await addDoc(collection(db, 'templates'), {
           ...parsedProgram,
@@ -2203,11 +2203,12 @@ function TemplatesView({ clients, showToast, confirmAction }: { clients: UserPro
         });
         showToast(`Custom program "${parsedProgram.name}" generated and saved!`);
       } else {
-        showToast('Failed to parse workout file. Please try a different format.', 'error');
+        const errorMsg = parsedProgram?.error || 'Failed to parse workout file. Please try a different format.';
+        showToast(errorMsg, 'error');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error uploading workout file:', error);
-      showToast('Error processing file', 'error');
+      showToast(error?.message || 'Error processing file', 'error');
     } finally {
       setParsingFile(false);
       e.target.value = '';

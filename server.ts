@@ -28,6 +28,35 @@ const ai = new GoogleGenAI({
   }
 });
 
+// Helper to parse clean or nested HTML/Markdown JSON safely
+function parseSafeJson(text: string): any {
+  if (!text) return {};
+  const cleaned = text.replace(/```json|```/g, '').trim();
+  try {
+    return JSON.parse(cleaned);
+  } catch (err) {
+    console.warn("Standard JSON parse failed, attempting regex extraction...", err);
+    // Find first { and last } or first [ and last ]
+    const matchObj = cleaned.match(/\{[\s\S]*\}/);
+    if (matchObj) {
+      try {
+        return JSON.parse(matchObj[0]);
+      } catch (innerErr) {
+        console.error("Regex JSON object extraction failed:", innerErr);
+      }
+    }
+    const matchArray = cleaned.match(/\[[\s\S]*\]/);
+    if (matchArray) {
+      try {
+        return JSON.parse(matchArray[0]);
+      } catch (innerErr) {
+        console.error("Regex JSON array extraction failed:", innerErr);
+      }
+    }
+    throw err;
+  }
+}
+
 // Multer for file uploads
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -107,7 +136,7 @@ async function startServer() {
             responseMimeType: "application/json" 
           }
         });
-        const parsedFallback = JSON.parse(fallbackResponse.text || "[]");
+        const parsedFallback = parseSafeJson(fallbackResponse.text || "[]");
         if (parsedFallback && parsedFallback.length > 0) {
           res.json(parsedFallback);
           return;
@@ -152,7 +181,7 @@ async function startServer() {
         }],
         config: { responseMimeType: "application/json" }
       });
-      res.json(JSON.parse(response.text || "{}"));
+      res.json(parseSafeJson(response.text || "{}"));
     } catch (error: any) {
       console.error("Analyze meal image error:", error);
       res.status(500).json({ error: error.message });
@@ -177,7 +206,7 @@ async function startServer() {
         Also include a general 'advice' string.` }]}],
         config: { responseMimeType: "application/json" }
       });
-      res.json(JSON.parse(response.text || "{}"));
+      res.json(parseSafeJson(response.text || "{}"));
     } catch (error: any) {
       console.error("Analyze meal text error:", error);
       res.status(500).json({ error: error.message });
@@ -195,7 +224,7 @@ async function startServer() {
         Each item should have 'name', 'quantity', 'calories', 'protein', 'carbs', and 'fats'.` }]}],
         config: { responseMimeType: "application/json" }
       });
-      res.json(JSON.parse(response.text || "{}"));
+      res.json(parseSafeJson(response.text || "{}"));
     } catch (error: any) {
       console.error("Batch macros error:", error);
       res.status(500).json({ error: error.message });
@@ -221,7 +250,7 @@ async function startServer() {
         5. Educational tip related to their goal.` }]}],
         config: { responseMimeType: "application/json" }
       });
-      res.json(JSON.parse(response.text || "{}"));
+      res.json(parseSafeJson(response.text || "{}"));
     } catch (error: any) {
       console.error("Daily nutrition analysis error:", error);
       res.status(500).json({ error: error.message });
@@ -281,7 +310,7 @@ async function startServer() {
           responseMimeType: "application/json" 
         }
       });
-      res.json(JSON.parse(response.text || "{}"));
+      res.json(parseSafeJson(response.text || "{}"));
     } catch (error: any) {
       console.error("Parse workout file error:", error);
       res.status(500).json({ error: error.message });
@@ -314,7 +343,7 @@ async function startServer() {
         - plannedMeals: array of { id: string, dayNumber: number, time: string, name: string, notes: string }` }]}],
         config: { responseMimeType: "application/json" }
       });
-      res.json(JSON.parse(response.text || "{}"));
+      res.json(parseSafeJson(response.text || "{}"));
     } catch (error: any) {
       console.error("Analyze nutrition file error:", error);
       res.status(500).json({ error: error.message });

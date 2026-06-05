@@ -1,4 +1,4 @@
-import { read, utils } from 'xlsx';
+import * as XLSX from 'xlsx';
 
 /**
  * Parses an Excel (.xls, .xlsx) or CSV file and extracts its content as clean, readable text.
@@ -14,13 +14,13 @@ export async function getFileContentAsText(file: File): Promise<string> {
       reader.onload = (e) => {
         try {
           const data = e.target?.result as ArrayBuffer;
-          const workbook = read(data, { type: 'array' });
+          const workbook = XLSX.read(data, { type: 'array' });
           let fullText = '';
           
           workbook.SheetNames.forEach((sheetName) => {
             const worksheet = workbook.Sheets[sheetName];
             // SheetJS sheet_to_csv provides an excellent text/tabbed layout
-            const csvContent = utils.sheet_to_csv(worksheet);
+            const csvContent = XLSX.utils.sheet_to_csv(worksheet);
             if (csvContent.trim()) {
               fullText += `### Sheet: ${sheetName} ###\n${csvContent}\n\n`;
             }

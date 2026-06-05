@@ -1315,6 +1315,10 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   const [meals, setMeals] = useState<any[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [activeNutritionPlan, setActiveNutritionPlan] = useState<NutritionPlan | null>(null);
+  const [selectedNutritionDay, setSelectedNutritionDay] = useState<number>(() => {
+    const d = new Date().getDay();
+    return d === 0 ? 7 : d;
+  });
   const [habits, setHabits] = useState<Habit[]>([]);
   const [habitLogs, setHabitLogs] = useState<HabitLog[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
@@ -2448,50 +2452,86 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                         </div>
 
                         <div className="space-y-6">
-                          <h4 className="text-sm font-bold text-zinc-500 uppercase tracking-widest flex items-center gap-3">
-                            <div className="h-px flex-1 bg-zinc-800" />
-                            Planned Meal Schedule
-                            <div className="h-px flex-1 bg-zinc-800" />
-                          </h4>
-                          <div className="space-y-3">
-                            {activeNutritionPlan.plannedMeals?.length > 0 ? (
-                              activeNutritionPlan.plannedMeals.map((m) => (
-                                <div 
-                                  key={m.id} 
-                                  className={cn(
-                                    "flex items-center gap-4 p-4 rounded-2xl border transition-all duration-300",
-                                    m.isCompleted 
-                                      ? "bg-orange-500/10 border-orange-500/30 opacity-75" 
-                                      : "bg-zinc-950/50 border-zinc-800/50"
-                                  )}
-                                >
-                                  <button 
-                                    onClick={() => handleTogglePlannedMeal(m.id)}
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-zinc-800/50 pb-4">
+                            <h4 className="text-sm font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-3">
+                              Planned Meal Schedule
+                            </h4>
+                            <div className="flex bg-zinc-950 p-1 rounded-xl border border-zinc-800 max-w-full overflow-x-auto">
+                              {[1, 2, 3, 4, 5, 6, 7].map(day => {
+                                const hasMealsForDay = activeNutritionPlan.plannedMeals?.some(m => m.dayNumber === day);
+                                const isCurrentDayOfWeek = (new Date().getDay() === 0 ? 7 : new Date().getDay()) === day;
+                                return (
+                                  <button
+                                    key={day}
+                                    onClick={() => setSelectedNutritionDay(day)}
                                     className={cn(
-                                      "w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all",
-                                      m.isCompleted 
-                                        ? "bg-orange-500 border-orange-500 text-white" 
-                                        : "border-zinc-700 hover:border-orange-500"
+                                      "w-8 h-8 rounded-lg text-[10px] font-black transition-all relative flex items-center justify-center min-w-[32px]",
+                                      selectedNutritionDay === day 
+                                        ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" 
+                                        : "text-zinc-600 hover:text-zinc-400"
                                     )}
                                   >
-                                    {m.isCompleted && <Check className="w-4 h-4" />}
+                                    D{day}
+                                    {hasMealsForDay && (
+                                      <div className={cn(
+                                        "absolute bottom-1 w-1 h-1 rounded-full",
+                                        selectedNutritionDay === day ? "bg-white" : "bg-orange-500"
+                                      )} />
+                                    )}
+                                    {isCurrentDayOfWeek && (
+                                      <div className="absolute top-1 right-1 w-1.5 h-1.5 bg-blue-500 rounded-full border border-zinc-950" title="Today (Current Day of Week)" />
+                                    )}
                                   </button>
-                                  <div className="flex-1">
-                                    <div className="flex items-center gap-2">
-                                      <span className="text-[10px] font-black text-zinc-600 bg-zinc-900 px-2 py-0.5 rounded uppercase">{m.time}</span>
-                                      <h5 className={cn("font-bold text-sm", m.isCompleted ? "text-zinc-500 line-through" : "text-white")}>
-                                        {m.name}
-                                      </h5>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          <div className="space-y-3">
+                            {activeNutritionPlan.plannedMeals?.filter(m => !m.dayNumber || m.dayNumber === selectedNutritionDay).length > 0 ? (
+                              activeNutritionPlan.plannedMeals
+                                .filter(m => !m.dayNumber || m.dayNumber === selectedNutritionDay)
+                                .sort((a, b) => (a.time || '').localeCompare(b.time || ''))
+                                .map((m) => (
+                                  <div 
+                                    key={m.id} 
+                                    className={cn(
+                                      "flex items-center gap-4 p-4 rounded-2xl border transition-all duration-300",
+                                      m.isCompleted 
+                                        ? "bg-orange-500/10 border-orange-500/30 opacity-75" 
+                                        : "bg-zinc-950/50 border-zinc-800/50 hover:border-zinc-700"
+                                    )}
+                                  >
+                                    <button 
+                                      onClick={() => handleTogglePlannedMeal(m.id)}
+                                      className={cn(
+                                        "w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all",
+                                        m.isCompleted 
+                                          ? "bg-orange-500 border-orange-500 text-white" 
+                                          : "border-zinc-700 hover:border-orange-500"
+                                      )}
+                                    >
+                                      {m.isCompleted && <Check className="w-4 h-4" />}
+                                    </button>
+                                    <div className="flex-1">
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-[10px] font-black text-zinc-400 bg-zinc-900 px-2 py-0.5 rounded font-mono uppercase">{m.time}</span>
+                                        <h5 className={cn("font-bold text-sm", m.isCompleted ? "text-zinc-500 line-through" : "text-white")}>
+                                          {m.name}
+                                        </h5>
+                                      </div>
+                                      <p className="text-xs text-zinc-500 mt-0.5">{m.notes}</p>
                                     </div>
-                                    <p className="text-xs text-zinc-500 mt-0.5">{m.notes}</p>
+                                    {m.isCompleted && (
+                                      <span className="text-[10px] font-bold text-orange-500 uppercase">Tracked</span>
+                                    )}
                                   </div>
-                                  {m.isCompleted && (
-                                    <span className="text-[10px] font-bold text-orange-500 uppercase">Tracked</span>
-                                  )}
-                                </div>
-                              ))
+                                ))
                             ) : (
-                              <p className="text-center text-zinc-600 text-sm italic">No specific meal schedule defined. Follow the general guidelines below.</p>
+                              <div className="py-12 text-center border border-dashed border-zinc-800 rounded-[32px]">
+                                <Utensils className="w-8 h-8 text-zinc-800 mx-auto mb-2 opacity-30" />
+                                <p className="text-[10px] font-black text-zinc-700 uppercase tracking-widest italic">Rest phase or unconfigured Day {selectedNutritionDay}</p>
+                              </div>
                             )}
                           </div>
                         </div>
