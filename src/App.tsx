@@ -15,7 +15,9 @@ import { cn } from './lib/utils';
 import AdminDashboard from './components/AdminDashboard';
 import ClientDashboard from './components/ClientDashboard';
 import LandingPage from './components/LandingPage';
+import MainWelcomePage from './components/MainWelcomePage';
 import ErrorBoundary from './components/ErrorBoundary';
+import { DynamicKineticLogo } from './components/DynamicKineticLogo';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -130,43 +132,7 @@ export default function App() {
   }
 
   if (!user || !profile) {
-    return (
-      <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center p-4">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="max-w-md w-full text-center space-y-8"
-        >
-          <div className="space-y-2">
-            <div className="flex justify-center">
-              <div className="p-4 bg-orange-500/10 rounded-full">
-                <Dumbbell className="w-16 h-16 text-orange-500" />
-              </div>
-            </div>
-            <h1 className="text-4xl font-bold text-white tracking-tight">Fit With Nik</h1>
-            <p className="text-zinc-400">Your premium fitness coaching experience.</p>
-          </div>
-          
-          <button
-            onClick={handleLogin}
-            disabled={signingIn}
-            className="w-full flex items-center justify-center gap-3 bg-white text-black font-semibold py-4 px-6 rounded-xl hover:bg-zinc-200 transition-colors disabled:opacity-50"
-          >
-            {signingIn ? (
-              <motion.div
-                animate={{ rotate: 360 }}
-                transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}
-              >
-                <Dumbbell className="w-5 h-5 text-zinc-400" />
-              </motion.div>
-            ) : (
-              <LogIn className="w-5 h-5" />
-            )}
-            {signingIn ? 'Signing in...' : 'Sign in with Google'}
-          </button>
-        </motion.div>
-      </div>
-    );
+    return <MainWelcomePage handleLogin={handleLogin} signingIn={signingIn} />;
   }
 
   return (
@@ -174,8 +140,7 @@ export default function App() {
       <header className="sticky top-0 z-50 bg-zinc-950/80 backdrop-blur-md border-b border-zinc-800">
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Dumbbell className="w-6 h-6 text-orange-500" />
-            <span className="font-bold text-xl tracking-tight">FIT WITH NIK</span>
+            <DynamicKineticLogo size="sm" />
           </div>
           
           <div className="flex items-center gap-4">

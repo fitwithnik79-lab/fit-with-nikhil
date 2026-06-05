@@ -106,7 +106,7 @@ async function startServer() {
     const { clientName, weekNumber } = req.body;
     try {
       const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+        model: "gemini-3.5-flash",
         contents: [{ role: 'user', parts: [{ text: `You are Nik, a high-energy fitness coach. Write a short, powerful motivational message for your client ${clientName} who just finished Week ${weekNumber} of their program. Keep it under 3 sentences. Be specific about their progress and encourage them for next week.` }] }]
       });
       res.json({ text: response.text || "Great job this week! Keep pushing!" });
@@ -171,7 +171,7 @@ async function startServer() {
     const { image, mimeType } = req.body;
     try {
       const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+        model: "gemini-3.5-flash",
         contents: [{
           role: 'user',
           parts: [
@@ -192,7 +192,7 @@ async function startServer() {
     const { mealDescription } = req.body;
     try {
       const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+        model: "gemini-3.5-flash",
         contents: [{ role: 'user', parts: [{ text: `You are an elite performance nutritionist. Analyze the following meal description: "${mealDescription}". 
         
         CRITICAL INSTRUCTION: Be extremely detailed. If a user enters a simple item like "Tea", "Coffee", "Pasta", or "Cereal", do NOT just analyze the dry ingredient. 
@@ -218,7 +218,7 @@ async function startServer() {
     const itemsDescription = items.map((i: any) => `${i.quantity} of ${i.name}`).join(", ");
     try {
       const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+        model: "gemini-3.5-flash",
         contents: [{ role: 'user', parts: [{ text: `Calculate the calories, protein, carbs, and fats for the following food items and their specific quantities: "${itemsDescription}". 
         Return the result as a JSON object with an 'items' array. 
         Each item should have 'name', 'quantity', 'calories', 'protein', 'carbs', and 'fats'.` }]}],
@@ -235,7 +235,7 @@ async function startServer() {
     const { summary, goals } = req.body;
     try {
       const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+        model: "gemini-3.5-flash",
         contents: [{ role: 'user', parts: [{ text: `You are Nik, a world-class performance nutritionist. Analyze today's logged meals for this client and provide personalized actionable advice.
         
         Client Goals: ${goals}
@@ -321,7 +321,7 @@ async function startServer() {
     const { fileContent, fileName } = req.body;
     try {
       const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+        model: "gemini-3.5-flash",
         contents: [{ role: 'user', parts: [{ text: `Analyze the performance nutrition plan from "${fileName}" as a professional sports nutritionist. 
         
         EXTRACTION REQUIREMENTS:
@@ -405,7 +405,7 @@ async function startServer() {
       Return ONLY the JSON.`;
 
       const result = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+        model: "gemini-3.5-flash",
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         config: {
           responseMimeType: "application/json",
@@ -477,7 +477,7 @@ async function startServer() {
       Return ONLY the JSON.`;
 
       const result = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+        model: "gemini-3.5-flash",
         contents: [
           {
             role: 'user',
@@ -606,7 +606,7 @@ async function startServer() {
       Return valid JSON only.`;
 
       const result = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+        model: "gemini-3.5-flash",
         contents: [
           {
             role: 'user',

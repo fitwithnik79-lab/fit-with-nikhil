@@ -1,5 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
+import confetti from 'canvas-confetti';
 import { User } from 'firebase/auth';
+import { DynamicKineticLogo } from './DynamicKineticLogo';
 import { collection, query, where, onSnapshot, addDoc, serverTimestamp, orderBy, limit, getDocs, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db, storage } from '../lib/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -116,10 +118,18 @@ const GoalsAndHabits = ({ habits, habitLogs, goals, user, profile, adminProfile,
     const existingLog = habitLogs.find(l => l.habitId === habitId && l.date === todayStr);
     try {
       if (existingLog) {
+        const nextCompletedState = !existingLog.completed;
         await updateDoc(doc(db, 'habitLogs', existingLog.id!), {
-          completed: !existingLog.completed,
+          completed: nextCompletedState,
           updatedAt: serverTimestamp()
         });
+        if (nextCompletedState) {
+          confetti({
+            particleCount: 50,
+            spread: 60,
+            origin: { y: 0.75 }
+          });
+        }
       } else {
         await addDoc(collection(db, 'habitLogs'), {
           habitId,
@@ -127,6 +137,11 @@ const GoalsAndHabits = ({ habits, habitLogs, goals, user, profile, adminProfile,
           date: todayStr,
           completed: true,
           updatedAt: serverTimestamp()
+        });
+        confetti({
+          particleCount: 50,
+          spread: 60,
+          origin: { y: 0.75 }
         });
       }
     } catch (error) {
@@ -1275,6 +1290,30 @@ function ConsistencyTracker({ workouts, feedback }: { workouts: Workout[], feedb
   );
 }
 
+const bentoContainerVariants = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: {
+      staggerChildren: 0.08,
+      delayChildren: 0.04
+    }
+  }
+};
+
+const bentoItemVariants = {
+  hidden: { opacity: 0, y: 25 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: {
+      type: "spring" as const,
+      stiffness: 90,
+      damping: 14
+    }
+  }
+};
+
 export default function ClientDashboard({ user, profile }: ClientDashboardProps) {
   const isPreview = user.uid !== profile.uid;
   const clientId = profile.uid;
@@ -1294,6 +1333,12 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   const [showSuccess, setShowSuccess] = useState(false);
   const [adminProfile, setAdminProfile] = useState<UserProfile | null>(null);
   const [activeTab, setActiveTab] = useState<'dash' | 'calendar' | 'goals' | 'tasks' | 'program' | 'meal' | 'progress' | 'badges' | 'classes' | 'profile' | 'meal-ai' | 'nutrition'>('dash');
+
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('app-tab-changed', { 
+      detail: { tab: activeTab, role: 'client' } 
+    }));
+  }, [activeTab]);
   const [selectedWorkout, setSelectedWorkout] = useState<Workout | null>(null);
   const [isWorkoutFullScreen, setIsWorkoutFullScreen] = useState(true);
   const [isEditingWorkout, setIsEditingWorkout] = useState(false);
@@ -1878,6 +1923,28 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
       setShowFeedbackForm(false);
       setClientNote('');
       setShowSuccess(true);
+
+      // Grand celebration fireworks cascade with canvas-confetti
+      const duration = 2.5 * 1000;
+      const animationEnd = Date.now() + duration;
+      const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 9999 };
+
+      const randomInRange = (min: number, max: number) => {
+        return Math.random() * (max - min) + min;
+      };
+
+      const interval: any = setInterval(function() {
+        const timeLeft = animationEnd - Date.now();
+
+        if (timeLeft <= 0) {
+          return clearInterval(interval);
+        }
+
+        const particleCount = 50 * (timeLeft / duration);
+        confetti({ ...defaults, particleCount, origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 } });
+        confetti({ ...defaults, particleCount, origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 } });
+      }, 250);
+
       if (selectedWorkout?.id === workout.id) {
         // We delay closing the modal slightly so the user sees the success state if it's there
         setTimeout(() => setSelectedWorkout(null), 1000);
@@ -1939,20 +2006,20 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
         {/* Desktop Sidebar */}
         <aside className="hidden md:flex w-72 flex-col bg-zinc-950/80 backdrop-blur-3xl border-r border-white/5 shadow-2xl shrink-0">
           <div className="p-8 flex flex-col h-full">
-            <div className="flex items-center gap-3 mb-10 group">
-              <div className="w-10 h-10 bg-orange-500 rounded-2xl flex items-center justify-center shadow-lg shadow-orange-500/20 rotate-3 group-hover:rotate-6 transition-transform">
-                <Dumbbell className="w-6 h-6 text-white" />
-              </div>
-              <h1 className="text-2xl font-black tracking-tighter uppercase italic">FIT WITH <span className="text-orange-500">NIK</span></h1>
+            <div className="mb-10 flex">
+              <DynamicKineticLogo size="md" fixedRole="client" fixedTab={activeTab} />
             </div>
 
             <nav className="flex-1 space-y-1">
               {sidebarItems.map((item) => (
-                <button
+                <motion.button
                   key={item.id}
                   onClick={() => setActiveTab(item.id as any)}
+                  whileHover={{ scale: 1.02, x: 4 }}
+                  whileTap={{ scale: 0.98 }}
+                  transition={{ type: "spring", stiffness: 400, damping: 25 }}
                   className={cn(
-                    "w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl text-sm font-bold transition-all relative group",
+                    "w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl text-sm font-bold transition-all relative group text-left",
                     activeTab === item.id 
                       ? "text-orange-500 bg-orange-500/5" 
                       : "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-900/50"
@@ -1971,7 +2038,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                       {unreadCount}
                     </span>
                   )}
-                </button>
+                </motion.button>
               ))}
             </nav>
 
@@ -2143,22 +2210,21 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                 {activeTab === 'dash' && (
                   <motion.div
                     key="dash"
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
+                    variants={bentoContainerVariants}
+                    initial="hidden"
+                    animate="visible"
                     exit={{ opacity: 0, y: -20 }}
                     className="space-y-10"
                   >
                     {/* Welcome Section */}
                     <div className="flex flex-col md:flex-row md:items-end justify-between gap-8 relative">
-                      <div className="space-y-6">
-                        <motion.div 
-                          initial={{ opacity: 0, x: -20 }}
-                          animate={{ opacity: 1, x: 0 }}
+                      <motion.div variants={bentoItemVariants} className="space-y-6">
+                        <div 
                           className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-500/20 to-orange-500/5 border border-orange-500/20 rounded-2xl"
                         >
                           <Sparkles className="w-4 h-4 text-orange-500 animate-pulse" />
                           <span className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-500">Elite Status Activated</span>
-                        </motion.div>
+                        </div>
                         <h1 className="text-6xl md:text-8xl font-black tracking-tighter leading-[0.8] uppercase">
                           No <span className="text-orange-500 italic">Excuses</span> <br /> 
                           just <span className="font-serif italic lowercase font-normal text-zinc-700">results.</span>
@@ -2166,13 +2232,11 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                         <p className="text-zinc-500 font-medium text-lg max-w-md">
                           You've completed <span className="text-white font-bold">{allFeedback.filter(f => f.completionStatus).length} sessions</span> so far. Keep building that momentum.
                         </p>
-                      </div>
+                      </motion.div>
                       
-                      <div className="flex flex-col gap-4 min-w-[320px]">
+                      <motion.div variants={bentoItemVariants} className="flex flex-col gap-4 min-w-[320px]">
                         <StreakDisplay history={metrics} />
-                        <motion.div 
-                          initial={{ opacity: 0, x: 20 }}
-                          animate={{ opacity: 1, x: 0 }}
+                        <div 
                           className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-6 flex flex-col justify-between group overflow-hidden relative shadow-xl shadow-black/20"
                         >
                           <div className="absolute -right-4 -top-4 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
@@ -2204,13 +2268,18 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                               );
                             })}
                           </div>
-                        </motion.div>
-                      </div>
+                        </div>
+                      </motion.div>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                       <div className="lg:col-span-3 space-y-8">
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                           <div className="bg-zinc-900 border border-white/5 rounded-[40px] p-8 flex flex-col justify-between transform hover:-translate-y-1 transition-all duration-500 group overflow-hidden relative shadow-2xl">
+                           <motion.div 
+                             variants={bentoItemVariants}
+                             whileHover={{ y: -6, scale: 1.015 }}
+                             transition={{ type: "spring", stiffness: 300, damping: 20 }}
+                             className="bg-zinc-900 border border-white/5 rounded-[40px] p-8 flex flex-col justify-between group overflow-hidden relative shadow-2xl"
+                           >
                              <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:rotate-12 transition-transform">
                                <Flame className="w-32 h-32 text-red-500" />
                              </div>
@@ -2221,9 +2290,14 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                                <p className="text-5xl font-black italic tracking-tighter mb-1">{todayMetrics?.calories || 0}</p>
                                <p className="text-xs font-black uppercase tracking-widest text-zinc-500">Active Calories</p>
                              </div>
-                           </div>
+                           </motion.div>
 
-                           <div className="bg-zinc-900 border border-white/5 rounded-[40px] p-8 flex flex-col justify-between transform hover:-translate-y-1 transition-all duration-500 group overflow-hidden relative shadow-2xl">
+                           <motion.div 
+                             variants={bentoItemVariants}
+                             whileHover={{ y: -6, scale: 1.015 }}
+                             transition={{ type: "spring", stiffness: 300, damping: 20 }}
+                             className="bg-zinc-900 border border-white/5 rounded-[40px] p-8 flex flex-col justify-between group overflow-hidden relative shadow-2xl"
+                           >
                              <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:rotate-12 transition-transform">
                                <Droplets className="w-32 h-32 text-blue-500" />
                              </div>
@@ -2234,9 +2308,10 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                                <p className="text-5xl font-black italic tracking-tighter mb-1">{todayMetrics?.waterIntake || 0}<span className="text-xl ml-1">ml</span></p>
                                <p className="text-xs font-black uppercase tracking-widest text-zinc-500">Daily Hydration</p>
                              </div>
-                           </div>
+                           </motion.div>
                         </div>
 
+                        <motion.div variants={bentoItemVariants}>
                           <QuickLog 
                             todayMetrics={todayMetrics} 
                             onLog={async (data) => {
@@ -2263,9 +2338,11 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                               }
                             }}
                           />
+                        </motion.div>
 
                         {lastFeedback?.motivationalMessage && (
                           <motion.div 
+                            variants={bentoItemVariants}
                             className="bg-orange-500/5 ring-1 ring-orange-500/10 p-8 rounded-[40px] relative overflow-hidden group shadow-2xl shadow-orange-500/5"
                             whileHover={{ scale: 1.01 }}
                           >
@@ -2285,6 +2362,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                         )}
 
                         {currentWorkout ? (
+                          <motion.div variants={bentoItemVariants}>
                             <WorkoutCard 
                               workout={currentWorkout} 
                               onComplete={() => setShowFeedbackForm(true)}
@@ -2299,8 +2377,12 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                               setActiveVideo={setActiveVideo}
                               clientUid={clientId}
                             />
+                          </motion.div>
                         ) : (
-                          <div className="p-12 md:p-20 bg-zinc-950 border border-white/5 border-dashed rounded-[48px] flex flex-col items-center justify-center text-center space-y-6">
+                          <motion.div 
+                            variants={bentoItemVariants}
+                            className="p-12 md:p-20 bg-zinc-950 border border-white/5 border-dashed rounded-[48px] flex flex-col items-center justify-center text-center space-y-6"
+                          >
                             <div className="w-20 h-20 bg-zinc-900 rounded-full flex items-center justify-center group">
                                <Activity className="w-10 h-10 text-zinc-700 animate-pulse group-hover:text-orange-500 transition-colors" />
                             </div>
@@ -2308,18 +2390,23 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                                <h3 className="text-3xl font-black uppercase text-white/50">Rest & Recover</h3>
                                <p className="text-zinc-500 max-w-sm mx-auto mt-2 font-medium">Coach Nik is finalizing your next training block. Use this time to optimize your nutrition and rest.</p>
                             </div>
-                          </div>
+                          </motion.div>
                         )}
 
-                        <WorkoutHistoryList 
-                          workouts={allWorkouts}
-                          feedback={allFeedback}
-                          onViewWorkout={handleHistoryWorkoutClick}
-                        />
+                        <motion.div variants={bentoItemVariants}>
+                          <WorkoutHistoryList 
+                            workouts={allWorkouts}
+                            feedback={allFeedback}
+                            onViewWorkout={handleHistoryWorkoutClick}
+                          />
+                        </motion.div>
                       </div>
 
                       <div className="lg:col-span-1 space-y-4">
-                        <div className="bg-zinc-900 p-8 rounded-[40px] border border-white/5 relative overflow-hidden group">
+                        <motion.div 
+                          variants={bentoItemVariants}
+                          className="bg-zinc-900 p-8 rounded-[40px] border border-white/5 relative overflow-hidden group"
+                        >
                            <div className="absolute top-0 right-0 p-4 opacity-5 bg-gradient-to-br from-orange-500 to-transparent w-full h-full group-hover:opacity-10 transition-opacity" />
                            <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-6">Health Pulse</p>
                            <div className="space-y-8">
@@ -2342,9 +2429,12 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                                </div>
                              ))}
                            </div>
-                        </div>
+                        </motion.div>
 
-                        <div className="bg-zinc-900 p-8 rounded-[40px] border border-white/5 flex flex-col justify-between aspect-square group hover:border-orange-500/50 transition-all duration-700 shadow-2xl relative overflow-hidden">
+                        <motion.div 
+                          variants={bentoItemVariants}
+                          className="bg-zinc-900 p-8 rounded-[40px] border border-white/5 flex flex-col justify-between aspect-square group hover:border-orange-500/50 transition-all duration-700 shadow-2xl relative overflow-hidden"
+                        >
                           <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:scale-150 transition-transform duration-1000">
                              <Droplets className="w-40 h-40 text-blue-500" />
                           </div>
@@ -2375,7 +2465,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                             <p className="text-6xl font-black tracking-tighter mb-1 mt-4">{todayMetrics?.waterIntake || 0}<span className="text-lg ml-1 font-normal opacity-50 not-italic">ml</span></p>
                             <p className="text-xs font-black uppercase tracking-widest text-zinc-500">Level: <span className="text-blue-500 lowercase font-serif italic text-sm">Optimal</span></p>
                           </div>
-                        </div>
+                        </motion.div>
 
                         {/* Google Fit Connection Card Removed */}
                       </div>
@@ -3499,11 +3589,8 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
               className="absolute inset-y-0 left-0 w-[85%] max-w-sm bg-zinc-950 border-r border-white/5 p-8 flex flex-col shadow-2xl"
             >
               <div className="flex items-center justify-between mb-12">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-orange-500 rounded-2xl flex items-center justify-center shadow-lg shadow-orange-500/20 rotate-3">
-                    <Dumbbell className="w-6 h-6 text-white" />
-                  </div>
-                  <h1 className="text-xl font-black tracking-tighter uppercase italic">FIT WITH <span className="text-orange-500">NIK</span></h1>
+                <div className="flex">
+                  <DynamicKineticLogo size="sm" fixedRole="client" fixedTab={activeTab} />
                 </div>
                 <button 
                   onClick={() => setIsMobileMenuOpen(false)}
@@ -4117,7 +4204,24 @@ function WorkoutCard({
                     <div className="flex items-start justify-between gap-4 mb-4">
                       <div className="flex-1 flex gap-4">
                         <button 
-                          onClick={() => updateExerciseFeedback(originalIndex, 'isCompleted', !exerciseFeedback[originalIndex]?.isCompleted)}
+                          onClick={() => {
+                            const isComingComplete = !exerciseFeedback[originalIndex]?.isCompleted;
+                            updateExerciseFeedback(originalIndex, 'isCompleted', isComingComplete);
+                            if (isComingComplete) {
+                              confetti({
+                                particleCount: 20,
+                                angle: 60,
+                                spread: 50,
+                                origin: { x: 0, y: 0.85 }
+                              });
+                              confetti({
+                                particleCount: 20,
+                                angle: 120,
+                                spread: 50,
+                                origin: { x: 1, y: 0.85 }
+                              });
+                            }
+                          }}
                           className={cn(
                             "mt-1 w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all flex-shrink-0",
                             exerciseFeedback[originalIndex]?.isCompleted 
@@ -4524,6 +4628,8 @@ function MealAI({
   sendAutomatedCoachMessage: (text: string, type?: 'motivation' | 'reminder') => Promise<void>
 }) {
   const [image, setImage] = useState<string | null>(null);
+  const [mealFileBlob, setMealFileBlob] = useState<Blob | null>(null);
+  const [mealFilename, setMealFilename] = useState<string>('');
   const [mealDescription, setMealDescription] = useState('');
   const [analyzing, setAnalyzing] = useState(false);
   const [recalculating, setRecalculating] = useState(false);
@@ -4539,14 +4645,73 @@ function MealAI({
 
   const [mealType, setMealType] = useState<'Breakfast' | 'Lunch' | 'Dinner' | 'Snack'>('Lunch');
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const compressImage = (file: File): Promise<{ dataUrl: string, blob: Blob }> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target?.result as string;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+          
+          const maxDim = 1024;
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+          
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height);
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+            canvas.toBlob((blob) => {
+              if (blob) {
+                resolve({ dataUrl, blob });
+              } else {
+                reject(new Error('Canvas to Blob conversion failed'));
+              }
+            }, 'image/jpeg', 0.8);
+          } else {
+            reject(new Error('Canvas context not found'));
+          }
+        };
+        img.onerror = (err) => reject(err);
+      };
+      reader.onerror = (err) => reject(err);
+    });
+  };
+
+  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setImage(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+      setAnalyzing(true);
+      try {
+        const { dataUrl, blob } = await compressImage(file);
+        setImage(dataUrl);
+        setMealFileBlob(blob);
+        setMealFilename(file.name || 'meal.jpg');
+      } catch (err) {
+        console.error("Error compressing image, reading raw default:", err);
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          setImage(reader.result as string);
+          setMealFileBlob(file);
+          setMealFilename(file.name || 'meal.jpg');
+        };
+        reader.readAsDataURL(file);
+      } finally {
+        setAnalyzing(false);
+      }
     }
   };
 
@@ -4669,6 +4834,23 @@ function MealAI({
       
       const mealCounts = meals.filter(m => m.date === todayStr).length;
       
+      let finalImageURL = null;
+      if (mealFileBlob) {
+        try {
+          const timestamp = Date.now();
+          const cleanName = mealFilename ? mealFilename.replace(/[^a-zA-Z0-9.]/g, '') : 'meal.jpg';
+          const fileRefPath = `meals/${user.uid}/${timestamp}_${cleanName}`;
+          const storageRef = ref(storage, fileRefPath);
+          await uploadBytes(storageRef, mealFileBlob);
+          finalImageURL = await getDownloadURL(storageRef);
+        } catch (storageErr) {
+          console.error("Error uploading meal image to Firebase Storage, saving image URL fallback:", storageErr);
+          finalImageURL = image && image.length < 524288 ? image : null;
+        }
+      } else if (image) {
+        finalImageURL = image.length < 524288 ? image : null;
+      }
+
       // Save full meal details
       const mealData = {
         clientId: user.uid,
@@ -4680,7 +4862,7 @@ function MealAI({
         totalProtein: totalMealMacros.protein,
         totalCarbs: totalMealMacros.carbs,
         totalFats: totalMealMacros.fats,
-        imageURL: image || null,
+        imageURL: finalImageURL,
         createdAt: serverTimestamp()
       };
 
@@ -4716,6 +4898,8 @@ function MealAI({
       }
 
       setImage(null);
+      setMealFileBlob(null);
+      setMealFilename('');
       setResult(null);
       setManualItems([]);
       setCustomMealName('');
@@ -4793,7 +4977,12 @@ function MealAI({
                   <div className="relative aspect-video rounded-2xl overflow-hidden border border-zinc-800">
                     <img src={image} alt="Meal" className="w-full h-full object-cover" />
                     <button 
-                      onClick={() => { setImage(null); setResult(null); }}
+                      onClick={() => { 
+                        setImage(null); 
+                        setMealFileBlob(null); 
+                        setMealFilename(''); 
+                        setResult(null); 
+                      }}
                       className="absolute top-4 right-4 p-2 bg-black/50 backdrop-blur-md rounded-full text-white hover:bg-black transition-colors"
                     >
                       <X className="w-5 h-5" />

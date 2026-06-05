@@ -1,19 +1,20 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Playfair+Display:ital,wght@0,900;1,900&family=JetBrains+Mono:wght@400;500&family=Outfit:wght@400;700;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=JetBrains+Mono:wght@400;500&display=swap');
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "Outfit", "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-display: "Outfit", sans-serif;
-  --font-serif: "Playfair Display", serif;
+  --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Bebas Neue", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 
-  --color-orange-500: #f97316;
-  --color-zinc-950: #09090b;
+  --color-brandDark: #0a0a0a;
+  --color-brandAccent: #ff4d00;
+  --color-brandLight: #f5f3ee;
 }
 
 @layer base {
   body {
-    @apply bg-zinc-950 text-zinc-100;
+    @apply bg-brandDark text-brandLight font-sans;
+    overflow-x: hidden;
   }
 }
 
@@ -29,10 +30,65 @@
   }
 }
 
-.perspective-1000 {
-  perspective: 1000px;
+/* Custom overlay textures and interactives */
+.grain-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 9999;
 }
 
-.mask-fade-bottom {
-  mask-image: linear-gradient(to bottom, black 80%, transparent 100%);
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
 }
+::-webkit-scrollbar-track {
+  background: #0a0a0a;
+}
+::-webkit-scrollbar-thumb {
+  background: #222;
+  border-radius: 9px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #ff4d00;
+}
+
+/* 3D tilts perspective helper */
+.card-3d {
+  transform-style: preserve-3d;
+  transition: transform 0.4s cubic-bezier(0.19, 1, 0.22, 1);
+}
+
+/* Infinite loop keyframes for tickers */
+@keyframes marqueeLeft {
+  0% { transform: translate3d(0, 0, 0); }
+  100% { transform: translate3d(-50%, 0, 0); }
+}
+@keyframes marqueeRight {
+  0% { transform: translate3d(-50%, 0, 0); }
+  100% { transform: translate3d(0, 0, 0); }
+}
+.animate-marquee-left {
+  animation: marqueeLeft 35s linear infinite;
+}
+.animate-marquee-right {
+  animation: marqueeRight 35s linear infinite;
+}
+
+/* Interactive cursor effects */
+.cursor-hover-state {
+  width: 54px !important;
+  height: 54px !important;
+  background-color: #ff4d00 !important;
+  mix-blend-mode: difference !important;
+  border-color: transparent !important;
+}
+.dot-hover-state {
+  transform: scale(2) translate3d(-50%, -50%, 0) !important;
+  background-color: #ffffff !important;
+}
+

@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { User } from 'firebase/auth';
+import { DynamicKineticLogo } from './DynamicKineticLogo';
 import { collection, query, where, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, getDocs, orderBy, deleteDoc, limit, increment } from 'firebase/firestore';
 import { db, storage, auth } from '../lib/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -36,6 +37,30 @@ import {
   startOfDay
 } from 'date-fns';
 
+const bentoContainerVariants = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: {
+      staggerChildren: 0.1,
+      delayChildren: 0.05
+    }
+  }
+};
+
+const bentoItemVariants = {
+  hidden: { opacity: 0, y: 30 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: {
+      type: "spring" as const,
+      stiffness: 100,
+      damping: 15
+    }
+  }
+};
+
 interface AdminDashboardProps {
   user: User;
   profile: UserProfile;
@@ -65,6 +90,12 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
   const [allNutritionPlans, setAllNutritionPlans] = useState<NutritionPlan[]>([]);
   const [allGoals, setAllGoals] = useState<Goal[]>([]);
   const [allHabitLogs, setAllHabitLogs] = useState<HabitLog[]>([]);
+
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('app-tab-changed', { 
+      detail: { tab: activeTab, role: 'admin' } 
+    }));
+  }, [activeTab]);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
@@ -458,14 +489,9 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
     <div className="space-y-12 pb-24 font-sans">
       <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-8">
         <div className="space-y-4">
-          <motion.div 
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            className="inline-flex items-center gap-2 px-3 py-1 bg-orange-500/10 border border-orange-500/20 rounded-full"
-          >
-            <Shield className="w-3.5 h-3.5 text-orange-400" />
-            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-500">Command Center Online</span>
-          </motion.div>
+          <div className="flex">
+            <DynamicKineticLogo size="md" fixedRole="admin" fixedTab={activeTab} />
+          </div>
           <div className="space-y-1">
             <h2 className="text-5xl md:text-6xl font-black tracking-tighter uppercase leading-[0.85]">
               Elite <span className="text-orange-500 italic">Coach</span> <br /> 
@@ -490,7 +516,7 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
           </div>
         </div>
         
-        <div className="flex flex-wrap bg-zinc-950 p-1.5 rounded-3xl border border-white/5 shadow-2xl backdrop-blur-3xl">
+         <div className="flex flex-wrap bg-zinc-950 p-1.5 rounded-3xl border border-white/5 shadow-2xl backdrop-blur-3xl">
           {[
             { id: 'dash', label: 'Actions', icon: LayoutDashboard },
             { id: 'clients', label: 'Athletes', icon: Users, badge: unreadMessagesCount },
@@ -500,24 +526,35 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
             { id: 'templates', label: 'Vault', icon: BookOpen },
             { id: 'settings', label: 'Settings', icon: Settings },
           ].map((item) => (
-            <button
+            <motion.button
               key={item.id}
               onClick={() => setActiveTab(item.id as any)}
+              whileHover={{ scale: 1.03 }}
+              whileTap={{ scale: 0.97 }}
               className={cn(
-                "flex items-center gap-2 px-5 py-2.5 rounded-2xl text-xs font-black uppercase tracking-widest transition-all relative group",
+                "flex items-center gap-2 px-5 py-2.5 rounded-2xl text-xs font-black uppercase tracking-widest transition-all relative group overflow-hidden",
                 activeTab === item.id 
-                  ? "bg-orange-500 text-white shadow-xl shadow-orange-500/30" 
-                  : "text-zinc-500 hover:text-white hover:bg-white/5"
+                  ? "text-white shadow-xl" 
+                  : "text-zinc-500 hover:text-white"
               )}
             >
-              <item.icon className={cn("w-4 h-4 transition-transform group-hover:scale-110", activeTab === item.id ? "text-white" : "text-zinc-600")} />
-              <span>{item.label}</span>
+              {activeTab === item.id ? (
+                <motion.div 
+                  layoutId="adminActiveTab"
+                  className="absolute inset-0 bg-orange-500 rounded-2xl shadow-lg shadow-orange-500/30"
+                  transition={{ type: "spring", stiffness: 380, damping: 28 }}
+                />
+              ) : (
+                <span className="absolute inset-0 rounded-2xl bg-white/0 group-hover:bg-white/5 transition-colors" />
+              )}
+              <item.icon className={cn("w-4 h-4 transition-transform group-hover:scale-110 relative z-10", activeTab === item.id ? "text-white" : "text-zinc-600")} />
+              <span className="relative z-10">{item.label}</span>
               {item.badge ? (
-                <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-[10px] font-black rounded-full flex items-center justify-center border-2 border-zinc-950 shadow-lg animate-bounce">
+                <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-[10px] font-black rounded-full flex items-center justify-center border-2 border-zinc-950 shadow-lg animate-bounce z-20">
                   {item.badge}
                 </span>
               ) : null}
-            </button>
+            </motion.button>
           ))}
         </div>
       </div>
@@ -526,8 +563,9 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
         {activeTab === 'dash' && (
           <motion.div
             key="dash"
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
+            variants={bentoContainerVariants}
+            initial="hidden"
+            animate="visible"
             exit={{ opacity: 0, y: -30 }}
             className="space-y-12"
           >
@@ -541,8 +579,9 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
                ].map((stat, i) => (
                  <motion.div 
                    key={i}
-                   initial={{ opacity: 0, y: 20 }}
-                   animate={{ opacity: 1, y: 0, transition: { delay: i * 0.1 } }}
+                   variants={bentoItemVariants}
+                   whileHover={{ y: -6, scale: 1.015 }}
+                   transition={{ type: "spring", stiffness: 300, damping: 20 }}
                    className="bg-zinc-900 border border-white/5 p-8 rounded-[40px] group hover:border-orange-500/50 transition-all shadow-2xl shadow-black/50"
                  >
                    <div className="flex justify-between items-start mb-6">
@@ -562,7 +601,7 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
             {/* Strategic Awareness: Expiring, Milestones & Programming Leads */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
               {/* Critical Transitions (Expiring Plans) */}
-              <div className="space-y-6">
+              <motion.div variants={bentoItemVariants} className="space-y-6">
                 <div className="flex items-center justify-between px-2">
                   <h3 className="text-xl font-black uppercase italic tracking-tighter flex items-center gap-3">
                     <Clock className="w-5 h-5 text-red-500" />
@@ -623,10 +662,10 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
                     </div>
                   )}
                 </div>
-              </div>
+              </motion.div>
 
               {/* Peak Performance (Milestones) */}
-              <div className="space-y-6">
+              <motion.div variants={bentoItemVariants} className="space-y-6">
                 <div className="flex items-center justify-between px-2">
                   <h3 className="text-xl font-black uppercase italic tracking-tighter flex items-center gap-3">
                     <Sparkles className="w-5 h-5 text-yellow-500" />
@@ -687,10 +726,10 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
                     </div>
                   )}
                 </div>
-              </div>
+              </motion.div>
 
               {/* Programming Leads (No Workouts) */}
-              <div className="space-y-6">
+              <motion.div variants={bentoItemVariants} className="space-y-6">
                 <div className="flex items-center justify-between px-2">
                   <h3 className="text-xl font-black uppercase italic tracking-tighter flex items-center gap-3">
                     <Layout className="w-5 h-5 text-blue-500" />
@@ -752,12 +791,12 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
                     </div>
                   )}
                 </div>
-              </div>
+              </motion.div>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
               {/* Priority Intelligence Feed */}
-              <div className="lg:col-span-2 space-y-8">
+              <motion.div variants={bentoItemVariants} className="lg:col-span-2 space-y-8">
                 <div className="flex items-center justify-between px-2">
                   <h3 className="text-2xl font-black uppercase italic tracking-tighter flex items-center gap-3">
                     <Sparkles className="w-6 h-6 text-orange-500" />
@@ -936,10 +975,10 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
                     })}
                   </div>
                 </div>
-              </div>
+              </motion.div>
 
               {/* Sidebar Logic Panel */}
-              <div className="space-y-8">
+              <motion.div variants={bentoItemVariants} className="space-y-8">
                 <div className="bg-orange-500 rounded-[48px] p-10 text-white shadow-2xl shadow-orange-500/30 relative overflow-hidden group">
                   <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
                     <Target className="w-48 h-48" />
@@ -1007,7 +1046,7 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
                     ))}
                   </div>
                 </div>
-              </div>
+              </motion.div>
             </div>
           </motion.div>
         )}

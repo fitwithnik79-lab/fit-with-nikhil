@@ -157,7 +157,7 @@ service cloud.firestore {
 
     match /feedback/{feedbackId} {
       allow read: if isSignedIn() && (resource.data.clientId == request.auth.uid || isAdmin());
-      allow create: if isSignedIn() && incoming().clientId == request.auth.uid && isValidFeedback(incoming());
+      allow create: if isSignedIn() && (incoming().clientId == request.auth.uid || isAdmin()) && isValidFeedback(incoming());
       allow update: if (isAdmin() && isValidFeedback(incoming())) || 
                      (isSignedIn() && resource.data.clientId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['clientNote', 'completionStatus', 'exercises']) && isValidFeedback(incoming()));
       allow delete: if isAdmin();
@@ -165,8 +165,8 @@ service cloud.firestore {
 
     match /metrics/{metricId} {
       allow read: if isSignedIn() && (resource.data.clientId == request.auth.uid || isAdmin());
-      allow create: if isSignedIn() && incoming().clientId == request.auth.uid && isValidMetric(incoming());
-      allow update: if isSignedIn() && resource.data.clientId == request.auth.uid && isValidMetric(incoming());
+      allow create: if isSignedIn() && (incoming().clientId == request.auth.uid || isAdmin()) && isValidMetric(incoming());
+      allow update: if isSignedIn() && (resource.data.clientId == request.auth.uid || isAdmin()) && isValidMetric(incoming());
     }
 
     match /messages/{messageId} {
@@ -210,16 +210,16 @@ service cloud.firestore {
 
     match /meals/{mealId} {
       allow read: if isSignedIn() && (resource.data.clientId == request.auth.uid || isAdmin());
-      allow create: if isSignedIn() && incoming().clientId == request.auth.uid;
+      allow create: if isSignedIn() && (incoming().clientId == request.auth.uid || isAdmin());
       allow update: if isSignedIn() && (resource.data.clientId == request.auth.uid || isAdmin());
       allow delete: if isAdmin();
     }
 
     match /reminders/{reminderId} {
       allow read: if isSignedIn() && (resource.data.clientId == request.auth.uid || isAdmin());
-      allow create: if isSignedIn() && incoming().clientId == request.auth.uid;
-      allow update: if isSignedIn() && resource.data.clientId == request.auth.uid;
-      allow delete: if isSignedIn() && resource.data.clientId == request.auth.uid;
+      allow create: if isSignedIn() && (incoming().clientId == request.auth.uid || isAdmin());
+      allow update: if isSignedIn() && (resource.data.clientId == request.auth.uid || isAdmin());
+      allow delete: if isSignedIn() && (resource.data.clientId == request.auth.uid || isAdmin());
     }
 
     match /daily_steps/{id} {
