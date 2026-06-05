@@ -4735,10 +4735,10 @@ function MealAI({
           const mappedItems = analysis.items.map((item: any) => ({
             name: item.name,
             quantity: item.quantity || '1 portion',
-            calories: Math.round(item.calories),
-            protein: Math.round(item.protein),
-            carbs: Math.round(item.carbs),
-            fats: Math.round(item.fats)
+            calories: Math.round(Number(item.calories) || 0),
+            protein: Math.round(Number(item.protein) || 0),
+            carbs: Math.round(Number(item.carbs) || 0),
+            fats: Math.round(Number(item.fats) || 0)
           }));
           setManualItems([...manualItems, ...mappedItems]);
         }
@@ -5029,10 +5029,10 @@ function MealAI({
                           const mappedItems = analysis.items.map((item: any) => ({
                             name: item.name,
                             quantity: item.quantity || '1 portion',
-                            calories: Math.round(item.calories),
-                            protein: Math.round(item.protein),
-                            carbs: Math.round(item.carbs),
-                            fats: Math.round(item.fats)
+                            calories: Math.round(Number(item.calories) || 0),
+                            protein: Math.round(Number(item.protein) || 0),
+                            carbs: Math.round(Number(item.carbs) || 0),
+                            fats: Math.round(Number(item.fats) || 0)
                           }));
                           setManualItems([...manualItems, ...mappedItems]);
                           if (analysis.advice && !result?.advice) {

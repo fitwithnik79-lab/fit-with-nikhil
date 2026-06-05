@@ -11,7 +11,7 @@ import { format } from 'date-fns';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const multer = require('multer');
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, Type } from '@google/genai';
 
 dotenv.config();
 
@@ -167,6 +167,59 @@ async function startServer() {
     }
   });
 
+  const mealAnalysisSchema = {
+    type: Type.OBJECT,
+    properties: {
+      mealName: {
+        type: Type.STRING,
+        description: "A descriptive and appetizing name for the overall meal."
+      },
+      items: {
+        type: Type.ARRAY,
+        description: "The food items identified in the meal.",
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            name: { type: Type.STRING, description: "Name of the ingredient or food item" },
+            quantity: { type: Type.STRING, description: "Serving size or amount, e.g., '1 portion', '2 large', '150g'" },
+            calories: { type: Type.NUMBER, description: "Estimated calories in kcal" },
+            protein: { type: Type.NUMBER, description: "Estimated protein in grams" },
+            carbs: { type: Type.NUMBER, description: "Estimated carbs in grams" },
+            fats: { type: Type.NUMBER, description: "Estimated fats in grams" }
+          },
+          required: ["name", "quantity", "calories", "protein", "carbs", "fats"]
+        }
+      },
+      advice: {
+        type: Type.STRING,
+        description: "High-quality, personalized nutritional feedback on how this meal aligns with fitness goals."
+      }
+    },
+    required: ["mealName", "items", "advice"]
+  };
+
+  const batchMacrosSchema = {
+    type: Type.OBJECT,
+    properties: {
+      items: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            name: { type: Type.STRING, description: "Food item name" },
+            quantity: { type: Type.STRING, description: "Item quantity" },
+            calories: { type: Type.NUMBER, description: "Calories in kcal" },
+            protein: { type: Type.NUMBER, description: "Protein in grams" },
+            carbs: { type: Type.NUMBER, description: "Carbs in grams" },
+            fats: { type: Type.NUMBER, description: "Fats in grams" }
+          },
+          required: ["name", "quantity", "calories", "protein", "carbs", "fats"]
+        }
+      }
+    },
+    required: ["items"]
+  };
+
   app.post('/api/gemini/analyze-meal-image', async (req, res) => {
     const { image, mimeType } = req.body;
     try {
@@ -176,10 +229,13 @@ async function startServer() {
           role: 'user',
           parts: [
             { inlineData: { data: image, mimeType } },
-            { text: "Analyze this meal image. Identify the food items and estimate calories, protein, carbs, and fats FOR EACH ITEM separately. Return the result as a JSON object with a 'mealName' and an 'items' array. Each item should have 'name', 'calories', 'protein', 'carbs', and 'fats'. Also include a general 'advice' string." }
+            { text: "Analyze this meal image. Identify the food items and estimate calories, protein, carbs, and fats FOR EACH ITEM separately. Return the result as a JSON object matching the provided schema." }
           ]
         }],
-        config: { responseMimeType: "application/json" }
+        config: { 
+          responseMimeType: "application/json",
+          responseSchema: mealAnalysisSchema
+        }
       });
       res.json(parseSafeJson(response.text || "{}"));
     } catch (error: any) {
@@ -199,12 +255,11 @@ async function startServer() {
         - "Tea" usually means milk tea (assume 100ml milk + 2 tsp sugar unless they say black).
         - "Coffee" usually means with milk/cream + sugar.
         - "Pasta" implies sauce, oil, and cheese.
-        Break down the implicit ingredients that make up the real-world version of this meal.
-        
-        Return the result as a JSON object with a 'mealName' and an 'items' array. 
-        Each item should have 'name', 'calories', 'protein', 'carbs', and 'fats'. 
-        Also include a general 'advice' string.` }]}],
-        config: { responseMimeType: "application/json" }
+        Break down the implicit ingredients that make up the real-world version of this meal.` }]}],
+        config: { 
+          responseMimeType: "application/json",
+          responseSchema: mealAnalysisSchema
+        }
       });
       res.json(parseSafeJson(response.text || "{}"));
     } catch (error: any) {
@@ -219,10 +274,11 @@ async function startServer() {
     try {
       const response = await ai.models.generateContent({
         model: "gemini-3.5-flash",
-        contents: [{ role: 'user', parts: [{ text: `Calculate the calories, protein, carbs, and fats for the following food items and their specific quantities: "${itemsDescription}". 
-        Return the result as a JSON object with an 'items' array. 
-        Each item should have 'name', 'quantity', 'calories', 'protein', 'carbs', and 'fats'.` }]}],
-        config: { responseMimeType: "application/json" }
+        contents: [{ role: 'user', parts: [{ text: `Calculate the calories, protein, carbs, and fats for the following food items and their specific quantities: "${itemsDescription}".` }]}],
+        config: { 
+          responseMimeType: "application/json",
+          responseSchema: batchMacrosSchema
+        }
       });
       res.json(parseSafeJson(response.text || "{}"));
     } catch (error: any) {
