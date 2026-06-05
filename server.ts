@@ -167,6 +167,22 @@ async function startServer() {
     }
   });
 
+  async function fetchWithRetry<T>(fn: () => Promise<T>, retries = 3, delayMs = 1000): Promise<T> {
+    let lastError: any;
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        return await fn();
+      } catch (err: any) {
+        lastError = err;
+        console.warn(`Gemini API Attempt ${attempt} failed:`, err.message || err);
+        if (attempt < retries) {
+          await new Promise(resolve => setTimeout(resolve, delayMs * attempt));
+        }
+      }
+    }
+    throw lastError;
+  }
+
   const mealAnalysisSchema = {
     type: Type.OBJECT,
     properties: {
@@ -176,7 +192,7 @@ async function startServer() {
       },
       items: {
         type: Type.ARRAY,
-        description: "The food items identified in the meal.",
+        description: "The food items identified in the meal. If the image/text is unclear or irrelevant, return an empty array.",
         items: {
           type: Type.OBJECT,
           properties: {
@@ -192,10 +208,14 @@ async function startServer() {
       },
       advice: {
         type: Type.STRING,
-        description: "High-quality, personalized nutritional feedback on how this meal aligns with fitness goals."
+        description: "High-quality, personalized nutritional feedback on how this meal aligns with fitness goals, or a descriptive helpful request for clarity if the picture/text is unclear."
+      },
+      isUnclear: {
+        type: Type.BOOLEAN,
+        description: "Set to true if the uploaded image is extremely unclear, blurred, dark, non-food, or if the text is random keys / non-food description that cannot be recognized as a meal at all. Else set to false."
       }
     },
-    required: ["mealName", "items", "advice"]
+    required: ["mealName", "items", "advice", "isUnclear"]
   };
 
   const batchMacrosSchema = {
@@ -223,48 +243,54 @@ async function startServer() {
   app.post('/api/gemini/analyze-meal-image', async (req, res) => {
     const { image, mimeType } = req.body;
     try {
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: [{
-          role: 'user',
-          parts: [
-            { inlineData: { data: image, mimeType } },
-            { text: "Analyze this meal image. Identify the food items and estimate calories, protein, carbs, and fats FOR EACH ITEM separately. Return the result as a JSON object matching the provided schema." }
-          ]
-        }],
-        config: { 
-          responseMimeType: "application/json",
-          responseSchema: mealAnalysisSchema
-        }
+      const response = await fetchWithRetry(async () => {
+        return await ai.models.generateContent({
+          model: "gemini-3.5-flash",
+          contents: [{
+            role: 'user',
+            parts: [
+              { inlineData: { data: image, mimeType } },
+              { text: "Analyze this meal image. Identify the food items and estimate calories, protein, carbs, and fats FOR EACH ITEM separately. Return the result as a JSON object matching the provided schema. CRITICAL: If the image is blurry, too dark, out of focus, or does NOT contain recognizable food/meals, you MUST set isUnclear to true, mealName to 'Unclear Image', items to an empty array [], and provide a friendly coaching note in advice asking the user to upload a clearer photo of their plate." }
+            ]
+          }],
+          config: { 
+            responseMimeType: "application/json",
+            responseSchema: mealAnalysisSchema
+          }
+        });
       });
       res.json(parseSafeJson(response.text || "{}"));
     } catch (error: any) {
       console.error("Analyze meal image error:", error);
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: error.message || "Failed to analyze meal image" });
     }
   });
 
   app.post('/api/gemini/analyze-meal-text', async (req, res) => {
     const { mealDescription } = req.body;
     try {
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: [{ role: 'user', parts: [{ text: `You are an elite performance nutritionist. Analyze the following meal description: "${mealDescription}". 
-        
-        CRITICAL INSTRUCTION: Be extremely detailed. If a user enters a simple item like "Tea", "Coffee", "Pasta", or "Cereal", do NOT just analyze the dry ingredient. 
-        - "Tea" usually means milk tea (assume 100ml milk + 2 tsp sugar unless they say black).
-        - "Coffee" usually means with milk/cream + sugar.
-        - "Pasta" implies sauce, oil, and cheese.
-        Break down the implicit ingredients that make up the real-world version of this meal.` }]}],
-        config: { 
-          responseMimeType: "application/json",
-          responseSchema: mealAnalysisSchema
-        }
+      const response = await fetchWithRetry(async () => {
+        return await ai.models.generateContent({
+          model: "gemini-3.5-flash",
+          contents: [{ role: 'user', parts: [{ text: `You are an elite performance nutritionist. Analyze the following meal description: "${mealDescription}". 
+          
+          CRITICAL INSTRUCTION: Be extremely detailed. If a user enters a simple item like "Tea", "Coffee", "Pasta", or "Cereal", do NOT just analyze the dry ingredient. 
+          - "Tea" usually means milk tea (assume 100ml milk + 2 tsp sugar unless they say black).
+          - "Coffee" usually means with milk/cream + sugar.
+          - "Pasta" implies sauce, oil, and cheese.
+          Break down the implicit ingredients that make up the real-world version of this meal.
+
+          CRITICAL: If the text is random keys, characters, non-food names, or sentences that cannot be interpreted as food/meal descriptions at all, you MUST set isUnclear to true, mealName to 'Unclear Input', items to an empty array [], and provide a polite coaching note in advice explaining that you couldn't recognize any food in the description.` }]}],
+          config: { 
+            responseMimeType: "application/json",
+            responseSchema: mealAnalysisSchema
+          }
+        });
       });
       res.json(parseSafeJson(response.text || "{}"));
     } catch (error: any) {
       console.error("Analyze meal text error:", error);
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: error.message || "Failed to analyze meal text" });
     }
   });
 

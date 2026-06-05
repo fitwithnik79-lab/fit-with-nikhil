@@ -40,10 +40,18 @@ export async function analyzeMealImage(base64Image: string, mimeType: string) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ image: base64Image, mimeType }),
     });
+    if (!response.ok) {
+      let errMsg = `Server responded with ${response.status}`;
+      try {
+        const body = await response.json();
+        if (body?.error) errMsg = body.error;
+      } catch (e) {}
+      throw new Error(errMsg);
+    }
     return await response.json();
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error analyzing meal image:", error);
-    return null;
+    throw error;
   }
 }
 
@@ -54,10 +62,18 @@ export async function analyzeMealText(mealDescription: string) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mealDescription }),
     });
+    if (!response.ok) {
+      let errMsg = `Server responded with ${response.status}`;
+      try {
+        const body = await response.json();
+        if (body?.error) errMsg = body.error;
+      } catch (e) {}
+      throw new Error(errMsg);
+    }
     return await response.json();
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error analyzing meal text:", error);
-    return null;
+    throw error;
   }
 }
 

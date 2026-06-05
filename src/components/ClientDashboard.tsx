@@ -66,7 +66,10 @@ import {
   MoreVertical,
   Flag,
   Circle,
-  Bell
+  Bell,
+  AlertTriangle,
+  RefreshCw,
+  Eye
 } from 'lucide-react';
 import { requestNotificationPermission, onForegroundMessage } from '../lib/notifications';
 import { motion, AnimatePresence } from 'motion/react';
@@ -2735,6 +2738,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                   metrics={metrics}
                   meals={meals}
                   sendAutomatedCoachMessage={sendAutomatedCoachMessage} 
+                  activeNutritionPlan={activeNutritionPlan}
                 />
               </motion.div>
             )}
@@ -4618,14 +4622,16 @@ function MealAI({
   todayMetrics, 
   metrics,
   meals,
-  sendAutomatedCoachMessage 
+  sendAutomatedCoachMessage,
+  activeNutritionPlan
 }: { 
   user: User, 
   profile: UserProfile,
   todayMetrics: BodyMetrics | null, 
   metrics: BodyMetrics[],
   meals: any[],
-  sendAutomatedCoachMessage: (text: string, type?: 'motivation' | 'reminder') => Promise<void>
+  sendAutomatedCoachMessage: (text: string, type?: 'motivation' | 'reminder') => Promise<void>,
+  activeNutritionPlan?: NutritionPlan | null
 }) {
   const [image, setImage] = useState<string | null>(null);
   const [mealFileBlob, setMealFileBlob] = useState<Blob | null>(null);
@@ -4634,9 +4640,13 @@ function MealAI({
   const [analyzing, setAnalyzing] = useState(false);
   const [recalculating, setRecalculating] = useState(false);
   const [result, setResult] = useState<any>(null);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [retryAttempt, setRetryAttempt] = useState<number>(0);
+  const [showUnclearImageWarning, setShowUnclearImageWarning] = useState<boolean>(false);
   const [dailyAdvice, setDailyAdvice] = useState<any>(null);
   const [analyzingDaily, setAnalyzingDaily] = useState(false);
   const [logging, setLogging] = useState(false);
+  const [logMealError, setLogMealError] = useState<string | null>(null);
   const [fetchingSingle, setFetchingSingle] = useState(false);
   const [quickAddText, setQuickAddText] = useState('');
   const [manualItems, setManualItems] = useState<{ name: string, quantity: string, calories: number, protein: number, carbs: number, fats: number }[]>([]);
@@ -4718,17 +4728,53 @@ function MealAI({
   const handleAnalyze = async () => {
     if (!image && !mealDescription.trim()) return;
     setAnalyzing(true);
-    try {
-      let analysis;
-      if (image) {
-        const base64 = image.split(',')[1];
-        const mimeType = image.split(';')[0].split(':')[1];
-        analysis = await analyzeMealImage(base64, mimeType);
-      } else {
-        analysis = await analyzeMealText(mealDescription);
-      }
+    setAnalysisError(null);
+    setShowUnclearImageWarning(false);
+    
+    const maxRetries = 3;
+    let attempt = 0;
+    let success = false;
+    let lastError: any = null;
+    let analysis: any = null;
 
+    while (attempt < maxRetries && !success) {
+      attempt++;
+      setRetryAttempt(attempt);
+      try {
+        if (image) {
+          const base64 = image.split(',')[1];
+          const mimeType = image.split(';')[0].split(':')[1];
+          analysis = await analyzeMealImage(base64, mimeType);
+        } else {
+          analysis = await analyzeMealText(mealDescription);
+        }
+        success = true;
+      } catch (err: any) {
+        lastError = err;
+        console.warn(`Analysis failed on client attempt ${attempt}/${maxRetries}:`, err);
+        if (attempt < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, 1500));
+        }
+      }
+    }
+
+    setRetryAttempt(0);
+
+    if (!success) {
+      setAnalyzing(false);
+      setAnalysisError(lastError?.message || "Failed to analyze meal. Please check your internet connection and try again.");
+      return;
+    }
+
+    try {
       if (analysis) {
+        if (analysis.isUnclear) {
+          setShowUnclearImageWarning(true);
+          setResult(analysis);
+          setAnalyzing(false);
+          return;
+        }
+
         setResult(analysis);
         // Add all analyzed items to the manual items list for review/edit
         if (analysis.items && Array.isArray(analysis.items)) {
@@ -4744,8 +4790,9 @@ function MealAI({
         }
         setMealDescription('');
       }
-    } catch (error) {
-      console.error('Error analyzing meal:', error);
+    } catch (error: any) {
+      console.error('Error post-processing meal analysis:', error);
+      setAnalysisError(error?.message || "Error processing analysis response.");
     } finally {
       setAnalyzing(false);
     }
@@ -4828,7 +4875,12 @@ function MealAI({
 
   const handleLogMeal = async () => {
     if (manualItems.length === 0) return;
+    if (activeNutritionPlan && !image) {
+      setLogMealError("Photo Required: Sharing a photo is compulsory since you have an active nutrition plan. Please upload a clear photo of your plate so Coach Nik can monitor portion sizes and visual food composition!");
+      return;
+    }
     setLogging(true);
+    setLogMealError(null);
     try {
       const todayStr = format(new Date(), 'yyyy-MM-dd');
       
@@ -4903,6 +4955,7 @@ function MealAI({
       setResult(null);
       setManualItems([]);
       setCustomMealName('');
+      setLogMealError(null);
       alert('Meal logged successfully!');
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'meals');
@@ -4982,6 +5035,9 @@ function MealAI({
                         setMealFileBlob(null); 
                         setMealFilename(''); 
                         setResult(null); 
+                        setAnalysisError(null);
+                        setRetryAttempt(0);
+                        setShowUnclearImageWarning(false);
                       }}
                       className="absolute top-4 right-4 p-2 bg-black/50 backdrop-blur-md rounded-full text-white hover:bg-black transition-colors"
                     >
@@ -4991,13 +5047,54 @@ function MealAI({
                 </div>
               )}
 
+              {analysisError && (
+                <div role="alert" className="bg-red-500/10 border border-red-500/20 rounded-2xl p-4 flex flex-col gap-3">
+                  <div className="flex gap-3 items-start">
+                    <AlertTriangle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <h4 className="text-xs font-bold text-red-500 uppercase tracking-wider">Analysis Failed</h4>
+                      <p className="text-xs text-zinc-400">{analysisError}</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleAnalyze}
+                    disabled={analyzing}
+                    className="self-end px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 hover:text-white rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all flex items-center gap-1.5"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    Retry Now
+                  </button>
+                </div>
+              )}
+
+              {showUnclearImageWarning && (
+                <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-2xl p-4 flex gap-3 items-start">
+                  <Eye className="w-5 h-5 text-yellow-500 flex-shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <h4 className="text-xs font-bold text-yellow-500 uppercase tracking-wider">Image Unclear or Obscured</h4>
+                    <p className="text-xs text-zinc-400">
+                      {result?.advice || "I couldn't identify any clear meal items in this photo. Please ensure your food is well-lit and in frame, or try adding a brief description instead."}
+                    </p>
+                  </div>
+                </div>
+              )}
+
               <button 
                 onClick={handleAnalyze}
                 disabled={analyzing || (!image && !mealDescription.trim())}
                 className="w-full py-4 bg-orange-500 text-white font-bold rounded-2xl hover:bg-orange-600 disabled:opacity-50 transition-all flex items-center justify-center gap-2 shadow-lg shadow-orange-500/20"
               >
-                {analyzing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
-                {analyzing ? 'Analyzing...' : 'Analyze with AI'}
+                {analyzing ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    <span>{retryAttempt > 1 ? `Retrying (Attempt ${retryAttempt}/3)...` : 'Analyzing...'}</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-5 h-5" />
+                    <span>Analyze with AI</span>
+                  </>
+                )}
               </button>
             </div>
           </div>
@@ -5301,7 +5398,62 @@ function MealAI({
             
             {manualItems.length > 0 && (
               <div className="pt-6 border-t border-zinc-800 space-y-6">
-                <div className="grid grid-cols-4 gap-2">
+                {/* Meal Plate Photo Requirement Section */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1 flex items-center gap-1.5">
+                      <Camera className="w-3.5 h-3.5 text-orange-500" />
+                      Meal Plate Photo
+                    </label>
+                    {activeNutritionPlan ? (
+                      <span className="px-2 py-0.5 bg-red-500/15 text-red-500 border border-red-500/20 rounded-md text-[8px] font-black uppercase tracking-wider">
+                        Compulsory
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 bg-zinc-800/50 text-zinc-500 rounded-md text-[8px] font-bold uppercase tracking-wider">
+                        Optional
+                      </span>
+                    )}
+                  </div>
+
+                  {image ? (
+                    <div className="flex items-center gap-3 bg-zinc-950 border border-zinc-800 p-3 rounded-2xl relative">
+                      <img src={image} alt="Meal Attachment" className="w-12 h-12 object-cover rounded-xl border border-zinc-850" />
+                      <div className="flex-1 min-w-0">
+                        <span className="text-[10px] font-bold text-green-500 uppercase tracking-widest flex items-center gap-1">
+                          <CheckCircle className="w-3.5 h-3.5" /> Photo Attached
+                        </span>
+                        <p className="text-xs text-zinc-400 truncate">{mealFilename || 'meal.jpg'}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setImage(null);
+                          setMealFileBlob(null);
+                          setMealFilename('');
+                          setResult(null);
+                          setShowUnclearImageWarning(false);
+                        }}
+                        className="p-2 hover:bg-zinc-900 rounded-xl text-zinc-500 hover:text-red-500 transition-colors"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ) : (
+                    <label className="flex flex-col items-center justify-center border border-dashed border-zinc-800 hover:border-orange-500/50 bg-zinc-950 rounded-2xl p-4 cursor-pointer transition-all group">
+                      <div className="p-2 bg-zinc-900 rounded-lg text-zinc-500 group-hover:text-orange-500 transition-colors mb-1.5">
+                        <Upload className="w-4 h-4" />
+                      </div>
+                      <span className="text-zinc-400 text-xs font-bold">Upload Meal Image</span>
+                      <p className="text-[9px] mt-0.5 text-center text-zinc-550 text-zinc-500">
+                        {activeNutritionPlan ? "Nik's nutrition programs require plate photos to save meals." : "Add a photo to get better feedback from Nik."}
+                      </p>
+                      <input type="file" accept="image/*" className="hidden" onChange={handleImageChange} />
+                    </label>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-4 gap-2 border-t border-zinc-800 pt-5">
                   <div className="text-center">
                     <div className="text-lg font-bold">{totalMealMacros.calories}</div>
                     <div className="text-[8px] text-zinc-500 font-bold uppercase tracking-widest">Cal</div>
@@ -5319,6 +5471,16 @@ function MealAI({
                     <div className="text-[8px] text-zinc-500 font-bold uppercase tracking-widest">Fat</div>
                   </div>
                 </div>
+
+                {logMealError && (
+                  <div className="bg-red-500/10 border border-red-500/20 rounded-2xl p-4 flex gap-3 items-start animate-pulse">
+                    <AlertTriangle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <h4 className="text-xs font-bold text-red-500 uppercase tracking-wider">Photo Submittal Compulsory</h4>
+                      <p className="text-xs text-zinc-300">{logMealError}</p>
+                    </div>
+                  </div>
+                )}
 
                 <button 
                   onClick={handleLogMeal}
