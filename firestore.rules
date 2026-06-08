@@ -119,8 +119,8 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if isSignedIn() && (
         request.auth.uid == userId || 
-        resource.data.role == 'admin' || 
-        isAdmin()
+        isAdmin() ||
+        (resource != null && 'role' in resource.data && resource.data.role == 'admin')
       );
       allow create: if isSignedIn() && request.auth.uid == userId && isValidUser(incoming());
       allow update: if isSignedIn() && (isAdmin() || (request.auth.uid == userId && incoming().role == existing().role));

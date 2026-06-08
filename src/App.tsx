@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from 'react';
 import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, User } from 'firebase/auth';
-import { doc, getDoc, setDoc, updateDoc, collection, query, where, onSnapshot, orderBy, limit, addDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, getDocFromCache, setDoc, updateDoc, collection, query, where, onSnapshot, orderBy, limit, addDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from './lib/firebase';
 import { UserProfile, UserRole } from './types';
 import { handleFirestoreError, OperationType } from './lib/firestoreErrors';
@@ -33,19 +33,19 @@ export default function App() {
         setUser(user);
         try {
           const userDocRef = doc(db, 'users', user.uid);
-          const userDoc = await getDoc(userDocRef).catch(err => {
-            handleFirestoreError(err, OperationType.GET, `users/${user.uid}`);
-            return null;
+          const userDoc = await getDoc(userDocRef).catch(async (err) => {
+            console.warn(`getDoc failed for users/${user.uid} (possibly offline), attempting cache fallback:`, err);
+            try {
+              return await getDocFromCache(userDocRef);
+            } catch (cacheErr) {
+              handleFirestoreError(err, OperationType.GET, `users/${user.uid}`);
+              return null;
+            }
           });
           
-          if (!userDoc) {
-            setLoading(false);
-            return;
-          }
-
-          const isAdminEmail = user.email === 'fitwithnik79@gmail.com';
+          const isAdminEmail = user.email?.toLowerCase() === 'fitwithnik79@gmail.com';
           
-          if (userDoc.exists()) {
+          if (userDoc && userDoc.exists()) {
             const userData = userDoc.data() as UserProfile;
             const updateFields: any = { lastLogin: serverTimestamp() };
             
@@ -64,6 +64,18 @@ export default function App() {
               updateDoc(userDocRef, updateFields).catch(err => console.error("Error updating last login:", err));
               setProfile({ ...userData, ...updateFields });
             }
+          } else if (!userDoc) {
+            // Handle offline case where no cached profile exists yet. Fallback to auth metadata to prevent blocking user.
+            const fallbackProfile: UserProfile = {
+              uid: user.uid,
+              email: user.email || '',
+              role: isAdminEmail ? 'admin' : 'client',
+              displayName: user.displayName || user.email?.split('@')[0] || 'User',
+              photoURL: user.photoURL || '',
+              createdAt: serverTimestamp(),
+              onboardingComplete: true
+            };
+            setProfile(fallbackProfile);
           } else {
             // New user
             const newProfile: UserProfile = {
@@ -107,12 +119,20 @@ export default function App() {
     if (previewClientId) {
       setLoading(true);
       const docRef = doc(db, 'users', previewClientId);
-      getDoc(docRef).then((docSnap) => {
-        if (docSnap.exists()) {
-          setPreviewProfile({ uid: docSnap.id, ...docSnap.data() } as UserProfile);
-        }
-        setLoading(false);
-      });
+      getDoc(docRef)
+        .catch(async () => {
+          try {
+            return await getDocFromCache(docRef);
+          } catch {
+            return null;
+          }
+        })
+        .then((docSnap) => {
+          if (docSnap && docSnap.exists()) {
+            setPreviewProfile({ uid: docSnap.id, ...docSnap.data() } as UserProfile);
+          }
+          setLoading(false);
+        });
     } else {
       setPreviewProfile(null);
     }

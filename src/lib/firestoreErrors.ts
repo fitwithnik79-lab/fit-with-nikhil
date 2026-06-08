@@ -29,8 +29,16 @@ export interface FirestoreErrorInfo {
 }
 
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  
+  // Gracefully handle browser sandbox/offline state and skip emitting console.error
+  if (errorMessage.toLowerCase().includes('offline') || errorMessage.toLowerCase().includes('failed to get document')) {
+    console.warn(`[Firestore Status Warning]: Operating in offline mode. Details: ${errorMessage} on path: ${path}`);
+    return;
+  }
+
   const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
+    error: errorMessage,
     authInfo: {
       userId: auth.currentUser?.uid,
       email: auth.currentUser?.email,
@@ -46,7 +54,7 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     },
     operationType,
     path
-  }
+  };
   console.error('Firestore Error: ', JSON.stringify(errInfo));
   
   // Do not throw for list/snapshot operations as it triggers internal assertion failures in some SDK versions

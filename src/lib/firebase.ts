@@ -6,7 +6,11 @@ import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+
+// Initialize Firestore using standard getFirestore for robust cross-browser and iframe compatibility
+const dbId = (firebaseConfig as any).firestoreDatabaseId;
+export const db = getFirestore(app, dbId);
+
 export const storage = getStorage(app);
 
 // Set persistence to local

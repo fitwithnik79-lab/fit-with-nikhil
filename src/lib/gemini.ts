@@ -108,12 +108,12 @@ export async function analyzeDailyNutrition(meals: any[], profile: any) {
   }
 }
 
-export async function parseWorkoutFile(fileContent: string, fileName: string) {
+export async function parseWorkoutFile(fileContent: string, fileName: string, userRangeInstructions?: string) {
   try {
     const response = await fetch('/api/gemini/parse-workout-file', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fileContent, fileName }),
+      body: JSON.stringify({ fileContent, fileName, userRangeInstructions }),
     });
     return await response.json();
   } catch (error) {

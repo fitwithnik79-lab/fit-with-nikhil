@@ -28,6 +28,48 @@ const ai = new GoogleGenAI({
   }
 });
 
+// Resilient fallback interceptor to prevent 503 (High Demand) and 404 (Unsupported) errors
+const originalGenerateContent = ai.models.generateContent.bind(ai.models);
+let preferredModel = "gemini-3.5-flash";
+
+ai.models.generateContent = async function (params: any): Promise<any> {
+  const modelsToTry = ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"];
+  const initialModel = params.model || preferredModel;
+  const modelQueue = [initialModel, ...modelsToTry.filter(m => m !== initialModel)];
+
+  let lastError: any;
+  for (const model of modelQueue) {
+    // Retry up to 2 times per model for 503, rate limiting, or temporary demand spikes
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        console.log(`[Gemini Interceptor] Routing request to: ${model} (Attempt ${attempt}/2)`);
+        const adjustedParams = { ...params, model };
+        const response = await originalGenerateContent(adjustedParams);
+        console.log(`[Gemini Interceptor] Successful response from model: ${model}`);
+        preferredModel = model; // Keep the working model as preferred
+        return response;
+      } catch (err: any) {
+        lastError = err;
+        const errMsg = err.message || JSON.stringify(err);
+        console.warn(`[Gemini Interceptor] Attempt ${attempt}/2 failed for ${model}: ${errMsg}`);
+        
+        // If it's a 404 (Unsupported/Not found model), skip retries for this model and try the next fallback right away
+        if (errMsg.includes("NOT_FOUND") || errMsg.includes("404") || errMsg.includes("not found")) {
+          console.log(`[Gemini Interceptor] Model ${model} not supported, skipping retries.`);
+          break;
+        }
+
+        if (attempt < 2) {
+          const sleepMs = 400; // Shorter sleep for fast fallback switching
+          console.log(`[Gemini Interceptor] Sleeping for ${sleepMs}ms before retrying ${model}...`);
+          await new Promise(resolve => setTimeout(resolve, sleepMs));
+        }
+      }
+    }
+  }
+  throw lastError;
+};
+
 // Helper to parse clean or nested HTML/Markdown JSON safely
 function parseSafeJson(text: string): any {
   if (!text) return {};
@@ -105,10 +147,10 @@ async function startServer() {
   app.post('/api/gemini/motivate', async (req, res) => {
     const { clientName, weekNumber } = req.body;
     try {
-      const response = await ai.models.generateContent({
+      const response = await fetchWithRetry(() => ai.models.generateContent({
         model: "gemini-3.5-flash",
         contents: [{ role: 'user', parts: [{ text: `You are Nik, a high-energy fitness coach. Write a short, powerful motivational message for your client ${clientName} who just finished Week ${weekNumber} of their program. Keep it under 3 sentences. Be specific about their progress and encourage them for next week.` }] }]
-      });
+      }));
       res.json({ text: response.text || "Great job this week! Keep pushing!" });
     } catch (error: any) {
       console.error("Motivational message error:", error);
@@ -121,7 +163,7 @@ async function startServer() {
     try {
       // Direct, fast, and free heuristic generation without active search grounding tools (prevents 429 quota exhaustion)
       try {
-        const fallbackResponse = await ai.models.generateContent({
+        const fallbackResponse = await fetchWithRetry(() => ai.models.generateContent({
           model: "gemini-3.5-flash",
           contents: [{ role: 'user', parts: [{ text: `Generate 3 high-quality YouTube search or demonstration links for the exercise: "${exerciseName}".
           You must generate highly specific YouTube search query URLs or standard demonstration titles from elite fitness channels (like Athlean-X, Squat University, Jeff Nippard, Mountain Dog, or standard YouTube Search Query URLs) which are reliable query targets.
@@ -135,7 +177,7 @@ async function startServer() {
           config: { 
             responseMimeType: "application/json" 
           }
-        });
+        }));
         const parsedFallback = parseSafeJson(fallbackResponse.text || "[]");
         if (parsedFallback && parsedFallback.length > 0) {
           res.json(parsedFallback);
@@ -167,7 +209,7 @@ async function startServer() {
     }
   });
 
-  async function fetchWithRetry<T>(fn: () => Promise<T>, retries = 3, delayMs = 1000): Promise<T> {
+  async function fetchWithRetry<T>(fn: () => Promise<T>, retries = 1, delayMs = 1000): Promise<T> {
     let lastError: any;
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
@@ -298,14 +340,14 @@ async function startServer() {
     const { items } = req.body;
     const itemsDescription = items.map((i: any) => `${i.quantity} of ${i.name}`).join(", ");
     try {
-      const response = await ai.models.generateContent({
+      const response = await fetchWithRetry(() => ai.models.generateContent({
         model: "gemini-3.5-flash",
         contents: [{ role: 'user', parts: [{ text: `Calculate the calories, protein, carbs, and fats for the following food items and their specific quantities: "${itemsDescription}".` }]}],
         config: { 
           responseMimeType: "application/json",
           responseSchema: batchMacrosSchema
         }
-      });
+      }));
       res.json(parseSafeJson(response.text || "{}"));
     } catch (error: any) {
       console.error("Batch macros error:", error);
@@ -316,7 +358,7 @@ async function startServer() {
   app.post('/api/gemini/analyze-daily-nutrition', async (req, res) => {
     const { summary, goals } = req.body;
     try {
-      const response = await ai.models.generateContent({
+      const response = await fetchWithRetry(() => ai.models.generateContent({
         model: "gemini-3.5-flash",
         contents: [{ role: 'user', parts: [{ text: `You are Nik, a world-class performance nutritionist. Analyze today's logged meals for this client and provide personalized actionable advice.
         
@@ -331,7 +373,7 @@ async function startServer() {
         4. Specific suggestions for tomorrow or their next meal (e.g., "Add 30g more protein", "Swap white rice for quinoa")
         5. Educational tip related to their goal.` }]}],
         config: { responseMimeType: "application/json" }
-      });
+      }));
       res.json(parseSafeJson(response.text || "{}"));
     } catch (error: any) {
       console.error("Daily nutrition analysis error:", error);
@@ -340,14 +382,19 @@ async function startServer() {
   });
 
   app.post('/api/gemini/parse-workout-file', async (req, res) => {
-    const { fileContent, fileName } = req.body;
+    const { fileContent, fileName, userRangeInstructions } = req.body;
     try {
       // Direct, advanced professional workout parser with day analysis and elite styling rules
-      const response = await ai.models.generateContent({
+      const response = await fetchWithRetry(() => ai.models.generateContent({
         model: "gemini-3.5-flash",
         contents: [{ role: 'user', parts: [{ text: `You are an elite, Olympic-level strength and conditioning coach specializing in athletic performance, biomechanical correction, and recovery. 
         Your task is to analyze the following workout content from an uploaded file/document named "${fileName}".
         
+        ${userRangeInstructions ? `COACH'S SPECIFIC COLUMN & ROW FOCUS INSTRUCTIONS:
+        The trainer has provided explicit guidelines on columns, rows, or focus areas to target:
+        "${userRangeInstructions}"
+        Please strictly respect these focus instructions. Extract only the matching exercises, days, and data points, and disregard unrelated rows, columns, or sheet areas.` : ''}
+
         Analyze the text thoroughly to identify the core design:
         1. MULTI-DAY SPLIT ANALYSIS: Scrutinize the text to find training split days (e.g., "Day 1", "Day 2", "Monday", "Push Day", "Day A", "Leg Session", etc.).
         2. EXERCISE GROUPING: Group exercises accurately under each identified day. Maintain the exact order.
@@ -387,11 +434,9 @@ async function startServer() {
         Content:
         ${fileContent}
         
-        Return ONLY valid JSON corresponding to the ProgramTemplate format.` }]}],
-        config: { 
-          responseMimeType: "application/json" 
-        }
-      });
+        Return ONLY valid JSON corresponding to the ProgramTemplate format.` }] }],
+        config: { responseMimeType: "application/json" }
+      }));
       res.json(parseSafeJson(response.text || "{}"));
     } catch (error: any) {
       console.error("Parse workout file error:", error);
@@ -402,7 +447,7 @@ async function startServer() {
   app.post('/api/gemini/analyze-nutrition-file', async (req, res) => {
     const { fileContent, fileName } = req.body;
     try {
-      const response = await ai.models.generateContent({
+      const response = await fetchWithRetry(() => ai.models.generateContent({
         model: "gemini-3.5-flash",
         contents: [{ role: 'user', parts: [{ text: `Analyze the performance nutrition plan from "${fileName}" as a professional sports nutritionist. 
         
@@ -424,7 +469,7 @@ async function startServer() {
         - restrictedFoods: string[]
         - plannedMeals: array of { id: string, dayNumber: number, time: string, name: string, notes: string }` }]}],
         config: { responseMimeType: "application/json" }
-      });
+      }));
       res.json(parseSafeJson(response.text || "{}"));
     } catch (error: any) {
       console.error("Analyze nutrition file error:", error);
@@ -486,13 +531,13 @@ async function startServer() {
       
       Return ONLY the JSON.`;
 
-      const result = await ai.models.generateContent({
+      const result = await fetchWithRetry(() => ai.models.generateContent({
         model: "gemini-3.5-flash",
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         config: {
           responseMimeType: "application/json",
         }
-      });
+      }));
 
       const responseText = result.text;
       console.log('Nutrition Analysis (Text): Gemini response received');
@@ -558,7 +603,7 @@ async function startServer() {
       
       Return ONLY the JSON.`;
 
-      const result = await ai.models.generateContent({
+      const result = await fetchWithRetry(() => ai.models.generateContent({
         model: "gemini-3.5-flash",
         contents: [
           {
@@ -577,7 +622,7 @@ async function startServer() {
         config: {
           responseMimeType: "application/json",
         }
-      });
+      }));
 
       const responseText = result.text;
       console.log('Nutrition Analysis: Gemini response received');
@@ -687,7 +732,7 @@ async function startServer() {
       
       Return valid JSON only.`;
 
-      const result = await ai.models.generateContent({
+      const result = await fetchWithRetry(() => ai.models.generateContent({
         model: "gemini-3.5-flash",
         contents: [
           {
@@ -703,7 +748,7 @@ async function startServer() {
             ]
           }
         ]
-      });
+      }));
 
       const text = result.text;
       if (!text) throw new Error('No response from Gemini');

@@ -1589,11 +1589,11 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     const unsubscribe = onSnapshot(q, (snap) => {
       if (!snap.empty) {
         // Find the specific admin if possible, otherwise take the first one
-        const adminDoc = snap.docs.find(d => d.data().email === 'fitwithnik79@gmail.com') || snap.docs[0];
+        const adminDoc = snap.docs.find(d => d.data().email?.toLowerCase() === 'fitwithnik79@gmail.com') || snap.docs[0];
         setAdminProfile({ uid: adminDoc.id, ...adminDoc.data() } as UserProfile);
       } else {
-        // Fallback: search for the specific admin email if role check fails
-        const q2 = query(collection(db, 'users'), where('email', '==', 'fitwithnik79@gmail.com'));
+        // Fallback: search for the specific admin email if role check fails (checking common case variations)
+        const q2 = query(collection(db, 'users'), where('email', 'in', ['fitwithnik79@gmail.com', 'FitWithNik79@gmail.com', 'FITWITHNIK79@gmail.com']));
         getDocs(q2).then(snap2 => {
           if (!snap2.empty) {
             setAdminProfile({ uid: snap2.docs[0].id, ...snap2.docs[0].data() } as UserProfile);

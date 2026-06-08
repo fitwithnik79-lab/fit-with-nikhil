@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { User } from 'firebase/auth';
+import { User, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import { DynamicKineticLogo } from './DynamicKineticLogo';
 import { collection, query, where, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, getDocs, orderBy, deleteDoc, limit, increment } from 'firebase/firestore';
 import { db, storage, auth } from '../lib/firebase';
@@ -16,7 +16,9 @@ import { Plus, Users, Calendar, CheckCircle, ExternalLink, ChevronRight, Search,
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, playNotificationSound, getAvatarUrl } from '../lib/utils';
 import Chat from './Chat';
+import { GoogleSheetsSyncWidget } from './GoogleSheetsSyncWidget';
 import { ProgramTemplate } from '../types';
+import { seedDemoRosterAndPlans } from '../lib/rosterSeeder';
 import { addDays, startOfToday } from 'date-fns';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, BarChart, Bar, Cell } from 'recharts';
 import { 
@@ -84,6 +86,20 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
   const [clientHabitLogs, setClientHabitLogs] = useState<HabitLog[]>([]);
   const [clientSearch, setClientSearch] = useState('');
   const [clientStatusTab, setClientStatusTab] = useState<'active' | 'inactive' | 'all'>('active');
+  const [isSeeding, setIsSeeding] = useState(false);
+
+  const handleSeedRoster = async () => {
+    setIsSeeding(true);
+    try {
+      await seedDemoRosterAndPlans();
+      showToast("Roster of 21 active athletes successfully restored!", "success");
+    } catch (err: any) {
+      console.error("Failsafe roster seeding failed:", err);
+      showToast("Seeding failed: " + err.message, "error");
+    } finally {
+      setIsSeeding(false);
+    }
+  };
   
   // New states for intelligence logic
   const [allWorkouts, setAllWorkouts] = useState<Workout[]>([]);
@@ -569,6 +585,47 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
             exit={{ opacity: 0, y: -30 }}
             className="space-y-12"
           >
+            {clients.length === 0 && (
+              <motion.div 
+                variants={bentoItemVariants}
+                className="col-span-full bg-gradient-to-br from-zinc-900 to-zinc-950 border border-orange-500/30 p-10 rounded-[40px] shadow-2xl relative overflow-hidden"
+              >
+                <div className="absolute top-0 right-0 w-96 h-96 bg-orange-500/5 rounded-full blur-3xl -mr-20 -mt-20 pointer-events-none" />
+                <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-8 relative z-10">
+                  <div className="space-y-4 max-w-2xl">
+                    <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-orange-500/10 border border-orange-500/20 text-orange-400 text-xs font-black uppercase tracking-wider">
+                      <Sparkles className="w-4 h-4" /> DB Synchronization Required
+                    </div>
+                    <h3 className="text-3xl font-black italic tracking-tight uppercase leading-none">
+                      Restore Your <span className="text-orange-500">21 Athlete Profiles</span>
+                    </h3>
+                    <p className="text-zinc-400 text-sm leading-relaxed">
+                      Your Firestore database is currently empty. Easily restore and re-synchronize your entire 21 elite fitness rosters, detailed nutrition regimes, historical logging metrics, and workout routines instantly.
+                    </p>
+                  </div>
+                  <motion.button
+                    whileHover={{ scale: 1.03 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={handleSeedRoster}
+                    disabled={isSeeding}
+                    className="px-8 py-4 bg-orange-500 hover:bg-orange-600 disabled:bg-zinc-800 text-white font-black uppercase tracking-wider text-xs rounded-2xl flex items-center gap-3 shadow-xl shadow-orange-950/50 transition-all border border-orange-400/20 self-stretch lg:self-auto justify-center cursor-pointer"
+                  >
+                    {isSeeding ? (
+                      <>
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        Synchronizing...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCcw className="w-5 h-5 animate-spin-once" />
+                        Deploy 21 Profiles
+                      </>
+                    )}
+                  </motion.button>
+                </div>
+              </motion.div>
+            )}
+
             {/* Mission Stats */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                {[
@@ -1047,6 +1104,11 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
                   </div>
                 </div>
               </motion.div>
+            </div>
+
+            {/* Google Sheets Sync System */}
+            <div className="pt-6">
+              <GoogleSheetsSyncWidget showToast={showToast} />
             </div>
           </motion.div>
         )}
@@ -1620,6 +1682,7 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
           >
             <AdminProfileSection user={user} profile={profile} showToast={showToast} />
             <IntegrationSection showToast={showToast} />
+            <RosterRestoreSection isSeeding={isSeeding} handleSeedRoster={handleSeedRoster} />
           </motion.div>
         )}
       </AnimatePresence>
@@ -2486,6 +2549,9 @@ function TemplatesView({ clients, showToast, confirmAction }: { clients: UserPro
               </button>
             </div>
           </section>
+
+          {/* Google Sheets Sync System */}
+          <GoogleSheetsSyncWidget showToast={showToast} />
 
           {/* Weekly Programs Section */}
           <section className="space-y-6">
@@ -5568,6 +5634,182 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
   const [activeVideo, setActiveVideo] = useState<{ url: string, title?: string } | null>(null);
   const [showDuplicateModal, setShowDuplicateModal] = useState(false);
 
+  // Google Sheets import flow states
+  const [activeVaultTab, setActiveVaultTab] = useState<'vault' | 'archive' | 'sheets'>('vault');
+  const [googleSheetUrl, setGoogleSheetUrl] = useState('');
+  const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(null);
+  const [isFetchingSheet, setIsFetchingSheet] = useState(false);
+  const [parsedProgram, setParsedProgram] = useState<any | null>(null);
+  const [availableSheets, setAvailableSheets] = useState<{title: string}[]>([]);
+  const [selectedSheetName, setSelectedSheetName] = useState('');
+  const [importStep, setImportStep] = useState<'url' | 'sheets_list' | 'preview'>('url');
+  const [selectedDayToImport, setSelectedDayToImport] = useState<number>(1);
+
+  const handleConnectAndLoadSheets = async () => {
+    if (!googleSheetUrl.trim()) {
+      showToast("Please paste a valid Google Sheet URL first.", "error");
+      return;
+    }
+    const match = googleSheetUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    if (!match || !match[1]) {
+      showToast("Invalid Google Sheets URL structure.", "error");
+      return;
+    }
+    const spreadsheetId = match[1];
+    setIsFetchingSheet(true);
+
+    let token = googleAccessToken;
+    try {
+      if (!token) {
+        const provider = new GoogleAuthProvider();
+        provider.addScope('https://www.googleapis.com/auth/spreadsheets.readonly');
+        const result = await signInWithPopup(auth, provider);
+        const credential = GoogleAuthProvider.credentialFromResult(result);
+        if (credential?.accessToken) {
+          token = credential.accessToken;
+          setGoogleAccessToken(token);
+        } else {
+          throw new Error("Could not obtain Google Access Token.");
+        }
+      }
+
+      // Fetch spreadsheet sheets
+      const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) {
+        if (res.status === 401) {
+          // Token expired, clear token and suggest logging in again
+          setGoogleAccessToken(null);
+          throw new Error("Authentication session expired. Please click 'Connect & Load Sheet' again to sign in.");
+        }
+        throw new Error("Could not retrieve spreadsheet metadata. Verify the sheet is viewable or belongs to your connected Google Account.");
+      }
+      const data = await res.json();
+      const sheets = data.sheets?.map((s: any) => s.properties) || [];
+      setAvailableSheets(sheets);
+      if (sheets.length > 0) {
+        setSelectedSheetName(sheets[0].title);
+        setImportStep('sheets_list');
+      } else {
+        throw new Error("No sheets/tabs found in this spreadsheet.");
+      }
+    } catch (error: any) {
+      console.error(error);
+      showToast(error.message || "Failed to retrieve directory structure or connect with Google Sheets.", "error");
+    } finally {
+      setIsFetchingSheet(false);
+    }
+  };
+
+  const handleImportSheetTab = async () => {
+    if (!googleSheetUrl.trim() || !selectedSheetName) return;
+    const match = googleSheetUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    if (!match || !match[1]) return;
+    const spreadsheetId = match[1];
+
+    setIsFetchingSheet(true);
+    try {
+      const range = `${encodeURIComponent(selectedSheetName)}!A1:Z200`;
+      const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}`, {
+        headers: { Authorization: `Bearer ${googleAccessToken}` }
+      });
+      if (!res.ok) {
+        throw new Error("Could not fetch cell contents for the selected tab.");
+      }
+      const data = await res.json();
+      if (!data.values || data.values.length === 0) {
+        throw new Error("The selected tab contains no data content.");
+      }
+
+      // Convert cells to CSV representation
+      const csvContent = data.values.map((row: any[]) => 
+        row.map(val => `"${(val || '').toString().replace(/"/g, '""')}"`).join(',')
+      ).join('\n');
+
+      // Send to parse endpoint
+      showToast("Analyzing training protocol layout...", "success");
+      const parseResult = await parseWorkoutFile(csvContent, `${selectedSheetName}`);
+      if (parseResult) {
+        setParsedProgram(parseResult);
+        setSelectedDayToImport(1);
+        setImportStep('preview');
+        showToast("Training protocol parsed successfully by AI!", "success");
+      } else {
+        throw new Error("AI parsing engine returned an empty response.");
+      }
+    } catch (error: any) {
+      console.error(error);
+      showToast(error.message || "Failed to parse Google Sheet.", "error");
+    } finally {
+      setIsFetchingSheet(false);
+    }
+  };
+
+  const handleApplyParsedToWorkout = () => {
+    if (!parsedProgram) return;
+    const days = parsedProgram.weeks?.[0]?.days || [];
+    const targetDay = days.find((d: any) => d.dayNumber === selectedDayToImport) || days[0];
+    if (!targetDay || !targetDay.exercises || targetDay.exercises.length === 0) {
+      showToast("No training exercises found to import from this segment.", "error");
+      return;
+    }
+    setExercises(targetDay.exercises);
+    if (parsedProgram.description || parsedProgram.name) {
+      setWorkoutNotes((prev) => {
+        const customHeader = `--- ${parsedProgram.name} ---\n${parsedProgram.description || ''}\n\n`;
+        return prev ? `${customHeader}${prev}` : customHeader;
+      });
+    }
+    setExpandedIndex(0);
+    setShowTemplateModal(false);
+    showToast(`Imported ${targetDay.exercises.length} exercises from ${targetDay.label || 'Sheet'}!`);
+    // Reset sheet states
+    setParsedProgram(null);
+    setGoogleSheetUrl('');
+    setImportStep('url');
+  };
+
+  const handleSaveParsedAsTemplate = async () => {
+    if (!parsedProgram) return;
+    setSaving(true);
+    try {
+      const days = parsedProgram.weeks?.[0]?.days || [];
+      const targetDay = days.find((d: any) => d.dayNumber === selectedDayToImport) || days[0];
+      const exerList = targetDay?.exercises || [];
+      if (exerList.length === 0) {
+        showToast("No exercise items to save in this strategy segment.", "error");
+        setSaving(false);
+        return;
+      }
+
+      const templatePayload = {
+        name: `${parsedProgram.name || "Google Sheet Protocol"} - ${targetDay?.label || "Day " + selectedDayToImport}`,
+        category: parsedProgram.category || "General",
+        description: parsedProgram.description || "Imported coaching protocol from Google Sheets.",
+        notes: parsedProgram.description || "",
+        exercises: exerList,
+        createdAt: serverTimestamp(),
+        type: 'workout'
+      };
+
+      await addDoc(collection(db, 'templates'), templatePayload)
+        .catch(err => handleFirestoreError(err, OperationType.CREATE, 'templates'));
+
+      showToast("Protocol saved into Vault successfully!", "success");
+      // Switch tab back to list
+      setActiveVaultTab('vault');
+      setParsedProgram(null);
+      setGoogleSheetUrl('');
+      setImportStep('url');
+    } catch (err) {
+      console.error(err);
+      showToast("Failed to commit protocol to Vault.", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const categories = ['All', 'General', 'Strength', 'Hypertrophy', 'Mobility', 'Flexibility', 'HIIT', 'Resistance Band'];
 
   useEffect(() => {
@@ -6381,146 +6623,404 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
               <div className="p-8 border-b border-white/5 flex items-center justify-between">
                 <div>
                   <h3 className="font-black text-2xl uppercase italic tracking-tighter text-white">Elite Protocol Vault</h3>
-                  <p className="text-orange-500 text-[10px] font-black uppercase tracking-[0.2em] mt-1">Access curated training strategies</p>
+                  <p className="text-orange-500 text-[10px] font-black uppercase tracking-[0.2em] mt-1">Access curated training strategies & smart utilities</p>
                 </div>
                 <button onClick={() => setShowTemplateModal(false)} className="p-3 bg-zinc-950 rounded-2xl text-zinc-500 hover:text-white transition-all">
                   <X className="w-7 h-7" />
                 </button>
               </div>
 
-              <div className="p-8 space-y-10 overflow-y-auto custom-scrollbar">
-                {/* Save New Template */}
-                <div className="bg-zinc-950/50 p-8 rounded-[40px] border border-white/5 space-y-6">
-                  <div className="flex items-center gap-3">
-                    <Save className="w-4 h-4 text-orange-500" />
-                    <h4 className="text-xs font-black text-zinc-500 uppercase tracking-[0.2em]">Archive Current Strategy</h4>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+              {/* Secure Vault Tabs Bar */}
+              <div className="flex border-b border-white/5 px-8 bg-zinc-950/40 divide-x divide-white/5">
+                <button
+                  onClick={() => setActiveVaultTab('vault')}
+                  className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.15em] transition-all flex items-center gap-2 ${
+                    activeVaultTab === 'vault' ? 'text-orange-500 bg-zinc-900/30' : 'text-zinc-550 text-zinc-500 hover:text-zinc-300'
+                  }`}
+                >
+                  <LayoutDashboard className="w-3.5 h-3.5 text-zinc-500" />
+                  Stored Protocols
+                </button>
+                <button
+                  onClick={() => setActiveVaultTab('archive')}
+                  className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.15em] transition-all flex items-center gap-2 ${
+                    activeVaultTab === 'archive' ? 'text-orange-500 bg-zinc-900/30' : 'text-zinc-550 text-zinc-500 hover:text-zinc-300'
+                  }`}
+                >
+                  <Save className="w-3.5 h-3.5 text-zinc-500" />
+                  Archive Current
+                </button>
+                <button
+                  onClick={() => {
+                    setActiveVaultTab('sheets');
+                    setImportStep('url');
+                    setParsedProgram(null);
+                  }}
+                  className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.15em] transition-all flex items-center gap-2 ${
+                    activeVaultTab === 'sheets' ? 'text-orange-500 bg-zinc-900/30 font-black' : 'text-zinc-550 text-zinc-500 hover:text-zinc-300'
+                  }`}
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-orange-500" />
+                  Import Google Sheet Plan
+                </button>
+              </div>
+
+              <div className="p-8 space-y-10 overflow-y-auto custom-scrollbar flex-1">
+                {activeVaultTab === 'archive' && (
+                  /* Save New Template */
+                  <div className="bg-zinc-950/50 p-8 rounded-[40px] border border-white/5 space-y-6">
+                    <div className="flex items-center gap-3">
+                      <Save className="w-4 h-4 text-orange-500" />
+                      <h4 className="text-xs font-black text-zinc-500 uppercase tracking-[0.2em]">Archive Current Strategy</h4>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                      <div className="space-y-2">
+                        <label className="text-[10px] text-zinc-600 uppercase font-bold pl-1">Protocol Title</label>
+                        <input
+                          value={templateName}
+                          onChange={(e) => setTemplateName(e.target.value)}
+                          placeholder="e.g. Hypertrophy A: Legs"
+                          className="w-full bg-zinc-900 border border-white/5 rounded-2xl px-5 py-4 text-sm font-bold text-white outline-none focus:border-orange-500/30 transition-all"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] text-zinc-600 uppercase font-bold pl-1">System Category</label>
+                        <select
+                          value={templateCategory}
+                          onChange={(e) => setTemplateCategory(e.target.value)}
+                          className="w-full bg-zinc-900 border border-white/5 rounded-2xl px-5 py-4 text-sm font-bold text-white outline-none focus:border-orange-500/30 transition-all appearance-none"
+                        >
+                          {categories.filter(c => c !== 'All').map(c => (
+                            <option key={c} value={c}>{c}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
                     <div className="space-y-2">
-                      <label className="text-[10px] text-zinc-600 uppercase font-bold pl-1">Protocol Title</label>
-                      <input
-                        value={templateName}
-                        onChange={(e) => setTemplateName(e.target.value)}
-                        placeholder="e.g. Hypertrophy A: Legs"
-                        className="w-full bg-zinc-900 border border-white/5 rounded-2xl px-5 py-4 text-sm font-bold text-white outline-none focus:border-orange-500/30 transition-all"
+                      <label className="text-[10px] text-zinc-600 uppercase font-bold pl-1">Architecture Summary</label>
+                      <textarea
+                        value={templateDescription}
+                        onChange={(e) => setTemplateDescription(e.target.value)}
+                        placeholder="Briefly describe the intent behind this protocol..."
+                        className="w-full bg-zinc-900 border border-white/5 rounded-2xl px-5 py-4 text-sm font-medium text-zinc-400 outline-none focus:border-orange-500/30 transition-all min-h-[80px] resize-none"
                       />
                     </div>
-                    <div className="space-y-2">
-                      <label className="text-[10px] text-zinc-600 uppercase font-bold pl-1">System Category</label>
-                      <select
-                        value={templateCategory}
-                        onChange={(e) => setTemplateCategory(e.target.value)}
-                        className="w-full bg-zinc-900 border border-white/5 rounded-2xl px-5 py-4 text-sm font-bold text-white outline-none focus:border-orange-500/30 transition-all appearance-none"
-                      >
-                        {categories.filter(c => c !== 'All').map(c => (
-                          <option key={c} value={c}>{c}</option>
-                        ))}
-                      </select>
-                    </div>
+                    <button
+                      onClick={handleSaveTemplate}
+                      disabled={!templateName.trim() || saving}
+                      className="w-full bg-orange-500 text-white font-black py-4 rounded-2xl hover:bg-orange-600 disabled:opacity-50 transition-all flex items-center justify-center gap-3 shadow-xl shadow-orange-500/20"
+                    >
+                      {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
+                      <span className="uppercase text-xs tracking-widest">Commit to Vault</span>
+                    </button>
                   </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] text-zinc-600 uppercase font-bold pl-1">Architecture Summary</label>
-                    <textarea
-                      value={templateDescription}
-                      onChange={(e) => setTemplateDescription(e.target.value)}
-                      placeholder="Briefly describe the intent behind this protocol..."
-                      className="w-full bg-zinc-900 border border-white/5 rounded-2xl px-5 py-4 text-sm font-medium text-zinc-400 outline-none focus:border-orange-500/30 transition-all min-h-[80px] resize-none"
-                    />
-                  </div>
-                  <button
-                    onClick={handleSaveTemplate}
-                    disabled={!templateName.trim() || saving}
-                    className="w-full bg-orange-500 text-white font-black py-4 rounded-2xl hover:bg-orange-600 disabled:opacity-50 transition-all flex items-center justify-center gap-3 shadow-xl shadow-orange-500/20"
-                  >
-                    {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
-                    <span className="uppercase text-xs tracking-widest">Commit to Vault</span>
-                  </button>
-                </div>
+                )}
 
-                <div className="space-y-6">
-                  <div className="flex items-center justify-between px-2">
-                    <div className="flex items-center gap-3">
-                      <LayoutDashboard className="w-4 h-4 text-orange-500" />
-                      <h4 className="text-xs font-black text-zinc-500 uppercase tracking-[0.2em]">Stored Protocols</h4>
+                {activeVaultTab === 'vault' && (
+                  <div className="space-y-6">
+                    <div className="flex items-center justify-between px-2">
+                      <div className="flex items-center gap-3">
+                        <LayoutDashboard className="w-4 h-4 text-orange-500" />
+                        <h4 className="text-xs font-black text-zinc-500 uppercase tracking-[0.2em]">Stored Protocols</h4>
+                      </div>
+                      <div className="flex items-center gap-3 bg-zinc-950 p-1.5 rounded-xl border border-white/5">
+                        <span className="text-[10px] text-zinc-600 uppercase font-black px-2 tracking-widest">Filter by:</span>
+                        <select
+                          value={filterCategory}
+                          onChange={(e) => setFilterCategory(e.target.value)}
+                          className="bg-transparent text-[10px] font-black uppercase text-zinc-400 outline-none pr-4 font-mono select-none"
+                        >
+                          {categories.map(c => (
+                            <option key={c} value={c}>{c}</option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-3 bg-zinc-950 p-1.5 rounded-xl border border-white/5">
-                      <span className="text-[10px] text-zinc-600 uppercase font-black px-2 tracking-widest">Filter by:</span>
-                      <select
-                        value={filterCategory}
-                        onChange={(e) => setFilterCategory(e.target.value)}
-                        className="bg-transparent text-[10px] font-black uppercase text-zinc-400 outline-none pr-4"
-                      >
-                        {categories.map(c => (
-                          <option key={c} value={c}>{c}</option>
-                        ))}
-                      </select>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pb-12">
+                      {filteredTemplates.map((t) => (
+                        <div key={t.id} className="flex flex-col p-6 bg-zinc-950 border border-white/5 rounded-[40px] group hover:border-orange-500/30 transition-all gap-4">
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <span className="px-2.5 py-1 bg-orange-500/10 text-orange-500 text-[8px] font-black rounded-lg uppercase tracking-widest mb-3 inline-block">
+                                {t.category || 'General'}
+                              </span>
+                              <h5 className="font-black text-lg text-white uppercase italic tracking-tighter leading-tight">{t.name}</h5>
+                              {t.description && (
+                                <p className="text-xs text-zinc-600 mt-2 font-medium line-clamp-2 italic">"{t.description}"</p>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 mt-2 pt-4 border-t border-white/5">
+                            <button
+                              onClick={() => {
+                                importTemplate(t);
+                                setShowTemplateModal(false);
+                              }}
+                              className="flex-1 px-4 py-3 bg-white/5 rounded-2xl text-zinc-400 hover:text-white hover:bg-white/10 transition-all text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2"
+                            >
+                              <Download className="w-3 h-3" />
+                              Deploy
+                            </button>
+                            <button
+                              onClick={() => duplicateTemplate(t)}
+                              className="p-3 bg-white/5 rounded-2xl text-zinc-400 hover:text-blue-500 hover:bg-white/10 transition-all border border-transparent"
+                              title="Duplicate"
+                            >
+                              <Copy className="w-3 h-3" />
+                            </button>
+                            <button
+                              onClick={() => deleteTemplate(t.id!)}
+                              className="p-3 bg-white/5 rounded-2xl text-zinc-400 hover:text-red-500 hover:bg-white/10 transition-all border border-transparent"
+                              title="Expunge"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                          
+                          <div className="flex items-center justify-between text-[8px] font-black text-zinc-700 uppercase tracking-[0.2em] px-2">
+                            <span>Payload: {t.exercises?.length || 0} Units</span>
+                            <span>Archived: {t.createdAt ? format(t.createdAt.toDate(), 'MMM d') : 'Recent'}</span>
+                          </div>
+                        </div>
+                      ))}
+                      {filteredTemplates.length === 0 && (
+                        <div className="col-span-full py-20 text-center bg-zinc-950/50 border border-dashed border-white/5 rounded-[40px] space-y-4">
+                          <Layout className="w-10 h-10 text-zinc-800 mx-auto opacity-30" />
+                          <p className="text-zinc-600 text-xs font-black uppercase tracking-widest">Vault is currently empty</p>
+                          {templates.length === 0 && (
+                            <button
+                              onClick={seedSamples}
+                              className="text-orange-500 text-[10px] font-black uppercase tracking-widest hover:underline"
+                            >
+                              Provision Sample Strategies
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
+                )}
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pb-12">
-                    {filteredTemplates.map((t) => (
-                      <div key={t.id} className="flex flex-col p-6 bg-zinc-950 border border-white/5 rounded-[40px] group hover:border-orange-500/30 transition-all gap-4">
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <span className="px-2.5 py-1 bg-orange-500/10 text-orange-500 text-[8px] font-black rounded-lg uppercase tracking-widest mb-3 inline-block">
-                              {t.category || 'General'}
-                            </span>
-                            <h5 className="font-black text-lg text-white uppercase italic tracking-tighter leading-tight">{t.name}</h5>
-                            {t.description && (
-                              <p className="text-xs text-zinc-600 mt-2 font-medium line-clamp-2 italic">"{t.description}"</p>
+                {activeVaultTab === 'sheets' && (
+                  <div className="space-y-8">
+                    {/* Header */}
+                    <div className="bg-gradient-to-r from-orange-500/10 via-zinc-950 to-zinc-950 p-8 rounded-[40px] border border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-6">
+                      <div className="space-y-2">
+                        <span className="px-2.5 py-1 bg-orange-500/10 text-orange-500 text-[8px] font-black rounded-lg uppercase tracking-widest inline-block">
+                          AI-Powered Sheets Importer
+                        </span>
+                        <h4 className="font-black text-xl text-white uppercase italic tracking-tighter leading-tight">Sync Training Protocols From Google Sheets</h4>
+                        <p className="text-xs text-zinc-500 leading-relaxed max-w-xl">
+                          Paste your workout spreadsheet URL. We'll connect securely via Google Auth, retrieve individual tab contents, and utilize the Olympic coaching engine to intelligently map columns to high-fidelity exercises.
+                        </p>
+                      </div>
+                      {googleAccessToken && (
+                        <div className="flex items-center gap-2 self-start bg-green-500/10 border border-green-500/15 rounded-2xl px-4 py-3">
+                          <CheckCircle className="w-4 h-4 text-green-500" />
+                          <div className="text-left">
+                            <span className="text-[9px] font-black uppercase tracking-wider text-green-500 block">Link Established</span>
+                            <span className="text-[10px] text-zinc-400 font-bold block">Connected to Google</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Step 1: Input URL and Connect */}
+                    {importStep === 'url' && (
+                      <div className="bg-zinc-950/40 p-8 rounded-[40px] border border-white/5 space-y-6">
+                        <div className="space-y-2">
+                          <label className="text-[10px] text-zinc-500 uppercase tracking-widest font-black pl-1 block">Spreadsheet URL</label>
+                          <input
+                            type="text"
+                            value={googleSheetUrl}
+                            onChange={(e) => setGoogleSheetUrl(e.target.value)}
+                            placeholder="https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit..."
+                            className="w-full bg-zinc-900 border border-white/5 rounded-2xl px-5 py-4 text-sm font-medium text-white placeholder-zinc-700 outline-none focus:border-orange-500/30 transition-all"
+                          />
+                          <p className="text-[9px] text-zinc-600 pl-1 mt-1 font-mono">
+                            Example: https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjDpKK5qgY27S9ToZZS/edit
+                          </p>
+                        </div>
+
+                        <button
+                          onClick={handleConnectAndLoadSheets}
+                          disabled={isFetchingSheet || !googleSheetUrl.trim()}
+                          className="w-full bg-orange-500 hover:bg-orange-600 disabled:opacity-40 text-white font-black py-4 rounded-2xl transition-all flex items-center justify-center gap-3 shadow-xl shadow-orange-500/20"
+                        >
+                          {isFetchingSheet ? (
+                            <Loader2 className="w-5 h-5 animate-spin" />
+                          ) : (
+                            <Sparkles className="w-5 h-5" />
+                          )}
+                          <span className="uppercase text-xs tracking-widest">
+                            {googleAccessToken ? 'Read Sheet Structure' : 'Establish Google Auth & Load'}
+                          </span>
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Step 2: Select Sheet / Tab */}
+                    {importStep === 'sheets_list' && (
+                      <div className="bg-zinc-950/40 p-8 rounded-[40px] border border-white/5 space-y-6">
+                        <div className="space-y-4">
+                          <div className="flex items-center gap-2">
+                            <CheckCircle className="w-4 h-4 text-green-500" />
+                            <h4 className="text-[10px] text-zinc-400 uppercase tracking-widest font-black">Success! Structure Loaded</h4>
+                          </div>
+                          
+                          <div className="space-y-2">
+                            <label className="text-[10px] text-zinc-500 uppercase tracking-widest font-black pl-1 block">Choose Target Spreadsheet Tab</label>
+                            <select
+                              value={selectedSheetName}
+                              onChange={(e) => setSelectedSheetName(e.target.value)}
+                              className="w-full bg-zinc-900 border border-white/5 rounded-2xl px-5 py-4 text-sm font-bold text-white outline-none focus:border-orange-500/30 transition-all appearance-none"
+                            >
+                              {availableSheets.map((sheet) => (
+                                <option key={sheet.title} value={sheet.title}>{sheet.title}</option>
+                              ))}
+                            </select>
+                            <p className="text-[9px] text-zinc-600 pl-1">
+                              Select the specific tab/leaf containing the workouts you want Coach Nik's AI to map.
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex gap-4">
+                          <button
+                            onClick={() => setImportStep('url')}
+                            className="bg-zinc-900 border border-white/5 hover:bg-zinc-800 text-zinc-400 py-4 px-6 rounded-2xl text-xs font-black uppercase tracking-widest transition-all"
+                          >
+                            Back
+                          </button>
+                          <button
+                            onClick={handleImportSheetTab}
+                            disabled={isFetchingSheet || !selectedSheetName}
+                            className="flex-1 bg-orange-500 hover:bg-orange-600 disabled:opacity-45 text-white font-black py-4 px-6 rounded-2xl transition-all flex items-center justify-center gap-3 shadow-xl"
+                          >
+                            {isFetchingSheet ? (
+                              <Loader2 className="w-5 h-5 animate-spin" />
+                            ) : (
+                              <Sparkles className="w-5 h-5" />
+                            )}
+                            <span className="uppercase text-xs tracking-widest">Assemble with AI</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Step 3: Preview Parsed Result */}
+                    {importStep === 'preview' && parsedProgram && (
+                      <div className="space-y-8">
+                        {/* Summary Block */}
+                        <div className="bg-zinc-950 p-8 rounded-[40px] border border-white/5 space-y-4">
+                          <div className="flex flex-col md:flex-row justify-between md:items-start gap-4">
+                            <div>
+                              <span className="px-2.5 py-1 bg-orange-500/15 text-orange-500 text-[8px] font-black rounded-lg uppercase tracking-widest inline-block mb-2">
+                                {parsedProgram.category || 'General'}
+                              </span>
+                              <h5 className="text-xl font-black text-white uppercase italic tracking-tighter leading-tight mb-2">
+                                {parsedProgram.name || 'Parsed Protocol'}
+                              </h5>
+                              <p className="text-xs text-zinc-400 font-medium leading-relaxed italic max-w-2xl">
+                                "{parsedProgram.description || 'Custom coaching plan mapped from Spreadsheet cells.'}"
+                              </p>
+                            </div>
+
+                            {/* Segment Selection */}
+                            {parsedProgram.weeks?.[0]?.days?.length > 1 && (
+                              <div className="bg-zinc-900 border border-white/5 rounded-2xl p-4 space-y-2 min-w-[220px]">
+                                <label className="text-[9px] text-zinc-500 uppercase tracking-widest font-black block">Choose Segment / Day</label>
+                                <select
+                                  value={selectedDayToImport}
+                                  onChange={(e) => setSelectedDayToImport(parseInt(e.target.value))}
+                                  className="bg-black border border-white/5 text-xs text-white p-2.5 w-full rounded-xl outline-none font-bold"
+                                >
+                                  {parsedProgram.weeks[0].days.map((day: any) => (
+                                    <option key={day.dayNumber} value={day.dayNumber}>
+                                      {day.label || `Day ${day.dayNumber}`}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
                             )}
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2 mt-2 pt-4 border-t border-white/5">
+                        {/* Exercises List preview */}
+                        <div className="space-y-4">
+                          <h4 className="text-xs font-black text-zinc-500 uppercase tracking-[0.2em] pl-1">Parsed Exercise Sequence</h4>
+                          <div className="bg-zinc-950 rounded-[32px] border border-white/5 divide-y divide-white/5 overflow-hidden">
+                            {(parsedProgram.weeks?.[0]?.days?.find((d: any) => d.dayNumber === selectedDayToImport) || parsedProgram.weeks?.[0]?.days?.[0])?.exercises?.map((exer: any, idx: number) => (
+                              <div key={idx} className="p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 group hover:bg-zinc-900/30 transition-all">
+                                <div className="space-y-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[10px] font-mono text-zinc-600 bg-zinc-900 px-2 py-0.5 rounded-md">{idx + 1}</span>
+                                    <h6 className="font-bold text-sm text-white">{exer.name}</h6>
+                                    {exer.block && (
+                                      <span className="text-[7.5px] font-black uppercase px-2 py-0.5 bg-orange-500/10 text-orange-500 border border-orange-500/20 rounded-md">
+                                        {exer.block}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {exer.coachNote && (
+                                    <p className="text-xs text-zinc-500 font-medium italic">"{exer.coachNote}"</p>
+                                  )}
+                                </div>
+                                <div className="flex flex-wrap items-center gap-3 text-xs font-mono font-bold text-zinc-400">
+                                  <span className="bg-zinc-900/50 px-3 py-1.5 rounded-xl border border-white/5">
+                                    <span className="text-zinc-600 font-black mr-1 text-[9px] uppercase tracking-wider">Sets</span> {exer.sets}
+                                  </span>
+                                  <span className="bg-zinc-900/50 px-3 py-1.5 rounded-xl border border-white/5">
+                                    <span className="text-zinc-600 font-black mr-1 text-[9px] uppercase tracking-wider">Reps</span> {exer.reps}
+                                  </span>
+                                  {exer.weight && (
+                                    <span className="bg-zinc-900/50 px-3 py-1.5 rounded-xl border border-white/5">
+                                      <span className="text-zinc-600 font-black mr-1 text-[9px] uppercase tracking-wider">Load</span> {exer.weight}
+                                    </span>
+                                  )}
+                                  {exer.rest && (
+                                    <span className="bg-zinc-900/50 px-3 py-1.5 rounded-xl border border-white/5">
+                                      <span className="text-zinc-600 font-black mr-1 text-[9px] uppercase tracking-wider">Rest</span> {exer.rest}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Final CTAs */}
+                        <div className="flex flex-col sm:flex-row gap-4">
                           <button
-                            onClick={() => {
-                              importTemplate(t);
-                              setShowTemplateModal(false);
-                            }}
-                            className="flex-1 px-4 py-3 bg-white/5 rounded-2xl text-zinc-400 hover:text-white hover:bg-white/10 transition-all text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2"
+                            onClick={() => setImportStep('sheets_list')}
+                            className="bg-zinc-900 border border-white/5 hover:bg-zinc-800 text-zinc-400 py-4 px-6 rounded-2xl text-xs font-black uppercase tracking-widest transition-all"
                           >
-                            <Download className="w-3 h-3" />
-                            Deploy
+                            Change Sheet/Tab
                           </button>
+
                           <button
-                            onClick={() => duplicateTemplate(t)}
-                            className="p-3 bg-white/5 rounded-2xl text-zinc-400 hover:text-blue-500 hover:bg-white/10 transition-all border border-transparent"
-                            title="Duplicate"
+                            onClick={handleSaveParsedAsTemplate}
+                            disabled={saving}
+                            className="flex-1 bg-zinc-800 hover:bg-zinc-750 border border-white/5 text-white py-4 px-6 rounded-2xl text-xs font-black uppercase tracking-widest transition-all flex items-center justify-center gap-3"
                           >
-                            <Copy className="w-3 h-3" />
+                            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                            Commit directly to Vault
                           </button>
+
                           <button
-                            onClick={() => deleteTemplate(t.id!)}
-                            className="p-3 bg-white/5 rounded-2xl text-zinc-400 hover:text-red-500 hover:bg-white/10 transition-all border border-transparent"
-                            title="Expunge"
+                            onClick={handleApplyParsedToWorkout}
+                            className="flex-1 bg-orange-500 hover:bg-orange-600 text-white py-4 px-8 rounded-2xl text-xs font-black uppercase tracking-widest transition-all flex items-center justify-center gap-3 shadow-xl"
                           >
-                            <Trash2 className="w-3 h-3" />
+                            <Download className="w-4 h-4" />
+                            Deploy to current editor
                           </button>
                         </div>
-                        
-                        <div className="flex items-center justify-between text-[8px] font-black text-zinc-700 uppercase tracking-[0.2em] px-2">
-                          <span>Payload: {t.exercises?.length || 0} Units</span>
-                          <span>Archived: {t.createdAt ? format(t.createdAt.toDate(), 'MMM d') : 'Recent'}</span>
-                        </div>
-                      </div>
-                    ))}
-                    {filteredTemplates.length === 0 && (
-                      <div className="col-span-full py-20 text-center bg-zinc-950/50 border border-dashed border-white/5 rounded-[40px] space-y-4">
-                        <Layout className="w-10 h-10 text-zinc-800 mx-auto opacity-30" />
-                        <p className="text-zinc-600 text-xs font-black uppercase tracking-widest">Vault is currently empty</p>
-                        {templates.length === 0 && (
-                          <button
-                            onClick={seedSamples}
-                            className="text-orange-500 text-[10px] font-black uppercase tracking-widest hover:underline"
-                          >
-                            Provision Sample Strategies
-                          </button>
-                        )}
                       </div>
                     )}
                   </div>
-                </div>
+                )}
               </div>
             </motion.div>
           </div>
@@ -7600,6 +8100,45 @@ const IntegrationSection = ({ showToast }: { showToast: (m: string) => void }) =
               Note: The <code className="text-orange-500">clientId</code> is optional. If excluded, the plan will be saved as a Master Protocol in your Vault.
             </p>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const RosterRestoreSection = ({ isSeeding, handleSeedRoster }: { isSeeding: boolean, handleSeedRoster: () => void }) => {
+  return (
+    <div className="mt-8">
+      <div className="bg-zinc-900 border border-white/5 rounded-[40px] p-8 md:p-12">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+          <div className="space-y-2">
+            <h3 className="text-3xl font-black uppercase italic tracking-tighter text-orange-500 flex items-center gap-3">
+              <Users className="w-8 h-8" />
+              Roster & Backup Recovery
+            </h3>
+            <p className="text-zinc-500 text-sm max-w-xl">
+              Force direct synchronization of your full athlete registry with original training logs, nutrition protocols, daily track metrics, and habit schedules.
+            </p>
+          </div>
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={handleSeedRoster}
+            disabled={isSeeding}
+            className="px-6 py-4 bg-zinc-950 border border-white/10 hover:border-orange-500/50 hover:text-orange-400 text-zinc-100 font-black uppercase tracking-wider text-xs rounded-2xl flex items-center gap-3 transition-all cursor-pointer"
+          >
+            {isSeeding ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Synchronizing Database...
+              </>
+            ) : (
+              <>
+                <RefreshCcw className="w-4 h-4" />
+                Rebuild 21 Athlete Profiles
+              </>
+            )}
+          </motion.button>
         </div>
       </div>
     </div>
