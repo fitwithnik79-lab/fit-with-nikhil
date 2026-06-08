@@ -12,7 +12,9 @@ import {
   Layers, 
   ShieldCheck, 
   Database,
-  Calendar
+  Calendar,
+  UploadCloud,
+  FileText
 } from 'lucide-react';
 import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
@@ -20,6 +22,7 @@ import { auth, db } from '../lib/firebase';
 import { parseWorkoutFile } from '../lib/gemini';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { cn } from '../lib/utils';
+import { parseExcelWorkbook } from '../lib/fileParser';
 
 interface GoogleSheetsSyncWidgetProps {
   showToast: (m: string, t?: 'success' | 'error') => void;
@@ -27,6 +30,9 @@ interface GoogleSheetsSyncWidgetProps {
 }
 
 export function GoogleSheetsSyncWidget({ showToast, onSyncComplete }: GoogleSheetsSyncWidgetProps) {
+  const [sourceType, setSourceType] = useState<'google' | 'local'>('google');
+  const [localBookSheets, setLocalBookSheets] = useState<Record<string, string[][]>>({});
+
   const [sheetUrl, setSheetUrl] = useState('');
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -90,6 +96,64 @@ export function GoogleSheetsSyncWidget({ showToast, onSyncComplete }: GoogleShee
     return (match && match[1]) ? match[1] : null;
   };
 
+  // Reusable intelligent column-mapping auto-detection
+  const autoDetectColumnMappings = (rows: string[][]) => {
+    const initialMappings: Record<number, string> = {};
+    if (rows.length > 0) {
+      const colCount = Math.max(...rows.map(r => r.length));
+      for (let colIdx = 0; colIdx < colCount; colIdx++) {
+        initialMappings[colIdx] = 'ignore';
+        
+        // Peek first 6 rows for matching terms
+        for (let rowIdx = 0; rowIdx < Math.min(6, rows.length); rowIdx++) {
+          const cellVal = (rows[rowIdx][colIdx] || '').toString().toLowerCase().trim();
+          if (!cellVal) continue;
+
+          if (cellVal.includes('exercise') || cellVal === 'lift' || cellVal === 'movement' || cellVal === 'name' || cellVal === 'drill') {
+            initialMappings[colIdx] = 'exercise';
+            break;
+          } else if (cellVal.includes('sets') || cellVal === 'set') {
+            initialMappings[colIdx] = 'sets';
+            break;
+          } else if (cellVal.includes('reps') || cellVal === 'rep') {
+            initialMappings[colIdx] = 'reps';
+            break;
+          } else if (cellVal.includes('weight') || cellVal === 'load' || cellVal === 'intensity' || cellVal === 'kg' || cellVal === 'lbs') {
+            initialMappings[colIdx] = 'weight';
+            break;
+          } else if (cellVal.includes('rest') || cellVal.includes('interval')) {
+            initialMappings[colIdx] = 'rest';
+            break;
+          } else if (cellVal.includes('note') || cellVal.includes('cue') || cellVal.includes('coach') || cellVal.includes('comment')) {
+            initialMappings[colIdx] = 'notes';
+            break;
+          } else if (cellVal.includes('block') || cellVal === 'phase' || cellVal === 'period') {
+            initialMappings[colIdx] = 'block';
+            break;
+          }
+        }
+      }
+
+      // Secondary fallback search if mapping is blank
+      const hasExercise = Object.values(initialMappings).includes('exercise');
+      if (!hasExercise) {
+        let found = false;
+        for (let col = 0; col < Math.min(colCount, 3); col++) {
+          const hasTextVal = rows.some(r => r[col] && r[col].length > 4);
+          if (hasTextVal) {
+            initialMappings[col] = 'exercise';
+            found = true;
+            break;
+          }
+        }
+        if (!found && colCount > 0) {
+          initialMappings[0] = 'exercise';
+        }
+      }
+    }
+    setColumnMappings(initialMappings);
+  };
+
   // Loads a preview of sheets cell values for intelligent mapping & row selectors
   const loadSheetPreview = async (tab: string, token: string, rangeOverride?: string) => {
     const spreadsheetId = extractSpreadsheetId(sheetUrl);
@@ -121,61 +185,57 @@ export function GoogleSheetsSyncWidget({ showToast, onSyncComplete }: GoogleShee
       });
       setSelectedRows(initialSelectedRows);
 
-      // Analyze columns to smartly auto-detect fields mapping list
-      const initialMappings: Record<number, string> = {};
-      if (rows.length > 0) {
-        const colCount = Math.max(...rows.map(r => r.length));
-        for (let colIdx = 0; colIdx < colCount; colIdx++) {
-          initialMappings[colIdx] = 'ignore';
-          
-          // Peek first 6 rows for matching terms
-          for (let rowIdx = 0; rowIdx < Math.min(6, rows.length); rowIdx++) {
-            const cellVal = (rows[rowIdx][colIdx] || '').toLowerCase().trim();
-            if (!cellVal) continue;
-
-            if (cellVal.includes('exercise') || cellVal === 'lift' || cellVal === 'movement' || cellVal === 'name' || cellVal === 'drill') {
-              initialMappings[colIdx] = 'exercise';
-              break;
-            } else if (cellVal.includes('sets') || cellVal === 'set') {
-              initialMappings[colIdx] = 'sets';
-              break;
-            } else if (cellVal.includes('reps') || cellVal === 'rep') {
-              initialMappings[colIdx] = 'reps';
-              break;
-            } else if (cellVal.includes('weight') || cellVal === 'load' || cellVal === 'intensity' || cellVal === 'kg' || cellVal === 'lbs') {
-              initialMappings[colIdx] = 'weight';
-              break;
-            } else if (cellVal.includes('rest') || cellVal.includes('interval')) {
-              initialMappings[colIdx] = 'rest';
-              break;
-            } else if (cellVal.includes('note') || cellVal.includes('cue') || cellVal.includes('coach') || cellVal.includes('comment')) {
-              initialMappings[colIdx] = 'notes';
-              break;
-            } else if (cellVal.includes('block') || cellVal === 'phase' || cellVal === 'period') {
-              initialMappings[colIdx] = 'block';
-              break;
-            }
-          }
-        }
-
-        // Secondary fallback search if mapping is blank
-        const hasExercise = Object.values(initialMappings).includes('exercise');
-        if (!hasExercise) {
-          for (let col = 0; col < Math.min(colCount, 3); col++) {
-            const hasTextVal = rows.some(r => r[col] && r[col].length > 4);
-            if (hasTextVal) {
-              initialMappings[col] = 'exercise';
-              break;
-            }
-          }
-        }
-      }
-      setColumnMappings(initialMappings);
+      autoDetectColumnMappings(rows);
 
     } catch (err: any) {
       console.error(err);
       setErrorDetails(err.message || 'Error occurred starting spreadsheet preview load.');
       showToast(err.message || 'Error loading preview range.', 'error');
+    } finally {
+      setIsPreviewLoading(false);
+    }
+  };
+
+  const handleLocalSpreadsheetUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsPreviewLoading(true);
+    setPreviewRows([]);
+    setErrorDetails(null);
+    setSpreadsheetTitle(file.name);
+
+    try {
+      const parsedBook = await parseExcelWorkbook(file);
+      setAvailableTabs(parsedBook.sheetNames);
+      setLocalBookSheets(parsedBook.sheets);
+
+      if (parsedBook.sheetNames.length > 0) {
+        const firstTab = parsedBook.sheetNames[0];
+        setSelectedTab(firstTab);
+
+        const rows = parsedBook.sheets[firstTab] || [];
+        setPreviewRows(rows);
+
+        // Pre-check all rows by default
+        const initialSelectedRows: Record<number, boolean> = {};
+        rows.forEach((_, idx) => {
+          initialSelectedRows[idx] = true;
+        });
+        setSelectedRows(initialSelectedRows);
+
+        autoDetectColumnMappings(rows);
+      } else {
+        throw new Error('No worksheets/tabs detected inside this workbook.');
+      }
+
+      // Transition straight into the preview tabs layout!
+      setSyncStep('tabs');
+
+    } catch (err: any) {
+      console.error(err);
+      setErrorDetails(err.message || 'Error parsing local file.');
+      showToast(err.message || 'Failed to read local spreadsheet file.', 'error');
     } finally {
       setIsPreviewLoading(false);
     }
@@ -195,6 +255,50 @@ export function GoogleSheetsSyncWidget({ showToast, onSyncComplete }: GoogleShee
     }
 
     setIsSyncing(true);
+    
+    // Auto-detect public sheet download feature before prompting auth
+    try {
+      setSyncStep('download');
+      const proxyRes = await fetch(`/api/proxy-sheet?id=${spreadsheetId}`);
+      if (proxyRes.ok) {
+        const blob = await proxyRes.blob();
+        const file = new File([blob], 'public-sheet.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        
+        setIsPreviewLoading(true);
+        const parsedBook = await parseExcelWorkbook(file);
+        
+        setSpreadsheetTitle(parsedBook.sheetNames.length > 0 ? sheetUrl.split('/')[5] || 'Olympic Program' : 'Public Sheet');
+        setAvailableTabs(parsedBook.sheetNames);
+        setLocalBookSheets(parsedBook.sheets);
+        // We do NOT change sourceType here so the user stays on the Google tab mentally!
+
+        if (parsedBook.sheetNames.length > 0) {
+          const firstTab = parsedBook.sheetNames[0];
+          setSelectedTab(firstTab);
+
+          const rows = parsedBook.sheets[firstTab] || [];
+          setPreviewRows(rows);
+
+          // Pre-check all rows by default
+          const initialSelectedRows: Record<number, boolean> = {};
+          rows.forEach((_, idx) => {
+            initialSelectedRows[idx] = true;
+          });
+          setSelectedRows(initialSelectedRows);
+
+          autoDetectColumnMappings(rows);
+        } else {
+          throw new Error('No worksheets/tabs detected inside this public workbook.');
+        }
+
+        setSyncStep('tabs');
+        setIsPreviewLoading(false);
+        return; // Early return to bypass OAuth!
+      }
+    } catch (e) {
+      console.warn("Public sheet fast-sync failed, falling back to secure OAuth API:", e);
+    }
+    
     setSyncStep('auth');
 
     let currentToken = accessToken;
@@ -253,31 +357,44 @@ export function GoogleSheetsSyncWidget({ showToast, onSyncComplete }: GoogleShee
   };
 
   const executeDataSynchronization = async () => {
-    if (!sheetUrl.trim() || !selectedTab) return;
-    const spreadsheetId = extractSpreadsheetId(sheetUrl);
-    if (!spreadsheetId || !accessToken) return;
+    if (sourceType === 'google' && (!sheetUrl.trim() || !selectedTab)) return;
+    if (sourceType === 'local' && !selectedTab) return;
+
+    const spreadsheetId = sourceType === 'google' ? extractSpreadsheetId(sheetUrl) : null;
+    if (sourceType === 'google' && (!spreadsheetId || (!accessToken && !localBookSheets[selectedTab]))) {
+      showToast("Access token or valid local sheet data is missing. Please reload the sheet.", "error");
+      return;
+    }
 
     setIsSyncing(true);
     setErrorDetails(null);
-    setSyncStep('download');
+    setSyncStep(sourceType === 'google' ? 'download' : 'analyzing');
 
     try {
       let activeRows = previewRows;
 
       // If previewRows is empty, load it fresh
       if (activeRows.length === 0) {
-        const finalRange = customRange.trim() || 'A1:L80';
-        const range = `${encodeURIComponent(selectedTab)}!${finalRange}`;
-        const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}`, {
-          headers: { Authorization: `Bearer ${accessToken}` }
-        });
+        if (sourceType === 'google') {
+          if (localBookSheets[selectedTab]) {
+             activeRows = localBookSheets[selectedTab] || [];
+          } else if (accessToken) {
+            const finalRange = customRange.trim() || 'A1:L80';
+            const range = `${encodeURIComponent(selectedTab)}!${finalRange}`;
+            const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}`, {
+              headers: { Authorization: `Bearer ${accessToken}` }
+            });
 
-        if (!res.ok) {
-          throw new Error(`Failed downloading sheet values for range: "${range}". Please check formatting or share settings.`);
+            if (!res.ok) {
+              throw new Error(`Failed downloading sheet values for range: "${range}". Please check formatting or share settings.`);
+            }
+
+            const data = await res.json();
+            activeRows = data.values || [];
+          }
+        } else {
+          throw new Error(`The selected tab/range contains no visible cells data.`);
         }
-
-        const data = await res.json();
-        activeRows = data.values || [];
       }
 
       if (activeRows.length === 0) {
@@ -286,95 +403,44 @@ export function GoogleSheetsSyncWidget({ showToast, onSyncComplete }: GoogleShee
 
       setSyncStep('analyzing');
 
-      // Map columns layout based on mapping selection
-      const activeMappings = Object.entries(columnMappings)
-        .filter(([_, value]) => value !== 'ignore')
-        .map(([index, value]) => ({ index: parseInt(index), field: value }));
-
-      if (activeMappings.length === 0) {
-        throw new Error("Please map at least one column to a field category (e.g. 'Exercise Name') above before syncing.");
+      // AI-Powered parsing instead of manual mapping
+      const filteredRows = activeRows.filter((_, idx) => selectedRows[idx] !== false);
+      if (filteredRows.length === 0) {
+        throw new Error("No active rows selected/found. Please check row checkboxes in the visual grid preview.");
       }
 
-      const hasExerciseMapping = activeMappings.some(m => m.field === 'exercise');
-      if (!hasExerciseMapping) {
-        throw new Error("Please map at least one column to 'Exercise Name' so Coach Nik can identify lift profiles.");
+      const csvString = filteredRows.map(r => r.join(' | ')).join('\n');
+
+      const parseRes = await fetch('/api/gemini/parse-workout-file', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          fileContent: csvString,
+          fileName: `${spreadsheetTitle || 'Spreadsheet'} - ${selectedTab}`,
+          userRangeInstructions
+        })
+      });
+
+      if (!parseRes.ok) {
+        throw new Error("Failed to generate workout plan from the sheet using AI. Check the document contents.");
       }
-
-      // Convert selected rows to clean, normalized CSV
-      const csvHeader = activeMappings.map(m => {
-        switch (m.field) {
-          case 'exercise': return 'Exercise';
-          case 'sets': return 'Sets';
-          case 'reps': return 'Reps';
-          case 'weight': return 'Weight';
-          case 'rest': return 'Rest';
-          case 'notes': return 'Notes';
-          case 'block': return 'Block';
-          default: return m.field;
-        }
-      }).join(',');
-
-      const csvRows = [];
-      for (let i = 0; i < activeRows.length; i++) {
-        // Skip unchecked rows
-        if (selectedRows[i] === false) continue;
-        
-        const row = activeRows[i];
-        if (!row || row.length === 0) continue;
-
-        // Isolate exercise name cells and ensure they are not headers
-        const exerciseIdx = activeMappings.find(m => m.field === 'exercise')?.index ?? -1;
-        const exerciseVal = exerciseIdx !== -1 ? (row[exerciseIdx] || '').trim() : '';
-
-        // Omit empty exercises or standard placeholders
-        if (!exerciseVal || exerciseVal.toLowerCase() === 'exercise' || exerciseVal.toLowerCase() === 'movement') continue;
-
-        const rowCells = activeMappings.map(m => {
-          const val = row[m.index] || '';
-          return `"${val.replace(/"/g, '""')}"`;
-        });
-
-        csvRows.push(rowCells.join(','));
-      }
-
-      if (csvRows.length === 0) {
-        throw new Error("No active exercises selected. Please check row checkboxes in the visual grid preview.");
-      }
-
-      const csvData = [csvHeader, ...csvRows].join('\n');
-
-      // Send to backend (Gemini AI Endpoint parsing) with our custom row/column instructions
-      const parsed = await parseWorkoutFile(
-        csvData, 
-        selectedTab, 
-        `The columns in this CSV are already pre-mapped and pre-filtered. Please parse the rows strictly to populate the template. 'Exercise' maps to Exercise name, 'Sets' to sets count, 'Reps' to repetitions schema, 'Weight' to load info, 'Rest' to recovery, 'Notes' to coach cue instructions, 'Block' to target structural phase.\n\n${userRangeInstructions}`
-      );
       
-      if (!parsed) {
-        throw new Error('AI analysis failed to extract any exercise models from your spreadsheet split.');
-      }
-
+      const generatedPlan = await parseRes.json();
+      
       setSyncStep('storing');
 
-      const targetWeeks = parsed.weeks?.[0] || {};
-      const targetDays = targetWeeks.days || [];
-      const primaryDay = targetDays[0] || {};
-      const exerciseList = primaryDay.exercises || [];
-
-      if (exerciseList.length === 0) {
-        throw new Error('No actual structured exercises were parsed by the AI. Check sheet headings.');
-      }
-
-      // Format payload
       const payload = {
-        name: `${parsed.name || 'Synced Protocol'} - ${selectedTab}`,
-        category: parsed.category || 'General',
-        description: parsed.description || 'Synchronized coaching strategy imported via Google Sheets.',
-        notes: parsed.description || `Fetched from Sheet: ${spreadsheetTitle} (Tab: ${selectedTab})`,
-        exercises: exerciseList,
+        name: generatedPlan.name || `${spreadsheetTitle || 'Synced Protocol'} - ${selectedTab}`,
+        category: generatedPlan.category || 'Athletic',
+        description: generatedPlan.description || `Synchronized from Sheet: ${spreadsheetTitle} (Tab: ${selectedTab})`,
+        notes: generatedPlan.description || `Synchronized from Sheet: ${spreadsheetTitle} (Tab: ${selectedTab})`,
+        exercises: generatedPlan.exercises || [],
         createdAt: serverTimestamp(),
         type: 'workout',
         isSynced: true,
+        isCustom: true,
         sourceSheet: spreadsheetTitle,
         sourceTab: selectedTab
       };
@@ -386,10 +452,12 @@ export function GoogleSheetsSyncWidget({ showToast, onSyncComplete }: GoogleShee
           throw err;
         });
 
+      let exerciseCount = payload.exercises?.length || 0;
+
       setSyncedDetails({
         name: payload.name,
         category: payload.category,
-        exercisesCount: exerciseList.length,
+        exercisesCount: exerciseCount,
         description: payload.description
       });
 
@@ -473,39 +541,96 @@ export function GoogleSheetsSyncWidget({ showToast, onSyncComplete }: GoogleShee
               exit={{ opacity: 0 }}
               className="space-y-4"
             >
-              <div className="relative">
-                <div className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500 shrink-0">
-                  <FileSpreadsheet className="w-5 h-5" />
-                </div>
-                <input 
-                  type="url"
-                  placeholder="Paste Google Sheets Shareable URL (e.g. https://docs.google.com/spreadsheets/d/...)"
-                  value={sheetUrl}
-                  onChange={(e) => setSheetUrl(e.target.value)}
-                  className="w-full bg-zinc-950 border border-white/5 focus:border-orange-500/50 rounded-2xl py-4 pl-12 pr-4 text-xs font-medium text-white placeholder-zinc-600 focus:outline-none transition-all"
-                />
+              {/* Source Mode Tab Selector */}
+              <div className="flex bg-zinc-950 p-1 border border-white/5 rounded-2xl gap-1">
+                <button
+                  type="button"
+                  onClick={() => setSourceType('google')}
+                  className={cn(
+                    "flex-1 py-3 text-xs uppercase tracking-widest font-black rounded-xl transition-all flex items-center justify-center gap-2",
+                    sourceType === 'google' 
+                      ? "bg-zinc-900 border border-white/10 text-white shadow-md font-extrabold" 
+                      : "text-zinc-500 hover:text-zinc-300 font-bold"
+                  )}
+                >
+                  <ExternalLink className="w-3.5 h-3.5 text-orange-500" />
+                  Google Sheets
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSourceType('local')}
+                  className={cn(
+                    "flex-1 py-3 text-xs uppercase tracking-widest font-black rounded-xl transition-all flex items-center justify-center gap-2",
+                    sourceType === 'local' 
+                      ? "bg-zinc-900 border border-white/10 text-white shadow-md font-extrabold" 
+                      : "text-zinc-500 hover:text-zinc-300 font-bold"
+                  )}
+                >
+                  <UploadCloud className="w-3.5 h-3.5 text-orange-500" />
+                  Local Excel / CSV
+                </button>
               </div>
 
-              <div className="flex flex-col sm:flex-row gap-3">
-                <button
-                  onClick={handleStartSyncFlow}
-                  className="flex-1 px-8 py-4 bg-orange-500 text-white font-black text-xs uppercase tracking-widest rounded-2xl hover:bg-orange-600 active:scale-95 transition-all flex items-center justify-center gap-3 shadow-lg shadow-orange-500/10"
-                >
-                  Connect & Load Cells
-                  <ArrowRight className="w-4 h-4" />
-                </button>
-                {accessToken && (
-                  <button
-                    onClick={() => {
-                      setAccessToken(null);
-                      showToast('Google credentials cleared.', 'success');
-                    }}
-                    className="px-6 py-4 bg-zinc-950 border border-white/5 text-zinc-500 hover:text-white rounded-2xl text-xs font-black uppercase tracking-widest transition-all"
-                  >
-                    Clear Credentials
-                  </button>
-                )}
-              </div>
+              {sourceType === 'google' ? (
+                <div className="space-y-4">
+                  <div className="relative">
+                    <div className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500 shrink-0">
+                      <FileSpreadsheet className="w-5 h-5" />
+                    </div>
+                    <input 
+                      type="url"
+                      placeholder="Paste Google Sheets Shareable URL (e.g. https://docs.google.com/spreadsheets/d/...)"
+                      value={sheetUrl}
+                      onChange={(e) => setSheetUrl(e.target.value)}
+                      className="w-full bg-zinc-950 border border-white/5 focus:border-orange-500/50 rounded-2xl py-4 pl-12 pr-4 text-xs font-medium text-white placeholder-zinc-600 focus:outline-none transition-all"
+                    />
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <button
+                      onClick={handleStartSyncFlow}
+                      className="flex-1 px-8 py-4 bg-orange-500 text-white font-black text-xs uppercase tracking-widest rounded-2xl hover:bg-orange-600 active:scale-95 transition-all flex items-center justify-center gap-3 shadow-lg shadow-orange-500/10"
+                    >
+                      Connect & Load Cells
+                      <ArrowRight className="w-4 h-4" />
+                    </button>
+                    {accessToken && (
+                      <button
+                        onClick={() => {
+                          setAccessToken(null);
+                          showToast('Google credentials cleared.', 'success');
+                        }}
+                        className="px-6 py-4 bg-zinc-950 border border-white/5 text-zinc-500 hover:text-white rounded-2xl text-xs font-black uppercase tracking-widest transition-all"
+                      >
+                        Clear Credentials
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <label className="group relative flex flex-col items-center justify-center border border-dashed border-white/10 hover:border-orange-500/40 bg-zinc-950/50 rounded-3xl p-10 cursor-pointer overflow-hidden transition-all text-center">
+                    <input 
+                      type="file" 
+                      accept=".xlsx,.xls,.csv" 
+                      className="hidden" 
+                      onChange={handleLocalSpreadsheetUpload}
+                    />
+                    <div className="bg-orange-500/10 border border-orange-500/20 p-5 rounded-3xl group-hover:scale-110 transition-transform mb-4">
+                      <UploadCloud className="w-8 h-8 text-orange-500" />
+                    </div>
+                    <span className="text-sm font-black uppercase tracking-widest text-white block">
+                      Select Local Spreadsheet file
+                    </span>
+                    <span className="text-[10px] uppercase font-black tracking-widest text-zinc-500 mt-2 block">
+                      Supports .XLSX, .XLS, or .CSV formats
+                    </span>
+                    <span className="text-[10px] text-zinc-500 mt-3 max-w-sm leading-relaxed block">
+                      Spreadsheets are decoded entirely in your browser. Map visual workout grids, filter rows, and synchronize directly to the Vault.
+                    </span>
+                  </label>
+                </div>
+              )}
             </motion.div>
           )}
 
@@ -530,7 +655,7 @@ export function GoogleSheetsSyncWidget({ showToast, onSyncComplete }: GoogleShee
                   onClick={resetWidgetState} 
                   className="text-[10px] font-bold uppercase text-zinc-500 hover:text-white transition-all flex items-center gap-1"
                 >
-                  <RotateCw className="w-3 h-3" /> Change URL
+                  <RotateCw className="w-3 h-3" /> {sourceType === 'google' ? 'Change URL' : 'Change File'}
                 </button>
               </div>
 
@@ -544,8 +669,29 @@ export function GoogleSheetsSyncWidget({ showToast, onSyncComplete }: GoogleShee
                     onChange={(e) => {
                       const newTab = e.target.value;
                       setSelectedTab(newTab);
-                      if (accessToken) {
-                        loadSheetPreview(newTab, accessToken);
+                      if (sourceType === 'google') {
+                        if (localBookSheets[newTab]) {
+                          const rows = localBookSheets[newTab] || [];
+                          setPreviewRows(rows);
+                          const initialSelectedRows: Record<number, boolean> = {};
+                          rows.forEach((_, idx) => {
+                            initialSelectedRows[idx] = true;
+                          });
+                          setSelectedRows(initialSelectedRows);
+                          autoDetectColumnMappings(rows);
+                        } else if (accessToken) {
+                          loadSheetPreview(newTab, accessToken);
+                        }
+                      } else {
+                        const rows = localBookSheets[newTab] || [];
+                        setPreviewRows(rows);
+                        // Pre-check all rows by default
+                        const initialSelectedRows: Record<number, boolean> = {};
+                        rows.forEach((_, idx) => {
+                          initialSelectedRows[idx] = true;
+                        });
+                        setSelectedRows(initialSelectedRows);
+                        autoDetectColumnMappings(rows);
                       }
                     }}
                     className="flex-1 bg-zinc-900 border border-white/5 focus:border-orange-500/50 rounded-2xl p-4 text-xs font-black uppercase text-white tracking-widest focus:outline-none cursor-pointer transition-all"
@@ -556,19 +702,21 @@ export function GoogleSheetsSyncWidget({ showToast, onSyncComplete }: GoogleShee
                       </option>
                     ))}
                   </select>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (accessToken && selectedTab) {
-                        loadSheetPreview(selectedTab, accessToken);
-                      }
-                    }}
-                    disabled={isPreviewLoading}
-                    title="Reload sheet values preview"
-                    className="px-5 bg-zinc-900 border border-white/5 text-zinc-450 hover:text-white rounded-2xl flex items-center justify-center transition-all disabled:opacity-50"
-                  >
-                    <RotateCw className={cn("w-4 h-4 text-zinc-400 hover:text-white", isPreviewLoading && "animate-spin")} />
-                  </button>
+                  {sourceType === 'google' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (accessToken && selectedTab) {
+                          loadSheetPreview(selectedTab, accessToken);
+                        }
+                      }}
+                      disabled={isPreviewLoading}
+                      title="Reload sheet values preview"
+                      className="px-5 bg-zinc-900 border border-white/5 text-zinc-450 hover:text-white rounded-2xl flex items-center justify-center transition-all disabled:opacity-50"
+                    >
+                      <RotateCw className={cn("w-4 h-4 text-zinc-400 hover:text-white", isPreviewLoading && "animate-spin")} />
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -593,8 +741,8 @@ export function GoogleSheetsSyncWidget({ showToast, onSyncComplete }: GoogleShee
                   <div className="w-full overflow-x-auto rounded-2xl border border-white/5 bg-zinc-900/50 max-h-[300px] overflow-y-auto">
                     <table className="w-full border-collapse text-left text-[11px]">
                       <thead className="sticky top-0 bg-zinc-950 z-20 border-b border-white/10 shadow-sm">
-                        {/* Row 1: Dropped/Mapped Select Headers */}
-                        <tr className="border-b border-white/5">
+                        {/* Row 1: Letters or Labels */}
+                        <tr>
                           <th className="p-2.5 w-12 text-center bg-zinc-950">
                             <input
                               type="checkbox"
@@ -611,41 +759,7 @@ export function GoogleSheetsSyncWidget({ showToast, onSyncComplete }: GoogleShee
                             />
                           </th>
                           {Array.from({ length: Math.max(...previewRows.map(r => r.length)) }).map((_, colIdx) => (
-                            <th key={colIdx} className="p-2.5 min-w-[125px] bg-zinc-950">
-                              <select
-                                value={columnMappings[colIdx] || 'ignore'}
-                                onChange={(e) => {
-                                  setColumnMappings(prev => ({ ...prev, [colIdx]: e.target.value }));
-                                }}
-                                className={cn(
-                                  "w-full bg-zinc-900 text-[10px] font-black uppercase tracking-wider px-2 py-1.5 rounded-lg border focus:outline-none transition-all cursor-pointer",
-                                  columnMappings[colIdx] === 'exercise' && "border-emerald-500/40 text-emerald-400 bg-emerald-500/10",
-                                  columnMappings[colIdx] === 'sets' && "border-blue-500/40 text-blue-400 bg-blue-500/10",
-                                  columnMappings[colIdx] === 'reps' && "border-violet-500/40 text-violet-400 bg-violet-500/10",
-                                  columnMappings[colIdx] === 'weight' && "border-amber-500/40 text-amber-550 bg-amber-550/10",
-                                  columnMappings[colIdx] === 'rest' && "border-rose-500/40 text-rose-400 bg-rose-500/10",
-                                  columnMappings[colIdx] === 'notes' && "border-cyan-500/40 text-cyan-400 bg-cyan-500/10",
-                                  columnMappings[colIdx] === 'block' && "border-purple-500/40 text-purple-400 bg-purple-500/10",
-                                  (!columnMappings[colIdx] || columnMappings[colIdx] === 'ignore') && "border-white/5 text-zinc-500 hover:border-white/10"
-                                )}
-                              >
-                                <option value="ignore">❌ Ignore</option>
-                                <option value="exercise">🎯 Exercise</option>
-                                <option value="sets">🔢 Sets</option>
-                                <option value="reps">🔁 Reps</option>
-                                <option value="weight">⚖️ Load</option>
-                                <option value="rest">⏱️ Rest</option>
-                                <option value="notes">📝 Notes</option>
-                                <option value="block">🧱 Block</option>
-                              </select>
-                            </th>
-                          ))}
-                        </tr>
-                        {/* Row 2: Letters or Labels */}
-                        <tr>
-                          <th className="p-1 px-2.5 text-center text-[9px] font-mono font-black text-zinc-600 bg-zinc-950/80">#</th>
-                          {Array.from({ length: Math.max(...previewRows.map(r => r.length)) }).map((_, colIdx) => (
-                            <th key={colIdx} className="p-1 px-2.5 text-[9px] font-mono font-black text-zinc-500 uppercase tracking-widest bg-zinc-950/80">
+                            <th key={colIdx} className="p-1 px-2.5 text-[9px] font-mono font-black text-zinc-500 uppercase tracking-widest bg-zinc-950/80 min-w-[125px]">
                               Col {String.fromCharCode(65 + (colIdx % 26))}{colIdx >= 26 ? Math.floor(colIdx / 26) : ''}
                             </th>
                           ))}
@@ -677,20 +791,12 @@ export function GoogleSheetsSyncWidget({ showToast, onSyncComplete }: GoogleShee
                             </td>
                             {Array.from({ length: Math.max(...previewRows.map(r => r.length)) }).map((_, colIdx) => {
                               const cellValue = row[colIdx] || '';
-                              const mapping = columnMappings[colIdx];
                               return (
                                 <td 
                                   key={colIdx} 
                                   className={cn(
                                     "p-2.5 px-3 whitespace-nowrap truncate max-w-[170px] text-[10px] border-r border-white/[0.02]",
-                                    mapping === 'exercise' && "bg-emerald-500/[0.04] text-emerald-300 font-extrabold border-r-emerald-500/10",
-                                    mapping === 'sets' && "bg-blue-500/[0.04] text-blue-300 border-r-blue-500/10",
-                                    mapping === 'reps' && "bg-violet-500/[0.04] text-violet-300 border-r-violet-500/10",
-                                    mapping === 'weight' && "bg-amber-500/[0.04] text-amber-300 border-r-amber-500/10",
-                                    mapping === 'rest' && "bg-rose-500/[0.04] text-rose-300 border-r-rose-500/10",
-                                    mapping === 'notes' && "bg-cyan-500/[0.04] text-cyan-300 text-[9px] italic border-r-cyan-500/10",
-                                    mapping === 'block' && "bg-purple-500/[0.04] text-purple-300 border-r-purple-500/10",
-                                    (!mapping || mapping === 'ignore') && "text-zinc-600"
+                                    "text-white"
                                   )}
                                   title={cellValue}
                                 >
@@ -705,7 +811,7 @@ export function GoogleSheetsSyncWidget({ showToast, onSyncComplete }: GoogleShee
                   </div>
 
                   <span className="text-[10px] text-zinc-500 flex items-center gap-1.5 px-1 mt-1 font-medium">
-                    💡 <strong>Pro Tip:</strong> Map headers above (e.g. 🎯 Exercise, 🔢 Sets) and check rows to sync. ignored columns and unchecked rows are safely skipped.
+                    💡 <strong>Pro Tip:</strong> Check rows below that you want to include. AI will intelligently parse all columns, blocks, and cues to generate a structured setup.
                   </span>
                 </div>
               ) : null}
@@ -775,7 +881,7 @@ export function GoogleSheetsSyncWidget({ showToast, onSyncComplete }: GoogleShee
                   className="flex-1 py-4 bg-gradient-to-r from-orange-500 to-[#FF4500] text-white font-black text-xs uppercase tracking-widest rounded-2xl hover:scale-[1.01] transition-all flex items-center justify-center gap-2 shadow-xl shadow-orange-500/20 disabled:opacity-50"
                 >
                   {isSyncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                  Trigger Full Synchronization
+                  Generate AI Workout Protocol
                 </button>
               </div>
             </motion.div>

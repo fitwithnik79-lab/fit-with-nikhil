@@ -141,7 +141,8 @@ async function startServer() {
     next();
   });
 
-  app.use(express.json({ limit: '10mb' }));
+  app.use(express.json({ limit: '50mb' }));
+  app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
   // Shared Gemini API routes for client functionality
   app.post('/api/gemini/motivate', async (req, res) => {
@@ -224,6 +225,28 @@ async function startServer() {
     }
     throw lastError;
   }
+
+  app.get("/api/proxy-sheet", async (req, res) => {
+    const { id } = req.query;
+    if (!id || typeof id !== 'string') {
+      return res.status(400).json({ error: "Missing spreadsheet id" });
+    }
+    try {
+      // Export public google sheet as xlsx
+      const url = `https://docs.google.com/spreadsheets/d/${id}/export?format=xlsx`;
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch sheet: ${response.statusText}`);
+      }
+      const buffer = await response.arrayBuffer();
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename="sheet-${id}.xlsx"`);
+      res.send(Buffer.from(buffer));
+    } catch (error: any) {
+      console.error("Proxy sheet error:", error);
+      res.status(500).json({ error: error.message || "Failed to fetch sheet" });
+    }
+  });
 
   const mealAnalysisSchema = {
     type: Type.OBJECT,
@@ -414,22 +437,11 @@ async function startServer() {
         - youtubeLink: Populate with a robust programmatic YouTube search URL:
           "https://www.youtube.com/results?search_query=" followed by the URL-encoded exercise name (e.g. "https://www.youtube.com/results?search_query=bench+press+proper+form"). Keep the query clean and direct.
 
-        Structure the parsed data into a premium JSON representing a single ProgramTemplate:
+        Structure the parsed data into a premium JSON representing a single WorkoutTemplate:
         - name: Give the program an elite, professional systematic name based on the content (e.g., "Full Body Compound Split", "Elite Ankle & Lower Body Tactical Recovery", or similar top-tier names).
         - category: One of 'Strength' | 'Recovery' | 'Fat Loss' | 'Hypertrophy' | 'Athletic'.
         - description: A sophisticated, high-performance coaching rationale explaining the logic, physiological target, and structure of this particular custom-designed routine.
-        - weeks: Must contain exactly 1 week object in the array with 'days' representing all the analyzed day-splits:
-          {
-            "weekNumber": 1,
-            "days": [
-              {
-                "dayNumber": 1,
-                "label": "Day Title (e.g., 'Upper Body Focus' or 'Core & Mobility' or 'Strength Focus')",
-                "exercises": [ ...array of exercises... ]
-              },
-              ...
-            ]
-          }
+        - exercises: A single flat array containing all the exercises parsed from the text.
 
         Content:
         ${fileContent}
@@ -440,6 +452,31 @@ async function startServer() {
       res.json(parseSafeJson(response.text || "{}"));
     } catch (error: any) {
       console.error("Parse workout file error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/gemini/generate-program-metadata', async (req, res) => {
+    const { exercisesSummary, sheetTitle, tabName } = req.body;
+    try {
+      const response = await fetchWithRetry(() => ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: [{ role: 'user', parts: [{ text: `You are an elite coaching systems architect. Generate high-end Olympic metadata for a training program.
+        Spreadsheet Source: "${sheetTitle}"
+        Tab Name: "${tabName}"
+        Exercises Parsed: [${exercisesSummary}]
+
+        Generate:
+        - name: A sophisticated, Olympic-themed coaching program name referencing the spreadsheet/tab theme (e.g., "Hypertrophy Foundations - Olympic Focus" or "Olympic Athleticism - Day A").
+        - category: One of ['Strength', 'Recovery', 'Fat Loss', 'Hypertrophy', 'Athletic'].
+        - description: A sophisticated, professional, physiological sports science rationale explaining the purpose and kinetic block design of this session (2-3 sentences max).
+
+        Return ONLY a JSON object with keys name, category, description.` }]}],
+        config: { responseMimeType: "application/json" }
+      }));
+      res.json(parseSafeJson(response.text || "{}"));
+    } catch (error: any) {
+      console.error("Generate program metadata error:", error);
       res.status(500).json({ error: error.message });
     }
   });

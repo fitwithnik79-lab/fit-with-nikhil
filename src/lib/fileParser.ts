@@ -1,5 +1,51 @@
 import * as XLSX from 'xlsx';
 
+export interface ParsedWorkbook {
+  sheetNames: string[];
+  sheets: {
+    [sheetName: string]: string[][];
+  };
+}
+
+/**
+ * Parses an Excel (.xls, .xlsx) or CSV file into a structured workbook format with sheet names and 2D arrays.
+ */
+export async function parseExcelWorkbook(file: File): Promise<ParsedWorkbook> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = e.target?.result as ArrayBuffer;
+        const workbook = XLSX.read(data, { type: 'array' });
+        
+        const sheetNames = workbook.SheetNames;
+        const sheets: { [key: string]: string[][] } = {};
+        
+        sheetNames.forEach((name) => {
+          const sheet = workbook.Sheets[name];
+          // Row arrays, header: 1 means returns 2D array of rows
+          const rawRows = XLSX.utils.sheet_to_json<any[]>(sheet, { header: 1 });
+          const rows: string[][] = rawRows.map((row) => {
+            if (!Array.isArray(row)) return [];
+            return row.map((cell) => (cell === null || cell === undefined ? '' : String(cell).trim()));
+          });
+          sheets[name] = rows;
+        });
+        
+        resolve({
+          sheetNames,
+          sheets,
+        });
+      } catch (error) {
+        console.error("Error parsing workbook:", error);
+        reject(new Error("Unable to parse current Excel/CSV spreadsheet format. Ensure the file is not corrupted."));
+      }
+    };
+    reader.onerror = () => reject(new Error("Failed to read the selected file."));
+    reader.readAsArrayBuffer(file);
+  });
+}
+
 /**
  * Parses an Excel (.xls, .xlsx) or CSV file and extracts its content as clean, readable text.
  * If the file is a text/csv file, it reads it directly as text.

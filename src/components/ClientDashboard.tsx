@@ -3695,8 +3695,8 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                     <X className="w-3 h-3" />
                   </button>
                 </div>
-                <h4 className="font-black text-lg text-white uppercase italic tracking-tighter leading-none mb-1">{toastNotification.title}</h4>
-                <p className="text-sm text-zinc-400 font-medium leading-tight">Ritual execution required now.</p>
+                <h4 className="font-black text-white text-base leading-none mb-1">{toastNotification.title}</h4>
+                <p className="text-xs text-zinc-400 font-medium leading-tight">{toastNotification.message}</p>
               </div>
             </div>
           </motion.div>
@@ -4658,7 +4658,6 @@ function MealAI({
   const compressImage = (file: File): Promise<{ dataUrl: string, blob: Blob }> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.readAsDataURL(file);
       reader.onload = (event) => {
         const img = new Image();
         img.src = event.target?.result as string;
@@ -4698,6 +4697,7 @@ function MealAI({
         img.onerror = (err) => reject(err);
       };
       reader.onerror = (err) => reject(err);
+      reader.readAsDataURL(file);
     });
   };
 
@@ -4956,7 +4956,11 @@ function MealAI({
       setManualItems([]);
       setCustomMealName('');
       setLogMealError(null);
-      alert('Meal logged successfully!');
+      setToastNotification({
+        title: 'Success',
+        message: 'Meal logged successfully! Keep crushing it.',
+        type: 'success'
+      });
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'meals');
     } finally {

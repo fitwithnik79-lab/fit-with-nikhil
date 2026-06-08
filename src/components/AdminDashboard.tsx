@@ -2291,6 +2291,13 @@ function TemplatesView({ clients, showToast, confirmAction }: { clients: UserPro
     const file = e.target.files?.[0];
     if (!file) return;
 
+    const ext = file.name.split('.').pop()?.toLowerCase() || '';
+    if (['xls', 'xlsx', 'csv'].includes(ext)) {
+      showToast('For precision spreadsheet mapping, please use the Olympic Sheet Synchronizer below!', 'error');
+      e.target.value = '';
+      return;
+    }
+
     setParsingFile(true);
     try {
       const content = await getFileContentAsText(file);
