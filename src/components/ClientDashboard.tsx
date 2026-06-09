@@ -1981,7 +1981,6 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     { id: 'tasks', label: 'Tasks & Reminders', icon: Bell },
     { id: 'goals', label: 'Habits & Goals', icon: Target },
     { id: 'program', label: 'Training Program', icon: Folder },
-    { id: 'meal-ai', label: 'Daily Nutrition', icon: Utensils },
     { id: 'nutrition', label: 'Nutrition Plan', icon: Sparkles },
     { id: 'progress', label: 'Progress', icon: TrendingUp },
     { id: 'profile', label: 'My Profile', icon: UserIcon },
@@ -2658,13 +2657,13 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                           </div>
                           <h3 className="text-2xl font-bold">Sync with AI Tracker</h3>
                           <p className="text-zinc-500 text-sm leading-relaxed">
-                            Nik's AI tracker automatically monitors your meals against this framework. Head over to <b>Daily Nutrition</b> to log your food and see how you match up.
+                            Your customized nutritional guidelines, macronutrient targets, and recommended foods.
                           </p>
                           <button 
-                            onClick={() => setActiveTab('meal-ai')}
+                            onClick={() => setActiveTab('nutrition')}
                             className="bg-zinc-800 hover:bg-zinc-700 text-white px-6 py-2 rounded-xl text-xs font-bold transition-all"
                           >
-                            Go to Log
+                            Go to Nutrition
                           </button>
                         </div>
                         <div className="w-full md:w-48 aspect-square bg-zinc-950 rounded-3xl border border-zinc-800 flex items-center justify-center relative overflow-hidden group">
@@ -2739,6 +2738,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                   meals={meals}
                   sendAutomatedCoachMessage={sendAutomatedCoachMessage} 
                   activeNutritionPlan={activeNutritionPlan}
+                  setToastNotification={setToastNotification}
                 />
               </motion.div>
             )}
@@ -4623,7 +4623,8 @@ function MealAI({
   metrics,
   meals,
   sendAutomatedCoachMessage,
-  activeNutritionPlan
+  activeNutritionPlan,
+  setToastNotification
 }: { 
   user: User, 
   profile: UserProfile,
@@ -4631,7 +4632,8 @@ function MealAI({
   metrics: BodyMetrics[],
   meals: any[],
   sendAutomatedCoachMessage: (text: string, type?: 'motivation' | 'reminder') => Promise<void>,
-  activeNutritionPlan?: NutritionPlan | null
+  activeNutritionPlan?: NutritionPlan | null,
+  setToastNotification: (value: {title: string, message: string, type: string} | null) => void
 }) {
   const [image, setImage] = useState<string | null>(null);
   const [mealFileBlob, setMealFileBlob] = useState<Blob | null>(null);
