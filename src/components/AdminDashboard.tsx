@@ -1954,6 +1954,12 @@ function TemplatesView({ clients, showToast, confirmAction }: { clients: UserPro
   const [editingTemplateDescription, setEditingTemplateDescription] = useState('');
   const [savingTemplate, setSavingTemplate] = useState(false);
 
+  // States for duplicating exercises into program
+  const [showProgramAddExerciseModal, setShowProgramAddExerciseModal] = useState(false);
+  const [progVaultTab, setProgVaultTab] = useState<'custom' | 'curated' | 'programs'>('custom');
+  const [progSelectedSrcId, setProgSelectedSrcId] = useState<string>('');
+  const [progSelectedSrcDayIdx, setProgSelectedSrcDayIdx] = useState<number>(0);
+
   // Fetch custom templates from Firestore
   useEffect(() => {
     const q = query(collection(db, 'templates'), orderBy('createdAt', 'desc'));
@@ -1999,6 +2005,30 @@ function TemplatesView({ clients, showToast, confirmAction }: { clients: UserPro
         }
       }
     );
+  };
+
+  const duplicateTemplate = async (template: any, isProgram: boolean) => {
+    try {
+      const templateData = {
+        ...template,
+        name: `${template.name} (Copy)`,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        isCustom: true,
+      };
+      delete templateData.id;
+      if (isProgram) {
+        templateData.type = 'program';
+      } else {
+        templateData.type = 'workout';
+      }
+
+      await addDoc(collection(db, 'templates'), templateData);
+      showToast(`Protocol "${template.name}" duplicated successfully!`);
+    } catch (error) {
+      console.error('Error duplicating template:', error);
+      showToast('Failed to duplicate template', 'error');
+    }
   };
 
   const deleteNutritionTemplate = async (id: string) => {
@@ -2307,6 +2337,7 @@ function TemplatesView({ clients, showToast, confirmAction }: { clients: UserPro
         // Save to Firestore
         await addDoc(collection(db, 'templates'), {
           ...parsedProgram,
+          type: 'program',
           createdAt: serverTimestamp(),
           isCustom: true
         });
@@ -2330,8 +2361,10 @@ function TemplatesView({ clients, showToast, confirmAction }: { clients: UserPro
       const parsedProgram = await parseWorkoutFile(content, "Pasted Content");
       
       if (parsedProgram) {
+        const hasWeeks = parsedProgram.weeks && Array.isArray(parsedProgram.weeks) && parsedProgram.weeks.length > 0;
         await addDoc(collection(db, 'templates'), {
           ...parsedProgram,
+          type: hasWeeks ? 'program' : 'workout',
           createdAt: serverTimestamp(),
           isCustom: true
         });
@@ -2562,11 +2595,46 @@ function TemplatesView({ clients, showToast, confirmAction }: { clients: UserPro
 
           {/* Weekly Programs Section */}
           <section className="space-y-6">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-orange-500/10 rounded-lg text-orange-500">
-                <Layers className="w-5 h-5" />
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-orange-500/10 rounded-lg text-orange-500">
+                  <Layers className="w-5 h-5" />
+                </div>
+                <h2 className="text-2xl font-bold">Program Library</h2>
               </div>
-              <h2 className="text-2xl font-bold">Program Library</h2>
+              <button
+                onClick={() => {
+                  setSelectedProgram({
+                    id: "",
+                    name: "Custom Training Split",
+                    category: "General",
+                    description: "Nik's personalized multi-day training protocol.",
+                    weeks: [
+                      {
+                        weekNumber: 1,
+                        days: [
+                          { dayNumber: 1, label: "Day 1 - Push", exercises: [] }
+                        ]
+                      }
+                    ],
+                    isCustom: true,
+                    type: "program"
+                  } as any);
+                  setProgramWorkoutsDraft({
+                    0: []
+                  });
+                  setIsEditingTemplate(true);
+                  setEditingTemplateName("Custom Training Split");
+                  setEditingTemplateCategory("General");
+                  setEditingTemplateDescription("Coach Nik's personalized multi-day training protocol.");
+                  setActiveEditingDay(0);
+                  setShowProgramModal(true);
+                }}
+                className="px-6 py-3 bg-zinc-900 border border-white/5 rounded-2xl text-[10px] font-black uppercase tracking-widest text-white hover:border-orange-500/30 transition-all flex items-center gap-2"
+              >
+                <Plus className="w-4 h-4 text-orange-500" />
+                Create Custom Program Template
+              </button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {allPrograms.map((program) => (
@@ -2621,6 +2689,13 @@ function TemplatesView({ clients, showToast, confirmAction }: { clients: UserPro
                       title="Edit Template"
                     >
                       <Edit2 className="w-5 h-5" />
+                    </button>
+                    <button 
+                      onClick={() => duplicateTemplate(program, true)}
+                      className="p-4 bg-zinc-800 text-zinc-400 hover:text-blue-500 rounded-2xl transition-all"
+                      title="Duplicate Program"
+                    >
+                      <Copy className="w-5 h-5" />
                     </button>
                     {program.id && !WEEKLY_PROGRAMS.some(wp => wp.id === program.id) && (
                       <button 
@@ -2711,6 +2786,13 @@ function TemplatesView({ clients, showToast, confirmAction }: { clients: UserPro
                         title="Edit & Save to Library"
                       >
                         <Edit2 className="w-4 h-4" />
+                      </button>
+                      <button 
+                        onClick={() => duplicateTemplate(template, false)}
+                        className="p-3 bg-zinc-950 text-zinc-500 hover:text-blue-500 rounded-xl transition-all"
+                        title="Duplicate Workout"
+                      >
+                        <Copy className="w-4 h-4" />
                       </button>
                     </div>
                   </div>
@@ -3392,13 +3474,27 @@ function TemplatesView({ clients, showToast, confirmAction }: { clients: UserPro
                           </div>
                         ))}
                         
-                        <button 
-                          onClick={() => addDraftExercise(activeEditingDay)}
-                          className="w-full py-3 border border-dashed border-zinc-800 rounded-2xl text-zinc-500 hover:text-white hover:border-zinc-700 transition-all flex items-center justify-center gap-2 text-xs font-bold"
-                        >
-                          <Plus className="w-4 h-4" />
-                          Add Exercise to Day {activeEditingDay + 1}
-                        </button>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <button 
+                            onClick={() => addDraftExercise(activeEditingDay)}
+                            className="py-3.5 border border-dashed border-zinc-800 rounded-2xl text-zinc-550 hover:text-white hover:border-zinc-700 transition-all flex items-center justify-center gap-2 text-xs font-bold"
+                          >
+                            <Plus className="w-4 h-4 text-zinc-600 group-hover:text-white" />
+                            Add Blank Exercise
+                          </button>
+                          <button 
+                            onClick={() => {
+                              // Pre-populate source dropdown if empty
+                              setProgSelectedSrcId('');
+                              setProgSelectedSrcDayIdx(0);
+                              setShowProgramAddExerciseModal(true);
+                            }}
+                            className="py-3.5 border border-orange-500/20 bg-orange-500/5 hover:bg-orange-500/10 rounded-2xl text-orange-500 hover:text-orange-400 transition-all flex items-center justify-center gap-4 text-xs font-black uppercase tracking-widest"
+                          >
+                            <Copy className="w-4 h-4" />
+                            Copy From Vault
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ) : (
@@ -3525,6 +3621,298 @@ function TemplatesView({ clients, showToast, confirmAction }: { clients: UserPro
                 >
                   {assigning ? <Loader2 className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />}
                   Assign
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Clone Exercises from vault into active Program Day */}
+      <AnimatePresence>
+        {showProgramAddExerciseModal && activeEditingDay !== null && (
+          <div className="fixed inset-0 z-[250] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowProgramAddExerciseModal(false)}
+              className="absolute inset-0 bg-black/95 backdrop-blur-md"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="relative w-full max-w-4xl bg-zinc-900 border border-zinc-800 rounded-[36px] shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
+            >
+              {/* Header */}
+              <div className="p-8 border-b border-zinc-800 bg-zinc-950/40 flex items-center justify-between">
+                <div className="space-y-1">
+                  <h3 className="font-black text-xl uppercase italic tracking-tighter text-white flex items-center gap-3">
+                    <Copy className="w-5 h-5 text-orange-500" />
+                    Clone Exercises <span className="text-zinc-500">Into Program</span>
+                  </h3>
+                  <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-black">
+                    Copy any custom workout, curated static templates, or multi-day split day exercise with video links intact.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowProgramAddExerciseModal(false)}
+                  className="p-2.5 bg-zinc-950 rounded-xl text-zinc-500 hover:text-white transition-all border border-zinc-800"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Source Tab Chooser */}
+              <div className="px-8 pt-5 pb-3 border-b border-zinc-800 bg-zinc-950/20 flex flex-wrap gap-4 items-center justify-between">
+                <div className="flex flex-wrap gap-2 p-1 bg-zinc-950 border border-zinc-850 rounded-2xl w-fit">
+                  <button
+                    onClick={() => {
+                      setProgVaultTab('custom');
+                      setProgSelectedSrcId('');
+                    }}
+                    className={cn(
+                      "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
+                      progVaultTab === 'custom' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-zinc-500 hover:text-white"
+                    )}
+                  >
+                    My Workouts
+                  </button>
+                  <button
+                    onClick={() => {
+                      setProgVaultTab('curated');
+                      setProgSelectedSrcId('');
+                    }}
+                    className={cn(
+                      "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
+                      progVaultTab === 'curated' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-zinc-500 hover:text-white"
+                    )}
+                  >
+                    Curated Classics
+                  </button>
+                  <button
+                    onClick={() => {
+                      setProgVaultTab('programs');
+                      setProgSelectedSrcId('');
+                    }}
+                    className={cn(
+                      "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
+                      progVaultTab === 'programs' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-zinc-500 hover:text-white"
+                    )}
+                  >
+                    Programs & Splits
+                  </button>
+                </div>
+                
+                <span className="text-[10px] font-mono font-black text-zinc-600 uppercase tracking-widest">
+                  Target: {selectedProgram.name} • {selectedProgram.weeks?.[0]?.days?.[activeEditingDay]?.label || `Day ${activeEditingDay + 1}`}
+                </span>
+              </div>
+
+              {/* Main Body */}
+              <div className="flex-1 overflow-y-auto p-8 space-y-6 min-h-0 custom-scrollbar">
+                
+                {/* Select Protocol Dropdown */}
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest ml-1">Select Source Template</label>
+                  {progVaultTab === 'custom' && (
+                    <select
+                      value={progSelectedSrcId}
+                      onChange={(e) => {
+                        setProgSelectedSrcId(e.target.value);
+                        setProgSelectedSrcDayIdx(0);
+                      }}
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-5 py-4 text-sm outline-none focus:ring-2 focus:ring-orange-500 text-white font-semibold transition-all"
+                    >
+                      <option value="">Choose Workout Template...</option>
+                      {templates.map(t => (
+                        <option key={t.id} value={t.id}>{t.name} ({t.exercises?.length || 0} exercises)</option>
+                      ))}
+                    </select>
+                  )}
+
+                  {progVaultTab === 'curated' && (
+                    <select
+                      value={progSelectedSrcId}
+                      onChange={(e) => {
+                        setProgSelectedSrcId(e.target.value);
+                        setProgSelectedSrcDayIdx(0);
+                      }}
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-5 py-4 text-sm outline-none focus:ring-2 focus:ring-orange-500 text-white font-semibold transition-all"
+                    >
+                      <option value="">Choose Classics Template...</option>
+                      {WORKOUT_TEMPLATES.map(t => (
+                        <option key={t.id || t.name} value={t.id || t.name}>{t.name} ({t.exercises?.length || 0} exercises)</option>
+                      ))}
+                    </select>
+                  )}
+
+                  {progVaultTab === 'programs' && (
+                    <select
+                      value={progSelectedSrcId}
+                      onChange={(e) => {
+                        setProgSelectedSrcId(e.target.value);
+                        setProgSelectedSrcDayIdx(0);
+                      }}
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-5 py-4 text-sm outline-none focus:ring-2 focus:ring-orange-500 text-white font-semibold transition-all"
+                    >
+                      <option value="">Choose Program Template...</option>
+                      {allPrograms.map(p => (
+                        <option key={p.id || p.name} value={p.id || p.name}>{p.name} ({p.weeks?.[0]?.days?.length || 0} days)</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+
+                {/* Day Selector (If Program is chosen as Source) */}
+                {progVaultTab === 'programs' && progSelectedSrcId && (() => {
+                  const match = allPrograms.find(p => (p.id || p.name) === progSelectedSrcId);
+                  if (!match) return null;
+                  const days = match.weeks?.[0]?.days || [];
+                  return (
+                    <div className="space-y-2 bg-zinc-950 p-5 rounded-[24px] border border-zinc-850">
+                      <label className="text-[10px] font-black text-orange-500 uppercase tracking-widest block mb-1">Select Day of Chosen Program:</label>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        {days.map((day, idx) => (
+                          <button
+                            type="button"
+                            key={idx}
+                            onClick={() => setProgSelectedSrcDayIdx(idx)}
+                            className={cn(
+                              "px-3 py-2 text-[10px] font-black uppercase tracking-wider text-center transition-all truncate rounded-xl border",
+                              progSelectedSrcDayIdx === idx 
+                                ? "bg-orange-500/10 border-orange-500/45 text-orange-400 font-extrabold" 
+                                : "bg-zinc-950 border-zinc-800 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900"
+                            )}
+                          >
+                            {day.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Exercise List */}
+                <div className="space-y-3">
+                  <span className="text-[10px] font-black text-zinc-550 uppercase tracking-widest block ml-1">
+                    Exercises available in selection:
+                  </span>
+
+                  {(() => {
+                    let progSourceExercises: Exercise[] = [];
+                    if (progVaultTab === 'custom') {
+                      const match = templates.find(t => t.id === progSelectedSrcId);
+                      if (match) progSourceExercises = match.exercises || [];
+                    } else if (progVaultTab === 'curated') {
+                      const match = WORKOUT_TEMPLATES.find(t => (t.id || t.name) === progSelectedSrcId);
+                      if (match) progSourceExercises = match.exercises || [];
+                    } else if (progVaultTab === 'programs') {
+                      const match = allPrograms.find(p => (p.id || p.name) === progSelectedSrcId);
+                      if (match) {
+                        const matchDay = match.weeks?.[0]?.days?.[progSelectedSrcDayIdx];
+                        progSourceExercises = matchDay?.exercises || [];
+                      }
+                    }
+
+                    if (!progSelectedSrcId) {
+                      return (
+                        <div className="text-center py-12 border border-dashed border-zinc-800 rounded-3xl">
+                          <Copy className="w-8 h-8 text-zinc-700 mx-auto mb-3" />
+                          <p className="text-xs font-black text-zinc-500 uppercase tracking-wider">No Source Selected</p>
+                          <p className="text-[10px] text-zinc-650 mt-1 max-w-sm mx-auto leading-relaxed">
+                            Pick a workout or training split from the list above to view exercises and import them directly.
+                          </p>
+                        </div>
+                      );
+                    }
+
+                    if (progSourceExercises.length === 0) {
+                      return (
+                        <div className="text-center py-10 border border-dashed border-zinc-800 rounded-3xl text-zinc-600 italic text-xs">
+                          No exercises found or listed in this training schedule day.
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {progSourceExercises.map((ex, exIdx) => {
+                          const hasVideo = !!ex.youtubeLink;
+                          return (
+                            <div 
+                              key={exIdx}
+                              className="p-5 bg-zinc-950 border border-zinc-850 hover:border-orange-500/20 rounded-2xl flex items-start justify-between gap-4 transition-all"
+                            >
+                              <div className="flex-1 min-w-0 space-y-2">
+                                <div className="space-y-1">
+                                  <h5 className="font-extrabold text-sm text-white uppercase italic tracking-tight line-clamp-1">{ex.name}</h5>
+                                  {hasVideo && (
+                                    <span className="inline-flex px-1.5 py-0.5 bg-red-500/10 text-red-500 border border-red-500/25 rounded text-[8px] font-black uppercase tracking-widest items-center gap-1">
+                                      <Youtube className="w-2.5 h-2.5" />
+                                      Video Attached
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-zinc-500">
+                                  <span>Sets: <strong className="text-zinc-300">{ex.sets}</strong></span>
+                                  <span>Reps: <strong className="text-zinc-300">{ex.reps}</strong></span>
+                                  {ex.weight && <span>Wt: <strong className="text-zinc-300">{ex.weight}</strong></span>}
+                                  {ex.rest && <span>Rest: <strong className="text-zinc-300">{ex.rest}</strong></span>}
+                                </div>
+                                {ex.coachNote && (
+                                  <p className="text-[10px] text-zinc-550 italic line-clamp-1">"Note: {ex.coachNote}"</p>
+                                )}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setProgramWorkoutsDraft(prev => {
+                                    const draft = { ...prev };
+                                    const currentExercises = draft[activeEditingDay] || [];
+                                    draft[activeEditingDay] = [
+                                      ...currentExercises,
+                                      {
+                                        name: ex.name,
+                                        youtubeLink: ex.youtubeLink || '',
+                                        sets: ex.sets || 3,
+                                        reps: ex.reps || '12',
+                                        weight: ex.weight || '',
+                                        rest: ex.rest || '60s',
+                                        coachNote: ex.coachNote || ''
+                                      }
+                                    ];
+                                    return draft;
+                                  });
+                                  showToast(`Cloned "${ex.name}" into program day!`);
+                                }}
+                                className="px-3.5 py-2.5 bg-orange-500/10 hover:bg-orange-500 text-orange-500 hover:text-white rounded-xl transition-all border border-orange-500/10 text-[10px] font-black uppercase tracking-wider shrink-0 flex items-center gap-1.5"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                                Clone
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </div>
+
+              </div>
+
+              {/* Footer */}
+              <div className="p-6 border-t border-zinc-800 bg-zinc-950/40 text-center flex items-center justify-between px-8">
+                <span className="text-[9px] text-zinc-650 font-mono uppercase tracking-[0.2em]">
+                  Multi-protocol Target Duplication Engine
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowProgramAddExerciseModal(false)}
+                  className="px-5 py-2 bg-zinc-800 hover:bg-zinc-750 text-white rounded-xl text-[10px] font-bold uppercase tracking-widest"
+                >
+                  Close
                 </button>
               </div>
             </motion.div>
@@ -5626,6 +6014,8 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
   );
   const [expandedIndex, setExpandedIndex] = useState<number | null>(0);
   const [templates, setTemplates] = useState<WorkoutTemplate[]>([]);
+  const [dbProgramTemplates, setDbProgramTemplates] = useState<ProgramTemplate[]>([]);
+  const [vaultWorkoutTab, setVaultWorkoutTab] = useState<'custom' | 'curated' | 'programs'>('custom');
   const [saving, setSaving] = useState(false);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [templateName, setTemplateName] = useState('');
@@ -5640,6 +6030,11 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
   const [isGlobalSearching, setIsGlobalSearching] = useState(false);
   const [activeVideo, setActiveVideo] = useState<{ url: string, title?: string } | null>(null);
   const [showDuplicateModal, setShowDuplicateModal] = useState(false);
+  const [showAddExerciseFromVaultModal, setShowAddExerciseFromVaultModal] = useState(false);
+  const [vaultExerciseTab, setVaultExerciseTab] = useState<'custom' | 'curated' | 'programs'>('custom');
+  const [selectedVaultProtocolId, setSelectedVaultProtocolId] = useState<string>('');
+  const [selectedProgramWeekIdx, setSelectedProgramWeekIdx] = useState<number>(0);
+  const [selectedProgramDayIdx, setSelectedProgramDayIdx] = useState<number>(0);
 
   // Google Sheets import flow states
   const [activeVaultTab, setActiveVaultTab] = useState<'vault' | 'archive' | 'sheets'>('vault');
@@ -5829,12 +6224,11 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
   }, [initialWorkout, initialDate]);
 
   useEffect(() => {
-    // Only fetch templates of type 'workout' or those without a type (legacy)
     const q = query(collection(db, 'templates'), orderBy('createdAt', 'desc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const allTemplates = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as WorkoutTemplate);
-      // Filter here to handle legacy data and the shared collection issue
+      const allTemplates = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as any);
       setTemplates(allTemplates.filter(t => !('weeks' in t))); 
+      setDbProgramTemplates(allTemplates.filter(t => 'weeks' in t));
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, 'templates');
     });
@@ -6200,6 +6594,18 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
             <Layout className="w-5 h-5" />
           </button>
 
+          <button 
+            onClick={() => {
+              setActiveVaultTab('archive');
+              setShowTemplateModal(true);
+            }}
+            className="p-3 bg-zinc-950 border border-white/5 rounded-2xl hover:text-orange-500 hover:border-orange-500/30 transition-all shrink-0 flex items-center gap-2 px-4"
+            title="Save draft layout as custom template protocol in Vault"
+          >
+            <Save className="w-4 h-4 text-orange-500" />
+            <span className="hidden sm:inline text-[9px] font-black uppercase tracking-widest text-zinc-300">Save Template</span>
+          </button>
+
           {initialWorkout && (
             <button 
               onClick={() => setShowDuplicateModal(true)}
@@ -6252,6 +6658,13 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
                 <div className="flex items-center gap-1.5 p-1 bg-zinc-900 rounded-xl border border-white/5">
                   <button className="px-3 py-1.5 text-[8px] font-black uppercase tracking-widest text-zinc-500 hover:text-white transition-colors">Superset</button>
                   <button className="px-3 py-1.5 text-[8px] font-black uppercase tracking-widest text-zinc-500 hover:text-white transition-colors">Circuit</button>
+                  <button 
+                    onClick={() => setShowAddExerciseFromVaultModal(true)}
+                    className="flex items-center gap-2 px-3 py-1.5 bg-orange-500/10 text-orange-500 text-[8px] font-black uppercase tracking-widest rounded-lg border border-orange-500/10 hover:bg-orange-500/20 hover:border-orange-500/30 transition-all"
+                  >
+                    <Copy className="w-3 h-3" />
+                    Copy from Vault
+                  </button>
                   <button onClick={addExercise} className="flex items-center gap-2 px-4 py-1.5 bg-zinc-950 text-[8px] font-black uppercase tracking-widest text-white rounded-lg border border-white/5 hover:border-orange-500/30 transition-all">
                     <Plus className="w-3 h-3" />
                     Drop Exercise
@@ -6725,7 +7138,7 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
 
                 {activeVaultTab === 'vault' && (
                   <div className="space-y-6">
-                    <div className="flex items-center justify-between px-2">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 px-2">
                       <div className="flex items-center gap-3">
                         <LayoutDashboard className="w-4 h-4 text-orange-500" />
                         <h4 className="text-xs font-black text-zinc-500 uppercase tracking-[0.2em]">Stored Protocols</h4>
@@ -6744,8 +7157,40 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
                       </div>
                     </div>
 
+                    {/* Source Tab Selector */}
+                    <div className="flex flex-wrap gap-2 p-1 bg-zinc-950 border border-white/5 rounded-2xl w-fit">
+                      <button
+                        onClick={() => setVaultWorkoutTab('custom')}
+                        className={cn(
+                          "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
+                          vaultWorkoutTab === 'custom' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-zinc-500 hover:text-white"
+                        )}
+                      >
+                        My Workouts
+                      </button>
+                      <button
+                        onClick={() => setVaultWorkoutTab('curated')}
+                        className={cn(
+                          "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
+                          vaultWorkoutTab === 'curated' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-zinc-500 hover:text-white"
+                        )}
+                      >
+                        Curated Classics
+                      </button>
+                      <button
+                        onClick={() => setVaultWorkoutTab('programs')}
+                        className={cn(
+                          "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
+                          vaultWorkoutTab === 'programs' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-zinc-500 hover:text-white"
+                        )}
+                      >
+                        Programs & Splits
+                      </button>
+                    </div>
+
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pb-12">
-                      {filteredTemplates.map((t) => (
+                      {/* Custom Single Workouts from Vault */}
+                      {vaultWorkoutTab === 'custom' && filteredTemplates.map((t) => (
                         <div key={t.id} className="flex flex-col p-6 bg-zinc-950 border border-white/5 rounded-[40px] group hover:border-orange-500/30 transition-all gap-4">
                           <div className="flex items-start justify-between">
                             <div className="flex-1">
@@ -6768,7 +7213,7 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
                               className="flex-1 px-4 py-3 bg-white/5 rounded-2xl text-zinc-400 hover:text-white hover:bg-white/10 transition-all text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2"
                             >
                               <Download className="w-3 h-3" />
-                              Deploy
+                              Deploy Workout
                             </button>
                             <button
                               onClick={() => duplicateTemplate(t)}
@@ -6792,10 +7237,106 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
                           </div>
                         </div>
                       ))}
-                      {filteredTemplates.length === 0 && (
+
+                      {/* Curated Single Workouts from Classics */}
+                      {vaultWorkoutTab === 'curated' && (() => {
+                        const filteredCuratedLocal = filterCategory === 'All'
+                          ? WORKOUT_TEMPLATES
+                          : WORKOUT_TEMPLATES.filter(c => c.category === filterCategory);
+                        return filteredCuratedLocal.map((t) => (
+                          <div key={t.id || t.name} className="flex flex-col p-6 bg-zinc-950 border border-white/5 rounded-[40px] group hover:border-orange-500/30 transition-all gap-4">
+                            <div className="flex items-start justify-between">
+                              <div className="flex-1">
+                                <span className="px-2.5 py-1 bg-zinc-900 text-zinc-400 text-[8px] font-black rounded-lg uppercase tracking-widest mb-3 inline-block">
+                                  {t.category || 'General'}
+                                </span>
+                                <h5 className="font-black text-lg text-white uppercase italic tracking-tighter leading-tight">{t.name}</h5>
+                                {t.description && (
+                                  <p className="text-xs text-zinc-500 mt-2 font-medium line-clamp-2">"{t.description}"</p>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 mt-2 pt-4 border-t border-white/5">
+                              <button
+                                onClick={() => {
+                                  importTemplate(t);
+                                  setShowTemplateModal(false);
+                                }}
+                                className="flex-1 px-4 py-3 bg-orange-500/10 hover:bg-orange-500/20 text-orange-500 rounded-2xl transition-all text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2"
+                              >
+                                <Download className="w-3 h-3" />
+                                Deploy Workout
+                              </button>
+                            </div>
+                            
+                            <div className="flex items-center justify-between text-[8px] font-black text-zinc-700 uppercase tracking-[0.2em] px-2">
+                              <span>Exercises: {t.exercises?.length || 0} Units</span>
+                              <span>System Classic</span>
+                            </div>
+                          </div>
+                        ));
+                      })()}
+
+                      {/* Weekly Programs Selection */}
+                      {vaultWorkoutTab === 'programs' && (() => {
+                        const allProgramsCombined = [...WEEKLY_PROGRAMS, ...dbProgramTemplates];
+                        const filteredCombinedPrograms = filterCategory === 'All'
+                          ? allProgramsCombined
+                          : allProgramsCombined.filter(p => p.category === filterCategory);
+                        return filteredCombinedPrograms.map((p) => (
+                          <div key={p.id || p.name} className="flex flex-col p-6 bg-zinc-950 border border-white/5 rounded-[40px] group hover:border-orange-500/30 transition-all gap-4 col-span-1 sm:col-span-2">
+                            <div className="flex items-start justify-between">
+                              <div className="flex-1">
+                                <span className="px-2.5 py-1 bg-purple-500/10 text-purple-400 text-[8px] font-black rounded-lg uppercase tracking-widest mb-3 inline-block border border-purple-500/20">
+                                  {p.category || 'Program'}
+                                </span>
+                                <h5 className="font-black text-lg text-white uppercase italic tracking-tighter leading-tight">{p.name}</h5>
+                                {p.description && (
+                                  <p className="text-xs text-zinc-500 mt-2 font-medium">{p.description}</p>
+                                )}
+                              </div>
+                            </div>
+                            
+                            <div className="space-y-3 mt-2 pt-4 border-t border-white/5">
+                              <span className="text-[10px] font-black uppercase text-orange-500 tracking-wider block">Choose Workout Day to Load:</span>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                {p.weeks?.[0]?.days?.map((day: any, dIdx: number) => (
+                                  <button
+                                    key={dIdx}
+                                    onClick={() => {
+                                      setExercises(JSON.parse(JSON.stringify(day.exercises || [])));
+                                      if (p.description || p.name) {
+                                        setWorkoutNotes(`--- ${p.name} - ${day.label || 'Workout'} ---\n${p.description || ''}`);
+                                      }
+                                      setShowTemplateModal(false);
+                                      showToast(`Loaded "${p.name} - ${day.label || 'Workout'}" (Day ${day.dayNumber}) successfully!`);
+                                    }}
+                                    className="text-left px-4 py-3.5 bg-zinc-900 border border-white/5 rounded-2xl hover:border-orange-500/30 hover:bg-zinc-850 text-zinc-300 transition-all text-xs font-bold flex items-center justify-between"
+                                  >
+                                    <div className="flex items-center gap-3">
+                                      <span className="text-[10px] bg-orange-500/10 text-orange-500 px-2.5 py-1 rounded-lg font-mono font-black uppercase">
+                                        Day {day.dayNumber}
+                                      </span>
+                                      <span className="truncate max-w-[140px] text-zinc-200">{day.label || 'Workout'}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2 text-[10px] text-zinc-500 font-mono font-black uppercase">
+                                      <span>{day.exercises?.length || 0} Exercises</span>
+                                      <ChevronRight className="w-3.5 h-3.5 text-zinc-600" />
+                                    </div>
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        ));
+                      })()}
+
+                      {/* Empty states handling */}
+                      {vaultWorkoutTab === 'custom' && filteredTemplates.length === 0 && (
                         <div className="col-span-full py-20 text-center bg-zinc-950/50 border border-dashed border-white/5 rounded-[40px] space-y-4">
                           <Layout className="w-10 h-10 text-zinc-800 mx-auto opacity-30" />
-                          <p className="text-zinc-600 text-xs font-black uppercase tracking-widest">Vault is currently empty</p>
+                          <p className="text-zinc-600 text-xs font-black uppercase tracking-widest">Custom Vault is currently empty</p>
                           {templates.length === 0 && (
                             <button
                               onClick={seedSamples}
@@ -6804,6 +7345,31 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
                               Provision Sample Strategies
                             </button>
                           )}
+                        </div>
+                      )}
+                      
+                      {vaultWorkoutTab === 'curated' && (() => {
+                        const filteredCuratedLocal = filterCategory === 'All'
+                          ? WORKOUT_TEMPLATES
+                          : WORKOUT_TEMPLATES.filter(c => c.category === filterCategory);
+                        return filteredCuratedLocal.length === 0;
+                      })() && (
+                        <div className="col-span-full py-20 text-center bg-zinc-950/50 border border-dashed border-white/5 rounded-[40px] space-y-4">
+                          <Layout className="w-10 h-10 text-zinc-800 mx-auto opacity-30" />
+                          <p className="text-zinc-600 text-xs font-black uppercase tracking-widest">No classic curated single workouts matching filter</p>
+                        </div>
+                      )}
+
+                      {vaultWorkoutTab === 'programs' && (() => {
+                        const allProgramsCombined = [...WEEKLY_PROGRAMS, ...dbProgramTemplates];
+                        const filteredCombinedPrograms = filterCategory === 'All'
+                          ? allProgramsCombined
+                          : allProgramsCombined.filter(p => p.category === filterCategory);
+                        return filteredCombinedPrograms.length === 0;
+                      })() && (
+                        <div className="col-span-full py-20 text-center bg-zinc-950/50 border border-dashed border-white/5 rounded-[40px] space-y-4">
+                          <Layout className="w-10 h-10 text-zinc-800 mx-auto opacity-30" />
+                          <p className="text-zinc-600 text-xs font-black uppercase tracking-widest">No training programs matching filter</p>
                         </div>
                       )}
                     </div>
@@ -7085,6 +7651,322 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
             }}
             showToast={showToast}
           />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showAddExerciseFromVaultModal && (
+          <div className="fixed inset-0 z-[115] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowAddExerciseFromVaultModal(false)}
+              className="absolute inset-0 bg-black/90 backdrop-blur-xl"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-4xl bg-zinc-900 border border-white/10 rounded-[48px] shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
+            >
+              {/* Header */}
+              <div className="p-8 border-b border-white/5 bg-zinc-950/40 flex items-center justify-between">
+                <div className="space-y-1">
+                  <h3 className="font-black text-2xl uppercase italic tracking-tighter text-white flex items-center gap-3">
+                    <Copy className="w-6 h-6 text-orange-500" />
+                    CLONE EXERCISES <span className="text-zinc-500">FROM VAULT</span>
+                  </h3>
+                  <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-black">
+                    Select a protocol, find the exercise, and duplicate its exact targets & video link.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowAddExerciseFromVaultModal(false)}
+                  className="p-3 bg-zinc-950 rounded-2xl text-zinc-500 hover:text-white transition-all border border-white/5"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Source Categories Selection */}
+              <div className="px-8 pt-6 pb-2 border-b border-white/5 bg-zinc-950/20 flex flex-wrap gap-4 items-center justify-between">
+                <div className="flex flex-wrap gap-2 p-1 bg-zinc-950 border border-white/5 rounded-2xl w-fit">
+                  <button
+                    onClick={() => {
+                      setVaultExerciseTab('custom');
+                      setSelectedVaultProtocolId('');
+                    }}
+                    className={cn(
+                      "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
+                      vaultExerciseTab === 'custom' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-zinc-500 hover:text-white"
+                    )}
+                  >
+                    My Workouts
+                  </button>
+                  <button
+                    onClick={() => {
+                      setVaultExerciseTab('curated');
+                      setSelectedVaultProtocolId('');
+                    }}
+                    className={cn(
+                      "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
+                      vaultExerciseTab === 'curated' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-zinc-500 hover:text-white"
+                    )}
+                  >
+                    Curated Classics
+                  </button>
+                  <button
+                    onClick={() => {
+                      setVaultExerciseTab('programs');
+                      setSelectedVaultProtocolId('');
+                    }}
+                    className={cn(
+                      "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
+                      vaultExerciseTab === 'programs' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-zinc-500 hover:text-white"
+                    )}
+                  >
+                    Programs & Splits
+                  </button>
+                </div>
+                
+                <span className="text-[10px] font-mono font-black text-zinc-650 uppercase tracking-widest">
+                  {vaultExerciseTab === 'custom' ? `Total: ${templates.length} Saved` : vaultExerciseTab === 'curated' ? `Total: ${WORKOUT_TEMPLATES.length} Classics` : `Total: ${dbProgramTemplates.length + WEEKLY_PROGRAMS.length} Systems`}
+                </span>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-8 space-y-8 min-h-0 custom-scrollbar">
+                {/* Protocol Selector and Preview */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start h-full min-h-[400px]">
+                  
+                  {/* Left Column: List Protocols */}
+                  <div className="md:col-span-1 space-y-3 bg-zinc-950/40 p-4 border border-white/5 rounded-3xl h-full max-h-[380px] overflow-y-auto custom-scrollbar">
+                    <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block px-2 mb-2">Select Target Protocol:</span>
+                    
+                    {vaultExerciseTab === 'custom' && (
+                      templates.map((t) => (
+                        <button
+                          key={t.id}
+                          onClick={() => setSelectedVaultProtocolId(t.id || '')}
+                          className={cn(
+                            "w-full text-left p-3.5 rounded-2xl border transition-all text-sm font-bold flex flex-col gap-1",
+                            selectedVaultProtocolId === t.id 
+                              ? "bg-orange-500/10 border-orange-500/40 text-white" 
+                              : "bg-zinc-900 border-white/5 text-zinc-400 hover:text-white hover:bg-zinc-850"
+                          )}
+                        >
+                          <span className="font-extrabold uppercase italic tracking-tight line-clamp-1">{t.name}</span>
+                          <span className="text-[9px] text-zinc-500 uppercase tracking-wider">{t.category || 'General'} • {t.exercises?.length || 0} Ex.</span>
+                        </button>
+                      ))
+                    )}
+
+                    {vaultExerciseTab === 'curated' && (
+                      WORKOUT_TEMPLATES.map((t) => (
+                        <button
+                          key={t.id || t.name}
+                          onClick={() => setSelectedVaultProtocolId(t.id || t.name)}
+                          className={cn(
+                            "w-full text-left p-3.5 rounded-2xl border transition-all text-sm font-bold flex flex-col gap-1",
+                            selectedVaultProtocolId === (t.id || t.name) 
+                              ? "bg-orange-500/10 border-orange-500/40 text-white" 
+                              : "bg-zinc-900 border-white/5 text-zinc-400 hover:text-white hover:bg-zinc-850"
+                          )}
+                        >
+                          <span className="font-extrabold uppercase italic tracking-tight line-clamp-1">{t.name}</span>
+                          <span className="text-[9px] text-zinc-500 uppercase tracking-wider">{t.category || 'General'} • {t.exercises?.length || 0} Ex.</span>
+                        </button>
+                      ))
+                    )}
+
+                    {vaultExerciseTab === 'programs' && (() => {
+                      const allProgramsCombined = [...WEEKLY_PROGRAMS, ...dbProgramTemplates];
+                      return allProgramsCombined.map((p) => {
+                        const pid = p.id || p.name;
+                        return (
+                          <button
+                            key={pid}
+                            onClick={() => {
+                              setSelectedVaultProtocolId(pid);
+                              setSelectedProgramWeekIdx(0);
+                              setSelectedProgramDayIdx(0);
+                            }}
+                            className={cn(
+                              "w-full text-left p-3.5 rounded-2xl border transition-all text-sm font-bold flex flex-col gap-1",
+                              selectedVaultProtocolId === pid 
+                                ? "bg-orange-500/10 border-orange-500/40 text-white" 
+                                : "bg-zinc-900 border-white/5 text-zinc-400 hover:text-white hover:bg-zinc-850"
+                            )}
+                          >
+                            <span className="font-extrabold uppercase italic tracking-tight line-clamp-1">{p.name}</span>
+                            <span className="text-[9px] text-purple-400 uppercase tracking-widest">Program • {p.category || 'Fitness'}</span>
+                          </button>
+                        );
+                      });
+                    })()}
+
+                    {/* Empty lists handling */}
+                    {vaultExerciseTab === 'custom' && templates.length === 0 && (
+                      <p className="text-xs text-zinc-650 text-center py-10 uppercase tracking-wider font-extrabold">My Workouts Vault is empty</p>
+                    )}
+                  </div>
+
+                  {/* Right Column: Exercises Preview & Duplication */}
+                  <div className="md:col-span-2 space-y-4 h-full max-h-[380px] overflow-y-auto custom-scrollbar flex flex-col">
+                    {selectedVaultProtocolId ? (() => {
+                      let currentExercises: Exercise[] = [];
+
+                      if (vaultExerciseTab === 'custom') {
+                        const match = templates.find(t => t.id === selectedVaultProtocolId);
+                        if (match) {
+                          currentExercises = match.exercises || [];
+                        }
+                      } else if (vaultExerciseTab === 'curated') {
+                        const match = WORKOUT_TEMPLATES.find(t => (t.id || t.name) === selectedVaultProtocolId);
+                        if (match) {
+                          currentExercises = match.exercises || [];
+                        }
+                      } else {
+                        // Program Split
+                        const allProgramsCombined = [...WEEKLY_PROGRAMS, ...dbProgramTemplates];
+                        const match = allProgramsCombined.find(p => (p.id || p.name) === selectedVaultProtocolId);
+                        if (match) {
+                          const week = match.weeks?.[selectedProgramWeekIdx];
+                          const day = week?.days?.[selectedProgramDayIdx];
+                          currentExercises = day?.exercises || [];
+                        }
+                      }
+
+                      return (
+                        <div className="space-y-4 flex-1">
+                          
+                          {/* Program Day Selectors */}
+                          {vaultExerciseTab === 'programs' && (() => {
+                            const allProgramsCombined = [...WEEKLY_PROGRAMS, ...dbProgramTemplates];
+                            const match = allProgramsCombined.find(p => (p.id || p.name) === selectedVaultProtocolId);
+                            if (!match) return null;
+                            const days = match.weeks?.[0]?.days || [];
+                            return (
+                              <div className="bg-zinc-950 p-4 border border-white/5 rounded-3xl space-y-3">
+                                <span className="text-[9px] font-black uppercase text-orange-500 tracking-wider block">Choose Training Day:</span>
+                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                                  {days.map((day: any, dIdx: number) => (
+                                    <button
+                                      key={dIdx}
+                                      onClick={() => {
+                                        setSelectedProgramDayIdx(dIdx);
+                                      }}
+                                      className={cn(
+                                        "px-3 py-2 text-[10px] font-black uppercase tracking-wider rounded-xl border text-center transition-all truncate",
+                                        selectedProgramDayIdx === dIdx 
+                                          ? "bg-purple-500/20 border-purple-500/40 text-purple-400" 
+                                          : "bg-zinc-900 border-white/5 text-zinc-500 hover:text-zinc-300"
+                                      )}
+                                      title={day.label || `Day ${day.dayNumber}`}
+                                    >
+                                      {day.label || `Day ${day.dayNumber}`}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })()}
+
+                          {/* Exercise listing */}
+                          <div className="space-y-3">
+                            <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block px-1">
+                              Exercises ({currentExercises.length} Total):
+                            </span>
+                            
+                            {currentExercises.length === 0 ? (
+                              <p className="text-xs text-zinc-650 italic p-6 text-center border border-dashed border-white/5 rounded-3xl">
+                                No exercise logs found in this specific sequence.
+                              </p>
+                            ) : (
+                              currentExercises.map((ex, exIdx) => {
+                                const hasVideo = !!ex.youtubeLink;
+                                return (
+                                  <div 
+                                    key={exIdx} 
+                                    className="p-4 bg-zinc-950 border border-white/5 hover:border-orange-500/20 rounded-3xl flex items-center justify-between gap-4 transition-all"
+                                  >
+                                    <div className="flex-1 min-w-0 space-y-1">
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <h5 className="font-extrabold text-sm text-white uppercase italic tracking-tight">{ex.name}</h5>
+                                        {hasVideo && (
+                                          <span className="px-1.5 py-0.5 bg-red-500/10 text-red-500 border border-red-500/25 rounded text-[8px] font-black uppercase tracking-widest flex items-center gap-1 shrink-0">
+                                            <Youtube className="w-2.5 h-2.5" />
+                                            Video Linked
+                                          </span>
+                                        )}
+                                      </div>
+                                      
+                                      <div className="flex items-center gap-x-4 gap-y-1 text-[10px] text-zinc-500 font-medium flex-wrap">
+                                        <span>Sets: <strong className="text-zinc-300 font-bold">{ex.sets}</strong></span>
+                                        <span>Reps: <strong className="text-zinc-300 font-bold">{ex.reps}</strong></span>
+                                        {ex.weight && <span>Weight: <strong className="text-zinc-300 font-bold">{ex.weight}</strong></span>}
+                                        {ex.rest && <span>Rest: <strong className="text-zinc-300 font-bold">{ex.rest}</strong></span>}
+                                      </div>
+                                      
+                                      {ex.coachNote && (
+                                        <p className="text-[10px] text-zinc-550 italic truncate max-w-sm">"Note: {ex.coachNote}"</p>
+                                      )}
+                                    </div>
+
+                                    <button
+                                      onClick={() => {
+                                        setExercises((prev) => [
+                                          ...prev,
+                                          {
+                                            name: ex.name,
+                                            youtubeLink: ex.youtubeLink || '',
+                                            sets: ex.sets || 3,
+                                            reps: ex.reps || '12',
+                                            weight: ex.weight || '',
+                                            rest: ex.rest || '60s',
+                                            coachNote: ex.coachNote || ''
+                                          }
+                                        ]);
+                                        showToast(`Added duplicate of "${ex.name}" to this active protocol!`);
+                                      }}
+                                      className="p-3 bg-orange-500/10 hover:bg-orange-500 text-orange-500 hover:text-white rounded-2xl transition-all border border-orange-500/10 shrink-0 flex items-center gap-2 text-[10px] font-black uppercase tracking-wider"
+                                      title="Duplicate to current workout"
+                                    >
+                                      <Plus className="w-4 h-4" />
+                                      <span className="hidden sm:inline">Add</span>
+                                    </button>
+                                  </div>
+                                );
+                              })
+                            )}
+                          </div>
+
+                        </div>
+                      );
+                    })() : (
+                      <div className="flex-1 flex flex-col items-center justify-center py-16 text-center">
+                        <div className="w-16 h-16 rounded-full bg-zinc-950 border border-white/5 flex items-center justify-center mb-4">
+                          <Copy className="w-6 h-6 text-zinc-700" />
+                        </div>
+                        <p className="text-xs uppercase font-black text-zinc-500 tracking-wider">No Protocol Selected</p>
+                        <p className="text-[10px] text-zinc-700 max-w-xs leading-relaxed mt-1">
+                          Select a protocol from the left pane to preview its exercises, review target metrics and youtube videos, then import any exercise immediately.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="p-6 border-t border-white/5 bg-zinc-950/40 text-center">
+                <span className="text-[9px] text-zinc-600 font-mono uppercase tracking-[0.2em]">
+                  Pro Coach Vault Replication Utility
+                </span>
+              </div>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
     </div>

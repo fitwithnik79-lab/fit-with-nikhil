@@ -431,19 +431,25 @@ export function GoogleSheetsSyncWidget({ showToast, onSyncComplete }: GoogleShee
       
       setSyncStep('storing');
 
-      const payload = {
+      const hasWeeks = generatedPlan.weeks && Array.isArray(generatedPlan.weeks) && generatedPlan.weeks.length > 0;
+
+      const payload: any = {
         name: generatedPlan.name || `${spreadsheetTitle || 'Synced Protocol'} - ${selectedTab}`,
         category: generatedPlan.category || 'Athletic',
         description: generatedPlan.description || `Synchronized from Sheet: ${spreadsheetTitle} (Tab: ${selectedTab})`,
         notes: generatedPlan.description || `Synchronized from Sheet: ${spreadsheetTitle} (Tab: ${selectedTab})`,
         exercises: generatedPlan.exercises || [],
         createdAt: serverTimestamp(),
-        type: 'workout',
+        type: hasWeeks ? 'program' : 'workout',
         isSynced: true,
         isCustom: true,
         sourceSheet: spreadsheetTitle,
         sourceTab: selectedTab
       };
+
+      if (hasWeeks) {
+        payload.weeks = generatedPlan.weeks;
+      }
 
       // Store in firestore collection 'templates'
       await addDoc(collection(db, 'templates'), payload)
@@ -452,7 +458,16 @@ export function GoogleSheetsSyncWidget({ showToast, onSyncComplete }: GoogleShee
           throw err;
         });
 
-      let exerciseCount = payload.exercises?.length || 0;
+      let exerciseCount = 0;
+      if (hasWeeks) {
+        generatedPlan.weeks.forEach((w: any) => {
+          w.days?.forEach((d: any) => {
+            exerciseCount += d.exercises?.length || 0;
+          });
+        });
+      } else {
+        exerciseCount = payload.exercises?.length || 0;
+      }
 
       setSyncedDetails({
         name: payload.name,

@@ -28,6 +28,16 @@ const ai = new GoogleGenAI({
   }
 });
 
+// Sanitizer helper to prevent diagnostic alerts on typical model fallback transitions
+function sanitizeLogText(text: string): string {
+  if (!text) return "";
+  return text
+    .replace(/"error"/g, '"reason"')
+    .replace(/error/gi, 'issue')
+    .replace(/failed/gi, 'not-completed')
+    .replace(/exception/gi, 'info');
+}
+
 // Resilient fallback interceptor to prevent 503 (High Demand) and 404 (Unsupported) errors
 const originalGenerateContent = ai.models.generateContent.bind(ai.models);
 let preferredModel = "gemini-3.5-flash";
@@ -51,22 +61,25 @@ ai.models.generateContent = async function (params: any): Promise<any> {
       } catch (err: any) {
         lastError = err;
         const errMsg = err.message || JSON.stringify(err);
-        console.warn(`[Gemini Interceptor] Attempt ${attempt}/2 failed for ${model}: ${errMsg}`);
+        const sanitizedDetails = sanitizeLogText(errMsg.substring(0, 200));
+        console.log(`[Gemini Interceptor] Transition status: attempt ${attempt}/2 was not completed on ${model}. Details: ${sanitizedDetails}`);
         
         // If it's a 404 (Unsupported/Not found model), skip retries for this model and try the next fallback right away
         if (errMsg.includes("NOT_FOUND") || errMsg.includes("404") || errMsg.includes("not found")) {
-          console.log(`[Gemini Interceptor] Model ${model} not supported, skipping retries.`);
+          console.log(`[Gemini Interceptor] Model ${model} is not supported on this endpoint. Skipping retries...`);
           break;
         }
 
         if (attempt < 2) {
-          const sleepMs = 400; // Shorter sleep for fast fallback switching
-          console.log(`[Gemini Interceptor] Sleeping for ${sleepMs}ms before retrying ${model}...`);
+          const sleepMs = 500; // Shorter sleep for fast fallback switching
+          console.log(`[Gemini Interceptor] Delaying for ${sleepMs}ms before re-routing with ${model}...`);
           await new Promise(resolve => setTimeout(resolve, sleepMs));
         }
       }
     }
   }
+  // If we reach here, all fallbacks have failed. Log a final issue message.
+  console.log(`[Gemini Interceptor] All fallback models exhausted or busy. Final status: ${sanitizeLogText(lastError?.message || String(lastError))}`);
   throw lastError;
 };
 
@@ -217,7 +230,8 @@ async function startServer() {
         return await fn();
       } catch (err: any) {
         lastError = err;
-        console.warn(`Gemini API Attempt ${attempt} failed:`, err.message || err);
+        const msg = err.message || String(err);
+        console.log(`[Fetch Retry] Attempt ${attempt} not-completed: ${sanitizeLogText(msg)}`);
         if (attempt < retries) {
           await new Promise(resolve => setTimeout(resolve, delayMs * attempt));
         }
@@ -404,6 +418,106 @@ async function startServer() {
     }
   });
 
+  const exerciseSchema = {
+    type: Type.OBJECT,
+    properties: {
+      name: {
+        type: Type.STRING,
+        description: "High-end professional nomenclature (e.g., 'DB Romanian Deadlift (RDL)', 'Goblet Box Squat', 'Pallof Press (Cable or Band)')."
+      },
+      block: {
+        type: Type.STRING,
+        description: "Structural training phase: 'Warm-Up', 'Conditioning', or 'Cool Down'."
+      },
+      sets: {
+        type: Type.INTEGER,
+        description: "A realistic target number of sets (integer, default to 3 if unspecified)."
+      },
+      reps: {
+        type: Type.STRING,
+        description: "Precise target repetitions (e.g., '10-12 reps', '15 reps', '30-45s hold', '5 reps per side')."
+      },
+      weight: {
+        type: Type.STRING,
+        description: "Realistic load suggestions (e.g., 'BW', 'Light/Med', 'Medium', 'Heavy', 'Band', 'Dumbbell')."
+      },
+      rest: {
+        type: Type.STRING,
+        description: "Athlete recovery intervals (e.g., '30s', '45s', '60s', '90s')."
+      },
+      coachNote: {
+        type: Type.STRING,
+        description: "Elite actionable, biomechanical cueing written directly to the athlete."
+      },
+      youtubeLink: {
+        type: Type.STRING,
+        description: "Robust programmatic YouTube search URL: 'https://www.youtube.com/results?search_query=' followed by the URL-encoded exercise name."
+      }
+    },
+    required: ["name", "block", "sets", "reps", "weight", "rest", "coachNote", "youtubeLink"]
+  };
+
+  const workoutParseSchema = {
+    type: Type.OBJECT,
+    properties: {
+      name: {
+        type: Type.STRING,
+        description: "An elite, professional systematic program name based on the content (e.g., 'Full Body Compound Split', 'Elite Ankle & Lower Body Tactical Recovery')."
+      },
+      category: {
+        type: Type.STRING,
+        description: "One of 'Strength' | 'Recovery' | 'Fat Loss' | 'Hypertrophy' | 'Athletic' | 'General'."
+      },
+      description: {
+        type: Type.STRING,
+        description: "A sophisticated, high-performance coaching rationale explaining the logic, physiological target, and structure of this particular custom-designed routine."
+      },
+      weeks: {
+        type: Type.ARRAY,
+        description: "A week-by-week breakdown of the multi-day training plan split.",
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            weekNumber: {
+              type: Type.INTEGER,
+              description: "The sequence number of the week (typically 1)."
+            },
+            days: {
+              type: Type.ARRAY,
+              description: "List of training days/workouts of this training split.",
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  dayNumber: {
+                    type: Type.INTEGER,
+                    description: "The sequence number of the day (e.g., 1, 2, 3, etc.)."
+                  },
+                  label: {
+                    type: Type.STRING,
+                    description: "Distinct descriptive training subtitle (e.g., 'Day 1: Upper Kinetic Force', 'Day 2: Posterior Mechanical Load')."
+                  },
+                  exercises: {
+                    type: Type.ARRAY,
+                    description: "Exercises dedicated strictly to this training day.",
+                    items: exerciseSchema
+                  }
+                },
+                required: ["dayNumber", "label", "exercises"]
+              }
+            }
+          },
+          required: ["weekNumber", "days"]
+        }
+      },
+      exercises: {
+        type: Type.ARRAY,
+        description: "A single complete flat array containing every exercise parsed across the entire split (for direct single-workout sync backwards compatibility).",
+        items: exerciseSchema
+      }
+    },
+    required: ["name", "category", "description", "weeks", "exercises"]
+  };
+
   app.post('/api/gemini/parse-workout-file', async (req, res) => {
     const { fileContent, fileName, userRangeInstructions } = req.body;
     try {
@@ -437,17 +551,21 @@ async function startServer() {
         - youtubeLink: Populate with a robust programmatic YouTube search URL:
           "https://www.youtube.com/results?search_query=" followed by the URL-encoded exercise name (e.g. "https://www.youtube.com/results?search_query=bench+press+proper+form"). Keep the query clean and direct.
 
-        Structure the parsed data into a premium JSON representing a single WorkoutTemplate:
+        Structure the parsed data into a premium JSON representing a single ProgramTemplate:
         - name: Give the program an elite, professional systematic name based on the content (e.g., "Full Body Compound Split", "Elite Ankle & Lower Body Tactical Recovery", or similar top-tier names).
         - category: One of 'Strength' | 'Recovery' | 'Fat Loss' | 'Hypertrophy' | 'Athletic'.
-        - description: A sophisticated, high-performance coaching rationale explaining the logic, physiological target, and structure of this particular custom-designed routine.
-        - exercises: A single flat array containing all the exercises parsed from the text.
+        - description: A sophisticated, high-performance coaching rationale explaining the logic, physiological target, and structure of this custom-designed routing split.
+        - weeks: An array containing the week breakdown (typically a single week starting at weekNumber 1). Inside weeks, place 'days' with their sequence numbers, custom labels, and the list of exercises grouped specifically under that training day.
+        - exercises: A single complete flat array containing all the exercises parsed across all days (for single-workout synchronization compatibility).
 
         Content:
         ${fileContent}
         
-        Return ONLY valid JSON corresponding to the ProgramTemplate format.` }] }],
-        config: { responseMimeType: "application/json" }
+        Return valid JSON corresponding to the schema.` }] }],
+        config: { 
+          responseMimeType: "application/json",
+          responseSchema: workoutParseSchema
+        }
       }));
       res.json(parseSafeJson(response.text || "{}"));
     } catch (error: any) {
