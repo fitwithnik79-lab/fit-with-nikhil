@@ -75,6 +75,7 @@ import { requestNotificationPermission, onForegroundMessage } from '../lib/notif
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, playNotificationSound, getAvatarUrl } from '../lib/utils';
 import Chat from './Chat';
+import { HeroMomentumBanner } from './HeroMomentumBanner';
 import { generateMotivationalMessage, analyzeMealImage, analyzeMealText, analyzeDailyNutrition, getMacrosForItemsWithQuantities } from '../lib/gemini';
 import { 
   format, 
@@ -1321,6 +1322,35 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   const isPreview = user.uid !== profile.uid;
   const clientId = profile.uid;
   
+  const todayStr = format(new Date(), 'yyyy-MM-dd');
+  
+  const calculateStreakFromMetrics = (history: BodyMetrics[]) => {
+    if (history.length === 0) return 0;
+    const sorted = [...history].sort((a, b) => parseISO(b.date).getTime() - parseISO(a.date).getTime());
+    
+    let streak = 0;
+    let current = new Date();
+    
+    // If last log wasn't today or yesterday, streak is broken
+    const lastLogDate = parseISO(sorted[0].date);
+    if (differenceInDays(current, lastLogDate) > 1) return 0;
+
+    for (let i = 0; i < sorted.length; i++) {
+      const logDate = parseISO(sorted[i].date);
+      if (i === 0) {
+        streak = 1;
+      } else {
+        const prevLogDate = parseISO(sorted[i-1].date);
+        if (differenceInDays(prevLogDate, logDate) === 1) {
+          streak++;
+        } else {
+          break;
+        }
+      }
+    }
+    return streak;
+  };
+
   const [currentWorkout, setCurrentWorkout] = useState<Workout | null>(null);
   const [allWorkouts, setAllWorkouts] = useState<Workout[]>([]);
   const [allFeedback, setAllFeedback] = useState<Feedback[]>([]);
@@ -2219,60 +2249,18 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                     className="space-y-10"
                   >
                     {/* Welcome Section */}
-                    <div className="flex flex-col md:flex-row md:items-end justify-between gap-8 relative">
-                      <motion.div variants={bentoItemVariants} className="space-y-6">
-                        <div 
-                          className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-500/20 to-orange-500/5 border border-orange-500/20 rounded-2xl"
-                        >
-                          <Sparkles className="w-4 h-4 text-orange-500 animate-pulse" />
-                          <span className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-500">Elite Status Activated</span>
-                        </div>
-                        <h1 className="text-6xl md:text-8xl font-black tracking-tighter leading-[0.8] uppercase">
-                          No <span className="text-orange-500 italic">Excuses</span> <br /> 
-                          just <span className="font-serif italic lowercase font-normal text-zinc-700">results.</span>
-                        </h1>
-                        <p className="text-zinc-500 font-medium text-lg max-w-md">
-                          You've completed <span className="text-white font-bold">{allFeedback.filter(f => f.completionStatus).length} sessions</span> so far. Keep building that momentum.
-                        </p>
-                      </motion.div>
-                      
-                      <motion.div variants={bentoItemVariants} className="flex flex-col gap-4 min-w-[320px]">
-                        <StreakDisplay history={metrics} />
-                        <div 
-                          className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-6 flex flex-col justify-between group overflow-hidden relative shadow-xl shadow-black/20"
-                        >
-                          <div className="absolute -right-4 -top-4 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
-                            <Target className="w-24 h-24 text-orange-500" />
-                          </div>
-                          <div className="flex justify-between items-start mb-4">
-                            <div className="space-y-1">
-                              <p className="text-zinc-500 text-[10px] font-black uppercase tracking-widest leading-none">Daily Rituals</p>
-                              <h4 className="text-lg font-black italic">Power Habits</h4>
-                            </div>
-                            <div className="text-right">
-                              <span className="text-3xl font-black text-white italic">
-                                {habits.filter(h => habitLogs.some(l => l.habitId === h.id && l.date === format(new Date(), 'yyyy-MM-dd') && l.completed)).length}
-                                <span className="text-sm text-zinc-500 not-italic ml-1">/ {habits.length || 0}</span>
-                              </span>
-                            </div>
-                          </div>
-                          <div className="flex gap-2">
-                            {(habits.length > 0 ? habits : [...Array(5)]).slice(0, 10).map((h, i) => {
-                              const isDone = h?.id && habitLogs.some(l => l.habitId === h.id && l.date === format(new Date(), 'yyyy-MM-dd') && l.completed);
-                              return (
-                                <div 
-                                  key={i} 
-                                  className={cn(
-                                    "h-1.5 rounded-full flex-1 transition-all duration-700",
-                                    isDone ? "bg-orange-500 shadow-[0_0_12px_rgba(249,115,22,0.6)]" : "bg-zinc-800"
-                                  )} 
-                                />
-                              );
-                            })}
-                          </div>
-                        </div>
-                      </motion.div>
-                    </div>
+                    <HeroMomentumBanner
+                      profile={profile}
+                      streak={profile.streak || calculateStreakFromMetrics(metrics)}
+                      completedToday={isWorkoutCompletedToday}
+                      todayWorkout={currentWorkout}
+                      completedSessions={allFeedback.filter(f => f.completionStatus).length}
+                      habitsCompletedToday={habits.filter(h => habitLogs.some(l => l.habitId === h.id && l.date === todayStr && l.completed)).length}
+                      totalHabits={habits.length}
+                      unreadMessages={messages.filter(m => !m.isRead && m.receiverId === profile.uid).length}
+                      onGoToCalendar={() => setActiveTab('calendar')}
+                      onGoToChat={() => setShowChat(true)}
+                    />
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                       <div className="lg:col-span-3 space-y-8">
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">

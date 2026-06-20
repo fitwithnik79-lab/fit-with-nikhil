@@ -17,6 +17,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { cn, playNotificationSound, getAvatarUrl } from '../lib/utils';
 import Chat from './Chat';
 import { GoogleSheetsSyncWidget } from './GoogleSheetsSyncWidget';
+import { AdminKPICommandBar } from './AdminKPICommandBar';
 import { ProgramTemplate } from '../types';
 import { seedDemoRosterAndPlans } from '../lib/rosterSeeder';
 import { addDays, startOfToday } from 'date-fns';
@@ -585,6 +586,16 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
             exit={{ opacity: 0, y: -30 }}
             className="space-y-12"
           >
+            <AdminKPICommandBar
+              clients={clients}
+              feedbacks={feedbacks}
+              allWorkouts={allWorkouts}
+              allHabitLogs={allHabitLogs}
+              allGoals={allGoals}
+              onNavigateToClients={() => setActiveTab('clients')}
+              onNavigateToTracker={() => setActiveTab('tracker')}
+            />
+
             {clients.length === 0 && (
               <motion.div 
                 variants={bentoItemVariants}
@@ -625,35 +636,6 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
                 </div>
               </motion.div>
             )}
-
-            {/* Mission Stats */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-               {[
-                 { label: 'Active Athletes', value: activeClients.length, trend: 'Formative', icon: Users, color: 'text-blue-500' },
-                 { label: 'Workouts Today', value: feedbacks.filter(f => isToday(f.createdAt?.toDate ? f.createdAt.toDate() : new Date())).length, trend: 'Optimal', icon: Zap, color: 'text-orange-500' },
-                 { label: 'Pending Feedback', value: feedbacks.filter(f => !f.motivationalMessage && !f.isRead).length, trend: 'High Priority', icon: MessageSquare, color: 'text-purple-500' },
-                 { label: 'Squad Consistency', value: '88%', trend: 'Stable', icon: Activity, color: 'text-green-500' },
-               ].map((stat, i) => (
-                 <motion.div 
-                   key={i}
-                   variants={bentoItemVariants}
-                   whileHover={{ y: -6, scale: 1.015 }}
-                   transition={{ type: "spring", stiffness: 300, damping: 20 }}
-                   className="bg-zinc-900 border border-white/5 p-8 rounded-[40px] group hover:border-orange-500/50 transition-all shadow-2xl shadow-black/50"
-                 >
-                   <div className="flex justify-between items-start mb-6">
-                      <div className={cn("p-4 rounded-2xl bg-zinc-950 group-hover:scale-110 transition-transform", stat.color)}>
-                        <stat.icon className="w-6 h-6" />
-                      </div>
-                      <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500">{stat.trend}</span>
-                   </div>
-                   <div>
-                      <p className="text-4xl font-black tracking-tighter mb-1">{stat.value}</p>
-                      <p className="text-[10px] font-black uppercase tracking-widest text-zinc-600">{stat.label}</p>
-                   </div>
-                 </motion.div>
-               ))}
-            </div>
 
             {/* Strategic Awareness: Expiring, Milestones & Programming Leads */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
