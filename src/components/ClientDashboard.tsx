@@ -5,7 +5,8 @@ import { DynamicKineticLogo } from './DynamicKineticLogo';
 import { collection, query, where, onSnapshot, addDoc, serverTimestamp, orderBy, limit, getDocs, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db, storage } from '../lib/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { BodyMetrics, Workout, Exercise, Feedback, UserProfile, NutritionPlan, Message, Habit, HabitLog, Goal } from '../types';
+import { BodyMetrics, Workout, Exercise, Feedback, UserProfile, NutritionPlan, Message, Habit, HabitLog, Goal, WeeklyCheckIn } from '../types';
+import { WeeklyCheckInForm } from './WeeklyCheckInForm';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { 
   Maximize2,
@@ -1323,6 +1324,8 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   const clientId = profile.uid;
   
   const todayStr = format(new Date(), 'yyyy-MM-dd');
+  const isSunday = new Date().getDay() === 0;
+  const thisSundayStr = format(startOfWeek(new Date(), { weekStartsOn: 0 }), 'yyyy-MM-dd');
   
   const calculateStreakFromMetrics = (history: BodyMetrics[]) => {
     if (history.length === 0) return 0;
@@ -1366,6 +1369,9 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   const [showSuccess, setShowSuccess] = useState(false);
   const [adminProfile, setAdminProfile] = useState<UserProfile | null>(null);
   const [activeTab, setActiveTab] = useState<'dash' | 'calendar' | 'goals' | 'tasks' | 'program' | 'meal' | 'progress' | 'badges' | 'classes' | 'profile' | 'meal-ai' | 'nutrition'>('dash');
+  const [showWeeklyCheckIn, setShowWeeklyCheckIn] = useState(false);
+  const [hasCheckedInThisWeek, setHasCheckedInThisWeek] = useState(false);
+  const [weeklyCheckIn, setWeeklyCheckIn] = useState<WeeklyCheckIn | null>(null);
 
   useEffect(() => {
     window.dispatchEvent(new CustomEvent('app-tab-changed', { 
@@ -1387,12 +1393,145 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     }
   }, [selectedWorkout]);
 
+  // ========== GOOGLE FIT STEP WORKFLOW ==========
+  const [isFitConnected, setIsFitConnected] = useState(!!profile?.googleFitTokens?.access_token);
+  const [isSyncingSteps, setIsSyncingSteps] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setIsFitConnected(!!profile?.googleFitTokens?.access_token);
+  }, [profile?.googleFitTokens]);
+
+  const handleConnectGoogleFit = async () => {
+    try {
+      const res = await fetch(`/api/google-fit-auth-url?uid=${clientId}`);
+      const data = await res.json();
+      if (data.url) {
+        const popupWidth = 600;
+        const popupHeight = 600;
+        const left = window.screenX + (window.innerWidth - popupWidth) / 2;
+        const top = window.screenY + (window.innerHeight - popupHeight) / 2;
+        
+        window.open(
+          data.url, 
+          'Connect Google Fit', 
+          `width=${popupWidth},height=${popupHeight},top=${top},left=${left},resizable=yes,scrollbars=yes,status=yes`
+        );
+      } else {
+        alert(data.error || 'Failed to initialize connection');
+      }
+    } catch (err) {
+      console.error('Error starting Google Fit auth:', err);
+      alert('Failed to connect to authentication server');
+    }
+  };
+
+  const syncSteps = async () => {
+    if (isSyncingSteps) return;
+    setIsSyncingSteps(true);
+    setSyncError(null);
+    try {
+      const res = await fetch(`/api/google-fit-steps?uid=${clientId}`);
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || 'Failed to sync steps');
+      }
+      const data = await res.json();
+      console.log('[Steps Sync] Daily step count successfully fetched:', data.steps);
+    } catch (err: any) {
+      console.error('Error syncing steps:', err);
+      setSyncError(err.message || 'Could not sync steps with Google Fit');
+    } finally {
+      setIsSyncingSteps(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'progress' && isFitConnected) {
+      syncSteps();
+      const interval = setInterval(() => {
+        syncSteps();
+      }, 10 * 60 * 1000); // 10 minutes
+      return () => clearInterval(interval);
+    }
+  }, [activeTab, isFitConnected]);
+
+  // ========== GOOGLE CALENDAR WORKFLOW ==========
+  const [isCalConnected, setIsCalConnected] = useState(!!profile?.googleCalTokens?.access_token);
+
+  useEffect(() => {
+    setIsCalConnected(!!profile?.googleCalTokens?.access_token);
+  }, [profile?.googleCalTokens]);
+
+  const handleConnectGoogleCalendar = async () => {
+    try {
+      const res = await fetch(`/api/google-cal-auth-url?uid=${clientId}`);
+      const data = await res.json();
+      if (data.url) {
+        const popupWidth = 600;
+        const popupHeight = 600;
+        const left = window.screenX + (window.innerWidth - popupWidth) / 2;
+        const top = window.screenY + (window.innerHeight - popupHeight) / 2;
+        
+        window.open(
+          data.url, 
+          'Connect Google Calendar', 
+          `width=${popupWidth},height=${popupHeight},top=${top},left=${left},resizable=yes,scrollbars=yes,status=yes`
+        );
+      } else {
+        alert(data.error || 'Failed to initialize connection');
+      }
+    } catch (err) {
+      console.error('Error starting Google Cal auth:', err);
+      alert('Failed to connect to authentication server');
+    }
+  };
+
+  useEffect(() => {
+    const handleOAuthMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'GOOGLE_FIT_CONNECTED') {
+        setIsFitConnected(true);
+        syncSteps();
+      } else if (event.data?.type === 'GOOGLE_CAL_CONNECTED') {
+        setIsCalConnected(true);
+      }
+    };
+    window.addEventListener('message', handleOAuthMessage);
+    return () => window.removeEventListener('message', handleOAuthMessage);
+  }, []);
+
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [metrics, setMetrics] = useState<BodyMetrics[]>([]);
   const [todayMetrics, setTodayMetrics] = useState<BodyMetrics | null>(null);
   const [meals, setMeals] = useState<any[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [activeNutritionPlan, setActiveNutritionPlan] = useState<NutritionPlan | null>(null);
+
+  useEffect(() => {
+    if (!clientId) return;
+    const thisSundayStr = format(startOfWeek(new Date(), { weekStartsOn: 0 }), 'yyyy-MM-dd');
+    const qCheckIn = query(
+      collection(db, 'weeklyCheckIns'),
+      where('uid', '==', clientId),
+      where('weekOf', '==', thisSundayStr)
+    );
+
+    const unsubscribeCheckIn = onSnapshot(qCheckIn, (snapshot) => {
+      if (!snapshot.empty) {
+        setHasCheckedInThisWeek(true);
+        setWeeklyCheckIn(snapshot.docs[0].data() as WeeklyCheckIn);
+      } else {
+        setHasCheckedInThisWeek(false);
+        setWeeklyCheckIn(null);
+      }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'weeklyCheckIns');
+    });
+
+    return () => {
+      unsubscribeCheckIn();
+    };
+  }, [clientId]);
   const [selectedNutritionDay, setSelectedNutritionDay] = useState<number>(() => {
     const d = new Date().getDay();
     return d === 0 ? 7 : d;
@@ -2261,6 +2400,42 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                       onGoToCalendar={() => setActiveTab('calendar')}
                       onGoToChat={() => setShowChat(true)}
                     />
+
+                    {isSunday && !hasCheckedInThisWeek && !showWeeklyCheckIn && (
+                      <motion.div
+                        variants={bentoItemVariants}
+                        className="bg-gradient-to-r from-orange-500 via-amber-500 to-yellow-500 p-8 rounded-[40px] border border-orange-400/20 shadow-2xl flex flex-col md:flex-row md:items-center justify-between gap-6 relative overflow-hidden group"
+                      >
+                        <div className="absolute inset-0 bg-white/[0.05] pointer-events-none group-hover:scale-105 transition-transform duration-700" />
+                        <div>
+                          <p className="text-[10px] bg-white/20 text-white font-black uppercase tracking-widest px-3 py-1 rounded-full w-fit mb-3">ACTION REQUIRED</p>
+                          <h3 className="text-xl md:text-2xl font-black tracking-tight text-white flex items-center gap-2">
+                            It's check-in day! Help Nik understand your week 👇
+                          </h3>
+                        </div>
+                        <button
+                          onClick={() => setShowWeeklyCheckIn(true)}
+                          className="bg-zinc-950 text-white hover:bg-orange-600 hover:text-white font-black uppercase text-xs tracking-widest px-6 py-4 rounded-2xl transition-all self-start md:self-auto shrink-0 shadow-lg"
+                        >
+                          Fill Check-In
+                        </button>
+                      </motion.div>
+                    )}
+
+                    {showWeeklyCheckIn && !hasCheckedInThisWeek && (
+                      <motion.div variants={bentoItemVariants}>
+                        <WeeklyCheckInForm
+                          profile={profile}
+                          weekOf={thisSundayStr}
+                          onSuccess={() => {
+                            setShowWeeklyCheckIn(false);
+                            setHasCheckedInThisWeek(true);
+                          }}
+                          onCancel={() => setShowWeeklyCheckIn(false)}
+                        />
+                      </motion.div>
+                    )}
+
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                       <div className="lg:col-span-3 space-y-8">
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
@@ -2865,6 +3040,204 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                       );
                     })}
                   </div>
+                </div>
+
+                {/* Google Fit Integration Widget */}
+                <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 space-y-6">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="p-3 bg-gradient-to-br from-orange-400 to-orange-600 rounded-2xl text-white shadow-lg shadow-orange-500/10">
+                        <Footprints className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h3 className="text-xl font-bold">Google Fit Integration</h3>
+                        <p className="text-xs text-zinc-500">Sync and track your active daily step metric automatically.</p>
+                      </div>
+                    </div>
+                    <div>
+                      {isFitConnected ? (
+                        <span className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full border border-orange-500/30 bg-orange-500/5 text-orange-500 text-xs font-bold leading-none uppercase tracking-wider">
+                          <Check className="w-4 h-4" />
+                          Google Fit Connected ✓
+                        </span>
+                      ) : (
+                        <button
+                          onClick={handleConnectGoogleFit}
+                          className="px-6 py-2.5 bg-orange-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider hover:bg-orange-600 transition-all shadow-lg shadow-orange-500/20 flex items-center gap-2"
+                        >
+                          Connect Google Fit
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {isFitConnected ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
+                      {/* Step Count Card */}
+                      <div className="bg-zinc-950 border border-zinc-800/80 rounded-3xl p-6 flex items-center justify-between shadow-xl shadow-black/10">
+                        <div className="space-y-4">
+                          <div>
+                            <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-0.5">Today's Step Count</p>
+                            <h4 className="text-4xl font-extrabold italic text-white leading-none">
+                              {todayMetrics?.stepCount?.toLocaleString() || '0'}
+                            </h4>
+                          </div>
+                          
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-[11px] text-zinc-400">
+                              Goal: <span className="font-bold text-zinc-300">{(profile?.stepGoal || 8000).toLocaleString()}</span> steps
+                            </span>
+                            <span className="text-[10px] font-semibold text-orange-500">
+                              {Math.round(((todayMetrics?.stepCount || 0) / (profile?.stepGoal || 8000)) * 100)}% Completed
+                            </span>
+                          </div>
+
+                          <button
+                            onClick={syncSteps}
+                            disabled={isSyncingSteps}
+                            className="inline-flex items-center gap-2 text-[10px] uppercase tracking-widest font-black text-orange-500 hover:text-orange-400 disabled:opacity-50 transition-colors"
+                          >
+                            {isSyncingSteps ? (
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <RefreshCw className="w-3.5 h-3.5" />
+                            )}
+                            {isSyncingSteps ? 'Syncing...' : 'Sync Now'}
+                          </button>
+                        </div>
+
+                        {/* Progress Ring */}
+                        <div className="relative flex items-center justify-center">
+                          {/* Inner icon */}
+                          <div className="absolute text-orange-500">
+                            <Footprints className="w-6 h-6" />
+                          </div>
+                          
+                          {/* SVG Ring */}
+                          {(() => {
+                            const stepsVal = todayMetrics?.stepCount || 0;
+                            const goalVal = profile?.stepGoal || 8000;
+                            const percent = Math.min(Math.round((stepsVal / goalVal) * 100), 100);
+                            
+                            const radius = 54;
+                            const strokeWidth = 8;
+                            const normRadius = radius - strokeWidth;
+                            const circ = normRadius * 2 * Math.PI;
+                            const offset = circ - (percent / 100) * circ;
+                            
+                            return (
+                              <svg height={radius * 2} width={radius * 2} className="transform -rotate-90">
+                                <circle
+                                  stroke="#18181b"
+                                  fill="transparent"
+                                  strokeWidth={strokeWidth}
+                                  r={normRadius}
+                                  cx={radius}
+                                  cy={radius}
+                                />
+                                <circle
+                                  stroke="url(#orangeGradient)"
+                                  fill="transparent"
+                                  strokeWidth={strokeWidth}
+                                  strokeDasharray={`${circ} ${circ}`}
+                                  style={{ strokeDashoffset: offset }}
+                                  strokeLinecap="round"
+                                  r={normRadius}
+                                  cx={radius}
+                                  cy={radius}
+                                />
+                                <defs>
+                                  <linearGradient id="orangeGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                                    <stop offset="0%" stopColor="#fb923c" />
+                                    <stop offset="100%" stopColor="#ea580c" />
+                                  </linearGradient>
+                                </defs>
+                              </svg>
+                            );
+                          })()}
+                        </div>
+                      </div>
+
+                      <div className="space-y-3 p-4 border border-zinc-800/40 rounded-2xl bg-zinc-950/20 text-zinc-400 text-xs leading-relaxed">
+                        <p>
+                          Your steps are synced automatically every 10 minutes to maintain consistency. If your latest physical sessions are missing, click <span className="font-bold text-white">Sync Now</span> to fetch them.
+                        </p>
+                        {syncError && (
+                          <div className="text-red-500 text-[11px] font-medium mt-2 bg-red-500/10 border border-red-500/20 px-3 py-2 rounded-xl flex items-center gap-2">
+                            <span>⚠</span> {syncError}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="border border-dashed border-zinc-800 rounded-3xl p-8 text-center bg-zinc-950/20">
+                      <p className="text-zinc-500 text-sm mb-4">
+                        Connect Google Fit to import and track your everyday steps and physical metrics automatically in your coaching portal.
+                      </p>
+                      <button
+                        onClick={handleConnectGoogleFit}
+                        className="px-6 py-2.5 bg-orange-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider hover:bg-orange-600 transition-all shadow-lg shadow-orange-500/20 inline-flex items-center gap-2"
+                      >
+                        Authorize & Sync Now
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Google Calendar Integration Widget */}
+                <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 space-y-6">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="p-3 bg-gradient-to-br from-blue-400 to-blue-600 rounded-2xl text-white shadow-lg shadow-blue-500/10">
+                        <CalendarIcon className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h3 className="text-xl font-bold">Google Calendar Integration</h3>
+                        <p className="text-xs text-zinc-500">Automatically sync scheduled training sessions and coaching protocols into your personal calendar.</p>
+                      </div>
+                    </div>
+                    <div>
+                      {isCalConnected ? (
+                        <span className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full border border-blue-500/30 bg-blue-500/5 text-blue-400 text-xs font-bold leading-none uppercase tracking-wider">
+                          <Check className="w-4 h-4" />
+                          Calendar Connected ✓
+                        </span>
+                      ) : (
+                        <button
+                          onClick={handleConnectGoogleCalendar}
+                          className="px-6 py-2.5 bg-blue-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider hover:bg-blue-600 transition-all shadow-lg shadow-blue-500/20 flex items-center gap-2"
+                        >
+                          Connect Google Calendar
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {isCalConnected ? (
+                    <div className="space-y-3 p-6 border border-zinc-800/40 rounded-2xl bg-zinc-950/20 text-zinc-400 text-xs leading-relaxed flex items-start gap-3">
+                      <div className="p-2 bg-blue-500/10 rounded-xl text-blue-400 shrink-0">
+                        <CalendarIcon className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <p className="font-bold text-zinc-300 mb-1">Synchronized & Active</p>
+                        <p>
+                          Your coaching workouts and custom target sessions will automatically sync to your connected Google Calendar. Look out for the 💪 <span className="text-white font-medium">[Workout Name] — Fit with Nik</span> events on your calendar pages!
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="border border-dashed border-zinc-800 rounded-3xl p-8 text-center bg-zinc-950/20">
+                      <p className="text-zinc-500 text-sm mb-4">
+                        Connect your personal Google Calendar. This allows Coach Nik's automated training suite to place scheduled workout sessions cleanly into your private dashboard.
+                      </p>
+                      <button
+                        onClick={handleConnectGoogleCalendar}
+                        className="px-6 py-2.5 bg-blue-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider hover:bg-blue-600 transition-all shadow-lg shadow-blue-500/20 inline-flex items-center gap-2"
+                      >
+                        Authorize Calendar Sync
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <ConsistencyTracker 

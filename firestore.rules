@@ -25,7 +25,7 @@ service cloud.firestore {
     function isCoach() {
       return isSignedIn() && 
              'email' in request.auth.token &&
-             request.auth.token.email.lower() == "fitwithnik79@gmail.com";
+             request.auth.token.email == "fitwithnik79@gmail.com";
     }
 
     function isAdmin() {
@@ -110,6 +110,26 @@ service cloud.firestore {
              data.type in ['message', 'workout', 'feedback', 'general'] &&
              data.isRead is bool &&
              data.createdAt is timestamp;
+    }
+
+    function isValidWeeklyCheckIn(data) {
+      return data.keys().hasAll(['uid', 'clientType', 'weekOf', 'submittedAt']) &&
+             data.uid is string && data.uid.size() <= 128 &&
+             data.clientType in ['fitness', 'knee_injury', 'back_injury', 'shoulder_injury'] &&
+             data.weekOf is string && data.weekOf.size() <= 64 &&
+             data.submittedAt is string && data.submittedAt.size() <= 64 &&
+             (!('strengthGain' in data) || (data.strengthGain is string && data.strengthGain in ['yes', 'no'])) &&
+             (!('painReduction' in data) || (data.painReduction is string && data.painReduction in ['slight', 'moderate', 'no'])) &&
+             (!('movementImprovement' in data) || (data.movementImprovement is string && data.movementImprovement in ['slight', 'moderate', 'no', 'yes', 'no_improvement'])) &&
+             (!('workoutPattern' in data) || (data.workoutPattern is string && data.workoutPattern in ['boring', 'interesting'])) &&
+             (!('sharpPain' in data) || (data.sharpPain is string && data.sharpPain in ['yes', 'no'])) &&
+             (!('kneeStiffness' in data) || (data.kneeStiffness is string && data.kneeStiffness in ['yes', 'no'])) &&
+             (!('overheadReach' in data) || (data.overheadReach is string && data.overheadReach in ['yes', 'no'])) &&
+             (!('sleepAffected' in data) || (data.sleepAffected is string && data.sleepAffected in ['yes', 'no'])) &&
+             (!('dietAdherence' in data) || (data.dietAdherence is string && data.dietAdherence in ['yes', 'partially', 'no'])) &&
+             (!('freeText' in data) || (data.freeText is string && data.freeText.size() <= 4000)) &&
+             (!('programRating' in data) || (data.programRating is int || data.programRating is float)) &&
+             (!('energyLevel' in data) || (data.energyLevel is int || data.energyLevel is float));
     }
 
     // ===============================================================
@@ -245,6 +265,13 @@ service cloud.firestore {
         isAdmin()
       );
       allow delete: if isSignedIn() && (resource.data.clientId == request.auth.uid || isAdmin());
+    }
+
+    match /weeklyCheckIns/{checkInId} {
+      allow read: if isSignedIn() && (resource.data.uid == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && isValidId(checkInId) && (incoming().uid == request.auth.uid || isAdmin()) && isValidWeeklyCheckIn(incoming());
+      allow update: if isSignedIn() && isValidId(checkInId) && (resource.data.uid == request.auth.uid || isAdmin()) && isValidWeeklyCheckIn(incoming());
+      allow delete: if isAdmin() && isValidId(checkInId);
     }
   }
 }

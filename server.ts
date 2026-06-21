@@ -12,6 +12,7 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const multer = require('multer');
 import { GoogleGenAI, Type } from '@google/genai';
+import { google } from 'googleapis';
 
 dotenv.config();
 
@@ -637,6 +638,623 @@ async function startServer() {
     res.json({ status: 'ok', environment: process.env.NODE_ENV, timestamp: new Date().toISOString() });
   });
 
+  // ========== GOOGLE FIT ENDPOINTS ==========
+
+  // Component 1: Generate Authorization URL
+  app.get('/api/google-fit-auth-url', (req, res) => {
+    const { uid } = req.query;
+    if (!uid || typeof uid !== 'string') {
+      return res.status(400).json({ error: 'Missing uid' });
+    }
+
+    const clientId = process.env.GOOGLE_FIT_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_FIT_CLIENT_SECRET;
+
+    if (!clientId || !clientSecret) {
+      return res.status(500).json({ error: 'Google Fit credentials are not configured on server.' });
+    }
+
+    const appUrl = process.env.APP_URL || `https://${req.headers.host}`;
+    const redirectUri = `${appUrl}/api/google-fit-auth-callback`;
+
+    const oauth2Client = new google.auth.OAuth2(
+      clientId,
+      clientSecret,
+      redirectUri
+    );
+
+    const authUrl = oauth2Client.generateAuthUrl({
+      access_type: 'offline',
+      prompt: 'consent',
+      scope: [
+        'https://www.googleapis.com/auth/fitness.activity.read',
+        'https://www.googleapis.com/auth/fitness.body.read'
+      ],
+      state: uid
+    });
+
+    res.json({ url: authUrl });
+  });
+
+  // Component 2: Authorization callback URL
+  app.get(['/api/google-fit-auth-callback', '/api/google-fit-auth-callback/'], async (req, res) => {
+    const { code, state: uid } = req.query;
+
+    if (!code || typeof code !== 'string') {
+      return res.status(400).send('Missing authorization code');
+    }
+    if (!uid || typeof uid !== 'string') {
+      return res.status(400).send('Missing state (uid)');
+    }
+
+    try {
+      const clientId = process.env.GOOGLE_FIT_CLIENT_ID;
+      const clientSecret = process.env.GOOGLE_FIT_CLIENT_SECRET;
+      
+      const appUrl = process.env.APP_URL || `https://${req.headers.host}`;
+      const redirectUri = `${appUrl}/api/google-fit-auth-callback`;
+
+      const oauth2Client = new google.auth.OAuth2(
+        clientId,
+        clientSecret,
+        redirectUri
+      );
+
+      const { tokens } = await oauth2Client.getToken(code);
+
+      const db = getFirestore();
+      
+      // Save { access_token, refresh_token, expiry_date } to Firestore at users/{uid}/googleFitTokens
+      const tokenPayload = {
+        googleFitTokens: {
+          access_token: tokens.access_token || '',
+          refresh_token: tokens.refresh_token || '',
+          expiry_date: tokens.expiry_date || 0
+        }
+      };
+
+      await db.collection('users').doc(uid).set(tokenPayload, { merge: true });
+
+      // Send HTML page with postMessage and self-closing popup script
+      res.send(`
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <title>Connection Successful</title>
+            <style>
+              body {
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                background-color: #09090b;
+                color: #ffffff;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                height: 100vh;
+                margin: 0;
+                text-align: center;
+              }
+              .container {
+                padding: 40px;
+                background: #18181b;
+                border-radius: 24px;
+                box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+                max-width: 400px;
+              }
+              .icon {
+                font-size: 48px;
+                color: #f97316;
+                margin-bottom: 20px;
+              }
+              h2 {
+                margin: 0 0 10px 0;
+                font-weight: 800;
+                letter-spacing: -0.025em;
+              }
+              p {
+                color: #a1a1aa;
+                font-size: 14px;
+                line-height: 1.5;
+              }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="icon">✓</div>
+              <h2>Google Fit Connected</h2>
+              <p>Your step tracking authorization has been completed successfully.</p>
+              <p style="color: #71717a; font-size: 12px; mt-4">This popup window will close automatically.</p>
+            </div>
+            <script>
+              setTimeout(() => {
+                if (window.opener) {
+                  window.opener.postMessage({ type: 'GOOGLE_FIT_CONNECTED' }, '*');
+                  window.close();
+                } else {
+                  window.location.href = '/';
+                }
+              }, 1500);
+            </script>
+          </body>
+        </html>
+      `);
+    } catch (error: any) {
+      console.error('Error in google-fit-auth-callback:', error);
+      res.status(500).send(`Authentication failed: ${error.message}`);
+    }
+  });
+
+  // Component 3: Google Fit step count aggregator
+  app.get('/api/google-fit-steps', async (req, res) => {
+    const { uid, date } = req.query;
+
+    if (!uid || typeof uid !== 'string') {
+      return res.status(400).json({ error: 'Missing uid' });
+    }
+
+    try {
+      const db = getFirestore();
+      
+      // 1. Read user's tokens from Firestore
+      const userDoc = await db.collection('users').doc(uid).get();
+      if (!userDoc.exists) {
+        return res.status(404).json({ error: 'User does not exist.' });
+      }
+
+      const userData = userDoc.data();
+      const tokens = userData?.googleFitTokens;
+
+      if (!tokens || !tokens.access_token) {
+        return res.status(404).json({ error: 'Google Fit not connected for this user' });
+      }
+
+      // 2. Initialize OAuth client
+      const clientId = process.env.GOOGLE_FIT_CLIENT_ID;
+      const clientSecret = process.env.GOOGLE_FIT_CLIENT_SECRET;
+
+      if (!clientId || !clientSecret) {
+        return res.status(500).json({ error: 'Google Fit credentials are not configured on server.' });
+      }
+
+      const oauth2Client = new google.auth.OAuth2(
+        clientId,
+        clientSecret
+      );
+
+      oauth2Client.setCredentials({
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
+        expiry_date: tokens.expiry_date
+      });
+
+      // 3. Handle token refresh silently if expired
+      const isExpired = !tokens.expiry_date || (Date.now() + 60 * 1000 >= tokens.expiry_date);
+      if (isExpired && tokens.refresh_token) {
+        console.log(`[Google Fit Steps] Token expired or close to expiry for ${uid}. Refreshing...`);
+        try {
+          const { credentials } = await oauth2Client.refreshAccessToken();
+          tokens.access_token = credentials.access_token || tokens.access_token;
+          tokens.expiry_date = credentials.expiry_date || tokens.expiry_date;
+          if (credentials.refresh_token) {
+            tokens.refresh_token = credentials.refresh_token;
+          }
+
+          // Save refreshed tokens back to Firestore
+          await db.collection('users').doc(uid).update({
+            googleFitTokens: {
+              access_token: tokens.access_token,
+              refresh_token: tokens.refresh_token,
+              expiry_date: tokens.expiry_date
+            }
+          });
+          console.log(`[Google Fit Steps] Successfully saved refreshed tokens in Firestore`);
+          oauth2Client.setCredentials(tokens);
+        } catch (refreshErr: any) {
+          console.error(`[Google Fit Steps] Failed to refresh tokens: ${refreshErr.message}`);
+          return res.status(401).json({ error: `Token refresh failed`, details: refreshErr.message });
+        }
+      }
+
+      // 4. Resolve date parameters
+      const targetDateStr = (date as string) || format(new Date(), 'yyyy-MM-dd');
+      const [year, month, day] = targetDateStr.split('-').map(Number);
+      
+      // Calculate boundaries
+      const startOfTargetDay = new Date(year, month - 1, day, 0, 0, 0, 0);
+      const endOfTargetDay = new Date(year, month - 1, day, 23, 59, 59, 999);
+
+      const startTimeMillis = startOfTargetDay.getTime();
+      const endTimeMillis = endOfTargetDay.getTime();
+
+      // 5. Query Google Fitness Aggregate REST API
+      const fitness = google.fitness({
+        version: 'v1',
+        auth: oauth2Client
+      });
+
+      console.log(`[Google Fit Steps] Querying steps for ${uid} between ${startOfTargetDay.toISOString()} and ${endOfTargetDay.toISOString()}`);
+      
+      const fitnessResponse: any = await (fitness.users.dataset.aggregate as any)({
+        userId: 'me',
+        requestBody: {
+          aggregateBy: [
+            {
+              dataTypeName: 'com.google.step_count.delta'
+            }
+          ],
+          bucketByTime: { durationMillis: "86400000" },
+          startTimeMillis: startTimeMillis.toString(),
+          endTimeMillis: endTimeMillis.toString()
+        }
+      });
+
+      // 6. Accumulate aggregate results
+      let totalSteps = 0;
+      if (fitnessResponse.data && fitnessResponse.data.bucket) {
+        for (const bucket of fitnessResponse.data.bucket) {
+          if (bucket.dataset) {
+            for (const dataset of bucket.dataset) {
+              if (dataset.point) {
+                for (const point of dataset.point) {
+                  if (point.value) {
+                    for (const val of point.value) {
+                      if (val.intVal) {
+                        totalSteps += val.intVal;
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      console.log(`[Google Fit Steps] Successfully read steps structure. Total calculated: ${totalSteps} for ${targetDateStr}`);
+
+      // 7. Core persistence logic: Update body metrics on matching document or create if missing
+      // StepCount field already exists in BodyMetrics.
+      const metricsQuery = await db.collection('metrics')
+        .where('clientId', '==', uid)
+        .where('date', '==', targetDateStr)
+        .limit(1)
+        .get();
+
+      if (!metricsQuery.empty) {
+        const metricsDocId = metricsQuery.docs[0].id;
+        await db.collection('metrics').doc(metricsDocId).update({
+          stepCount: totalSteps
+        });
+        console.log(`[Google Fit Steps] Updated metrics doc ${metricsDocId} with active count: ${totalSteps}`);
+      } else {
+        await db.collection('metrics').add({
+          clientId: uid,
+          date: targetDateStr,
+          waterIntake: 0,
+          stepCount: totalSteps,
+          calories: 0,
+          createdAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+        console.log(`[Google Fit Steps] Persistent store: Created daily metrics document for ${targetDateStr} containing steps: ${totalSteps}`);
+      }
+
+      res.json({ steps: totalSteps, date: targetDateStr });
+
+    } catch (error: any) {
+      console.error('Error inside /api/google-fit-steps endpoint:', error);
+      res.status(500).json({ error: 'Failed to retrieve step count', details: error.message });
+    }
+  });
+
+  // ========== GOOGLE CALENDAR ENDPOINTS ==========
+
+  app.get('/api/google-cal-auth-url', (req, res) => {
+    const { uid } = req.query;
+    if (!uid || typeof uid !== 'string') {
+      return res.status(400).json({ error: 'Missing uid' });
+    }
+
+    const clientId = process.env.GOOGLE_CALENDAR_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CALENDAR_CLIENT_SECRET;
+
+    if (!clientId || !clientSecret) {
+      return res.status(500).json({ error: 'Google Calendar credentials are not configured on server.' });
+    }
+
+    const appUrl = process.env.APP_URL || `https://${req.headers.host}`;
+    const redirectUri = `${appUrl}/api/google-cal-auth-callback`;
+
+    const oauth2Client = new google.auth.OAuth2(
+      clientId,
+      clientSecret,
+      redirectUri
+    );
+
+    const authUrl = oauth2Client.generateAuthUrl({
+      access_type: 'offline',
+      prompt: 'consent',
+      scope: [
+        'https://www.googleapis.com/auth/calendar.events'
+      ],
+      state: uid
+    });
+
+    res.json({ url: authUrl });
+  });
+
+  app.get(['/api/google-cal-auth-callback', '/api/google-cal-auth-callback/'], async (req, res) => {
+    const { code, state: uid } = req.query;
+
+    if (!code || typeof code !== 'string') {
+      return res.status(400).send('Missing authorization code');
+    }
+    if (!uid || typeof uid !== 'string') {
+      return res.status(400).send('Missing state (uid)');
+    }
+
+    try {
+      const clientId = process.env.GOOGLE_CALENDAR_CLIENT_ID;
+      const clientSecret = process.env.GOOGLE_CALENDAR_CLIENT_SECRET;
+      
+      const appUrl = process.env.APP_URL || `https://${req.headers.host}`;
+      const redirectUri = `${appUrl}/api/google-cal-auth-callback`;
+
+      const oauth2Client = new google.auth.OAuth2(
+        clientId,
+        clientSecret,
+        redirectUri
+      );
+
+      const { tokens } = await oauth2Client.getToken(code);
+
+      const db = getFirestore();
+      
+      // Save { access_token, refresh_token, expiry_date } to Firestore at users/{uid}/googleCalTokens
+      const tokenPayload = {
+        googleCalTokens: {
+          access_token: tokens.access_token || '',
+          refresh_token: tokens.refresh_token || '',
+          expiry_date: tokens.expiry_date || 0
+        }
+      };
+
+      await db.collection('users').doc(uid).set(tokenPayload, { merge: true });
+
+      // Send HTML page with postMessage and self-closing popup script
+      res.send(`
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <title>Connection Successful</title>
+            <style>
+              body {
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                background-color: #09090b;
+                color: #ffffff;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                height: 100vh;
+                margin: 0;
+                text-align: center;
+              }
+              .container {
+                padding: 40px;
+                background: #18181b;
+                border-radius: 24px;
+                box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+                max-width: 400px;
+              }
+              .icon {
+                font-size: 48px;
+                color: #f97316;
+                margin-bottom: 20px;
+              }
+              h2 {
+                margin: 0 0 10px 0;
+                font-weight: 800;
+                letter-spacing: -0.025em;
+              }
+              p {
+                color: #a1a1aa;
+                font-size: 14px;
+                line-height: 1.5;
+              }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="icon">✓</div>
+              <h2>Google Calendar Connected</h2>
+              <p>Your calendar schedule synchronization has been successfully authorized.</p>
+              <p style="color: #71717a; font-size: 12px; mt-4">This popup window will close automatically.</p>
+            </div>
+            <script>
+              setTimeout(() => {
+                if (window.opener) {
+                  window.opener.postMessage({ type: 'GOOGLE_CAL_CONNECTED' }, '*');
+                  window.close();
+                } else {
+                  window.location.href = '/';
+                }
+              }, 1500);
+            </script>
+          </body>
+        </html>
+      `);
+    } catch (error: any) {
+      console.error('Error in google-cal-auth-callback:', error);
+      res.status(500).send(`Authentication failed: ${error.message}`);
+    }
+  });
+
+  app.post('/api/create-cal-event', express.json(), async (req, res) => {
+    const { clientUid, workoutId, workoutName, date, startTime, durationMinutes, notes } = req.body;
+
+    if (!clientUid || !workoutName || !date) {
+      return res.status(400).json({ error: 'Missing required parameters: clientUid, workoutName, or date.' });
+    }
+
+    const db = getFirestore();
+
+    try {
+      // 1. Read user's calendar tokens from Firestore
+      const userDoc = await db.collection('users').doc(clientUid).get();
+      if (!userDoc.exists) {
+        return res.status(404).json({ error: 'Client user does not exist.' });
+      }
+
+      const userData = userDoc.data();
+      const tokens = userData?.googleCalTokens;
+
+      if (!tokens || !tokens.access_token) {
+        if (workoutId) {
+          await db.collection('workouts').doc(workoutId).update({
+            calSyncStatus: 'not_connected'
+          }).catch(() => {});
+        }
+        return res.json({ status: 'not_connected' });
+      }
+
+      // 2. Initialize OAuth client
+      const clientId = process.env.GOOGLE_CALENDAR_CLIENT_ID;
+      const clientSecret = process.env.GOOGLE_CALENDAR_CLIENT_SECRET;
+
+      if (!clientId || !clientSecret) {
+        return res.status(500).json({ error: 'Google Calendar credentials are not configured on server.' });
+      }
+
+      const oauth2Client = new google.auth.OAuth2(clientId, clientSecret);
+      oauth2Client.setCredentials({
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
+        expiry_date: tokens.expiry_date
+      });
+
+      // 3. Auto token refresh
+      const isExpired = !tokens.expiry_date || (Date.now() + 60 * 1000 >= tokens.expiry_date);
+      if (isExpired && tokens.refresh_token) {
+        console.log(`[Google Cal] Token expired for ${clientUid}. Refreshing...`);
+        try {
+          const { credentials } = await oauth2Client.refreshAccessToken();
+          tokens.access_token = credentials.access_token || tokens.access_token;
+          tokens.expiry_date = credentials.expiry_date || tokens.expiry_date;
+          if (credentials.refresh_token) {
+            tokens.refresh_token = credentials.refresh_token;
+          }
+
+          // Save refreshed tokens
+          await db.collection('users').doc(clientUid).update({
+            googleCalTokens: {
+              access_token: tokens.access_token,
+              refresh_token: tokens.refresh_token,
+              expiry_date: tokens.expiry_date
+            }
+          });
+          oauth2Client.setCredentials(tokens);
+        } catch (refreshErr: any) {
+          console.error(`[Google Cal] Failed to refresh tokens: ${refreshErr.message}`);
+          if (workoutId) {
+            await db.collection('workouts').doc(workoutId).update({
+              calSyncStatus: 'error',
+              calSyncError: refreshErr.message
+            }).catch(() => {});
+          }
+          return res.status(401).json({ error: 'Token refresh failed', details: refreshErr.message });
+        }
+      }
+
+      // 4. Construct Start/End datetime strings
+      const timeStr = startTime || '09:00';
+      const duration = durationMinutes ? parseInt(durationMinutes) : 60;
+      
+      const startDateTimeStr = `${date}T${timeStr}:00`;
+      const startDateObj = new Date(startDateTimeStr);
+      // If startDateTime is invalid, fallback to current day
+      const finalStartDate = isNaN(startDateObj.getTime()) ? new Date() : startDateObj;
+      const finalEndDate = new Date(finalStartDate.getTime() + duration * 60 * 1000);
+
+      const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+      // Check if we already have a calEventId, in which case we might update or create new
+      let calEventIdStr = '';
+      let existingEventId = '';
+      if (workoutId) {
+        const wDoc = await db.collection('workouts').doc(workoutId).get();
+        if (wDoc.exists) {
+          existingEventId = wDoc.data()?.calEventId || '';
+        }
+      }
+
+      const eventBody = {
+        summary: `💪 ${workoutName} — Fit with Nik`,
+        description: `Your custom personalized coaching session scheduled by Coach Nik.\n\nInstructions / Notes:\n${notes || 'No specific notes listed. Keep crushing it!'}`,
+        start: {
+          dateTime: finalStartDate.toISOString(),
+          timeZone: 'UTC'
+        },
+        end: {
+          dateTime: finalEndDate.toISOString(),
+          timeZone: 'UTC'
+        },
+        reminders: {
+          useDefault: false,
+          overrides: [
+            { method: 'popup', minutes: 60 }
+          ]
+        }
+      };
+
+      if (existingEventId) {
+        try {
+          console.log(`[Google Cal] Existing event found: ${existingEventId}. Updating...`);
+          await calendar.events.patch({
+            calendarId: 'primary',
+            eventId: existingEventId,
+            requestBody: eventBody
+          });
+          calEventIdStr = existingEventId;
+        } catch (updateErr: any) {
+          console.error('[Google Cal] Failed to update existing calendar event. Re-creating alternative.', updateErr.message);
+          const createRes = await calendar.events.insert({
+            calendarId: 'primary',
+            requestBody: eventBody
+          });
+          calEventIdStr = createRes.data.id || '';
+        }
+      } else {
+        const createRes = await calendar.events.insert({
+          calendarId: 'primary',
+          requestBody: eventBody
+        });
+        calEventIdStr = createRes.data.id || '';
+      }
+
+      // 5. Save back to Firestore
+      if (workoutId && calEventIdStr) {
+        await db.collection('workouts').doc(workoutId).update({
+          calEventId: calEventIdStr,
+          calSyncStatus: 'synced',
+          startTime: timeStr,
+          durationMinutes: duration
+        });
+        console.log(`[Google Cal] Saved successfully: workout ${workoutId} now references event ID ${calEventIdStr}`);
+      }
+
+      res.json({ status: 'synced', calEventId: calEventIdStr });
+    } catch (error: any) {
+      console.error('Error inside create-cal-event endpoint:', error);
+      if (workoutId) {
+        try {
+          await db.collection('workouts').doc(workoutId).update({
+            calSyncStatus: 'error',
+            calSyncError: error.message
+          });
+        } catch (_) {}
+      }
+      res.status(500).json({ error: 'Failed to create calendar event.', details: error.message });
+    }
+  });
+
   app.get('/api/test-get', (req, res) => {
     res.json({ message: 'API is responding to GET' });
   });
@@ -937,6 +1555,229 @@ async function startServer() {
     } catch (error: any) {
       console.error('External Import Error:', error);
       res.status(500).json({ error: 'Synchronization failed during extraction', details: error.message });
+    }
+  });
+
+  // ====== GOOGLE DOCS PROTOCOL EXPORT ======
+  app.post('/api/create-gdoc', async (req, res) => {
+    const { protocolId, protocolName, sections } = req.body;
+
+    if (!protocolName) {
+      return res.status(400).json({ error: 'Protocol name is required' });
+    }
+    if (!sections || !Array.isArray(sections)) {
+      return res.status(400).json({ error: 'Sections array is required' });
+    }
+
+    const serviceAccountJson = process.env.GOOGLE_DOCS_SERVICE_ACCOUNT_JSON;
+    if (!serviceAccountJson) {
+      console.warn('[Google Docs Export] GOOGLE_DOCS_SERVICE_ACCOUNT_JSON is not configured.');
+      return res.status(400).json({ 
+        error: 'Google Docs integration is not fully configured on the server. Please define GOOGLE_DOCS_SERVICE_ACCOUNT_JSON inside environment variables.' 
+      });
+    }
+
+    try {
+      let credentials;
+      try {
+        credentials = JSON.parse(serviceAccountJson);
+      } catch (parseErr: any) {
+        throw new Error(`Failed to parse service account JSON: ${parseErr.message}`);
+      }
+
+      const cleanPrivateKey = credentials.private_key
+        ? credentials.private_key.replace(/\\n/g, '\n')
+        : undefined;
+
+      if (!credentials.client_email || !cleanPrivateKey) {
+        throw new Error('Service account credentials must include client_email and private_key.');
+      }
+
+      // Initialize JWT Authentication Client for Google APIs using options object
+      const authClient = new google.auth.JWT({
+        email: credentials.client_email,
+        key: cleanPrivateKey,
+        scopes: [
+          'https://www.googleapis.com/auth/documents',
+          'https://www.googleapis.com/auth/drive'
+        ]
+      });
+
+      const docs = google.docs({ version: 'v1', auth: authClient });
+      const drive = google.drive({ version: 'v3', auth: authClient });
+
+      console.log(`[Google Docs Export] Creating document: "${protocolName} — Fit with Nik Protocol"`);
+      
+      // Step 1: Create the Document
+      const createRes = await docs.documents.create({
+        requestBody: {
+          title: `${protocolName} — Fit with Nik Protocol`
+        }
+      });
+
+      const documentId = createRes.data.documentId;
+      if (!documentId) {
+        throw new Error('Document creation succeeded but documentId was not returned.');
+      }
+
+      // Step 2: Build the full text and compute document ranges
+      let fullText = "";
+
+      // Title
+      const titleStart = 1;
+      fullText += `${protocolName}\n\n`;
+      const titleEnd = titleStart + protocolName.length;
+
+      // Dynamic sections and bullet points
+      const headingRanges: { start: number; end: number }[] = [];
+      const bulletRanges: { start: number; end: number }[] = [];
+
+      for (const section of sections) {
+        const headingStart = 1 + fullText.length;
+        const headingText = `${section.name}\n`;
+        fullText += headingText;
+        const headingEnd = headingStart + section.name.length;
+        headingRanges.push({ start: headingStart, end: headingEnd });
+
+        const items = section.exercises || section.bullets || section.items || [];
+        for (const item of items) {
+          const bulletStart = 1 + fullText.length;
+          const bulletText = `${item}\n`;
+          fullText += bulletText;
+          const bulletEnd = bulletStart + item.length;
+          bulletRanges.push({ start: bulletStart, end: bulletEnd });
+        }
+        fullText += "\n"; // Spacer between sections
+      }
+
+      // Footer
+      const footerStart = 1 + fullText.length;
+      const footerText = `Generated by Fit with Nik on ${format(new Date(), 'MMMM d, yyyy')}\n`;
+      fullText += footerText;
+      const footerEnd = footerStart + footerText.length - 1;
+
+      // Step 3: Write the entire compiled text inside the blank document first
+      console.log(`[Google Docs Export] Populating document content (${documentId})`);
+      await docs.documents.batchUpdate({
+        documentId,
+        requestBody: {
+          requests: [
+            {
+              insertText: {
+                location: { index: 1 },
+                text: fullText
+              }
+            }
+          ]
+        }
+      });
+
+      // Step 4: Apply paragraph styles, headings, list markers, and alignments in a separate transaction
+      console.log(`[Google Docs Export] Applying dynamic styles to document`);
+      const styleRequests: any[] = [];
+
+      // Heading 1 for Title
+      styleRequests.push({
+        updateParagraphStyle: {
+          range: {
+            startIndex: titleStart,
+            endIndex: titleEnd
+          },
+          paragraphStyle: {
+            namedStyleType: 'HEADING_1'
+          },
+          fields: 'namedStyleType'
+        }
+      });
+
+      // Heading 2 for Section Names
+      for (const hr of headingRanges) {
+        styleRequests.push({
+          updateParagraphStyle: {
+            range: {
+              startIndex: hr.start,
+              endIndex: hr.end
+            },
+            paragraphStyle: {
+              namedStyleType: 'HEADING_2'
+            },
+            fields: 'namedStyleType'
+          }
+        });
+      }
+
+      // Bullets for Exercises/Items
+      for (const br of bulletRanges) {
+        styleRequests.push({
+          createParagraphBullets: {
+            range: {
+              startIndex: br.start,
+              endIndex: br.end + 1
+            },
+            bulletPreset: 'BULLET_DISC_CIRCLE_SQUARE'
+          }
+        });
+      }
+
+      // Footer styling (italic and center aligned)
+      styleRequests.push({
+        updateParagraphStyle: {
+          range: {
+            startIndex: footerStart,
+            endIndex: footerEnd
+          },
+          paragraphStyle: {
+            namedStyleType: 'NORMAL_TEXT',
+            alignment: 'CENTER'
+          },
+          fields: 'namedStyleType,alignment'
+        }
+      });
+      styleRequests.push({
+        updateTextStyle: {
+          range: {
+            startIndex: footerStart,
+            endIndex: footerEnd
+          },
+          textStyle: {
+            italic: true
+          },
+          fields: 'italic'
+        }
+      });
+
+      // Run styling batch update
+      await docs.documents.batchUpdate({
+        documentId,
+        requestBody: {
+          requests: styleRequests
+        }
+      });
+
+      // Step 5: Update Permissions using Drive API to share with 'anyone' as reader
+      console.log(`[Google Docs Export] Granting reader permission via Link sharing`);
+      await drive.permissions.create({
+        fileId: documentId,
+        requestBody: {
+          role: 'reader',
+          type: 'anyone'
+        }
+      });
+
+      const docUrl = `https://docs.google.com/document/d/${documentId}/edit`;
+      console.log(`[Google Docs Export] Success. Document URL: ${docUrl}`);
+
+      res.json({
+        success: true,
+        url: docUrl
+      });
+
+    } catch (err: any) {
+      console.error('[Google Docs Export] Caught error:', err);
+      res.status(500).json({
+        error: 'Failed to export protocol to Google Doc',
+        details: err.message || String(err)
+      });
     }
   });
 

@@ -1,4 +1,5 @@
 export type UserRole = 'admin' | 'client';
+export type ClientType = 'fitness' | 'knee_injury' | 'back_injury' | 'shoulder_injury';
 
 export interface Badge {
   id: string;
@@ -13,6 +14,7 @@ export interface UserProfile {
   uid: string;
   email: string;
   role: UserRole;
+  clientType?: ClientType;
   displayName?: string;
   photoURL?: string;
   programGoals?: string;
@@ -27,6 +29,17 @@ export interface UserProfile {
   badges?: Badge[];
   status?: 'active' | 'inactive';
   createdAt?: any;
+  stepGoal?: number;
+  googleFitTokens?: {
+    access_token: string;
+    refresh_token: string;
+    expiry_date: number;
+  };
+  googleCalTokens?: {
+    access_token: string;
+    refresh_token: string;
+    expiry_date: number;
+  };
 }
 
 export interface BodyMetrics {
@@ -71,6 +84,11 @@ export interface Workout {
   notes?: string;
   scheduledDate?: any; // Timestamp or Date string
   createdAt?: any;
+  startTime?: string;
+  durationMinutes?: number;
+  calEventId?: string;
+  calSyncStatus?: 'synced' | 'not_connected' | 'error';
+  calSyncError?: string;
 }
 
 export interface Feedback {
@@ -247,4 +265,24 @@ export interface MessageTemplate {
   content: string;
   category: 'motivation' | 'reminder' | 'general';
   createdAt: any;
+}
+
+export interface WeeklyCheckIn {
+  id?: string;
+  uid: string;
+  clientType: ClientType;
+  weekOf: string; // ISO date string of the Sunday (YYYY-MM-DD or full ISO)
+  submittedAt: string; // ISO date string of submission
+  strengthGain?: 'yes' | 'no';
+  painReduction?: 'slight' | 'moderate' | 'no';
+  movementImprovement?: 'slight' | 'moderate' | 'no' | 'yes' | 'no_improvement';
+  workoutPattern?: 'boring' | 'interesting';
+  programRating?: number;
+  sharpPain?: 'yes' | 'no';
+  kneeStiffness?: 'yes' | 'no';
+  overheadReach?: 'yes' | 'no';
+  sleepAffected?: 'yes' | 'no';
+  energyLevel?: number;
+  dietAdherence?: 'yes' | 'partially' | 'no';
+  freeText?: string;
 }

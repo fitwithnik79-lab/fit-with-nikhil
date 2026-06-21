@@ -4,7 +4,7 @@ import { DynamicKineticLogo } from './DynamicKineticLogo';
 import { collection, query, where, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, getDocs, orderBy, deleteDoc, limit, increment } from 'firebase/firestore';
 import { db, storage, auth } from '../lib/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { UserProfile, Workout, Exercise, Feedback, WorkoutTemplate, BodyMetrics, Message, Habit, HabitLog, Goal, MessageTemplate } from '../types';
+import { UserProfile, Workout, Exercise, Feedback, WorkoutTemplate, BodyMetrics, Message, Habit, HabitLog, Goal, MessageTemplate, ClientType, WeeklyCheckIn } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { searchExerciseVideos, parseWorkoutFile, analyzeNutritionFile } from '../lib/gemini';
 import { getFileContentAsText } from '../lib/fileParser';
@@ -12,12 +12,13 @@ import { triggerPushNotification, sendInAppNotification } from '../lib/notificat
 import { SAMPLE_PROGRAMS, WEEKLY_PROGRAMS, WORKOUT_TEMPLATES } from '../constants/workoutTemplates';
 import { NUTRITION_TEMPLATES } from '../constants/nutritionTemplates';
 import { NutritionPlan, NutritionTemplate } from '../types';
-import { Plus, Users, Calendar, CheckCircle, ExternalLink, ChevronRight, Search, Activity, Clock, MessageSquare, Trash2, Edit2, ChevronDown, ChevronUp, Save, Download, Layout, Copy, ChevronLeft, Play, Sparkles, Loader2, Droplets, Footprints, Flame, Scale, LayoutDashboard, X, Bell, Send, BookOpen, Layers, Upload, Youtube, Utensils, Shield, Zap, ArrowRight, Check, Target, RefreshCcw, Circle, Settings, Camera, TrendingUp, Calculator, Dumbbell, FileSearch, FileType } from 'lucide-react';
+import { Plus, Users, Calendar, CheckCircle, ExternalLink, ChevronRight, Search, Activity, Clock, MessageSquare, Trash2, Edit2, ChevronDown, ChevronUp, Save, Download, Layout, Copy, ChevronLeft, Play, Sparkles, Loader2, Droplets, Footprints, Flame, Scale, LayoutDashboard, X, Bell, Send, BookOpen, Layers, Upload, Youtube, Utensils, Shield, Zap, ArrowRight, Check, Target, RefreshCcw, Circle, Settings, Camera, TrendingUp, Calculator, Dumbbell, FileSearch, FileType, FileText } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, playNotificationSound, getAvatarUrl } from '../lib/utils';
 import Chat from './Chat';
 import { GoogleSheetsSyncWidget } from './GoogleSheetsSyncWidget';
 import { AdminKPICommandBar } from './AdminKPICommandBar';
+import { PulseGrid } from './PulseGrid';
 import { ProgramTemplate } from '../types';
 import { seedDemoRosterAndPlans } from '../lib/rosterSeeder';
 import { addDays, startOfToday } from 'date-fns';
@@ -77,7 +78,8 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
   const [selectedFeedbackForDetails, setSelectedFeedbackForDetails] = useState<Feedback | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'dash' | 'clients' | 'tracker' | 'calendar' | 'broadcast' | 'templates' | 'settings'>('dash');
+  const [activeTab, setActiveTab] = useState<'dash' | 'clients' | 'tracker' | 'calendar' | 'broadcast' | 'templates' | 'settings' | 'pulse'>('dash');
+  const [weeklyCheckIns, setWeeklyCheckIns] = useState<WeeklyCheckIn[]>([]);
   const [showChat, setShowChat] = useState(false);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [confirmModal, setConfirmModal] = useState<{ title: string, message: string, onConfirm: () => void } | null>(null);
@@ -206,6 +208,19 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
       unsubNutrition();
       unsubGoals();
       unsubHabitLogs();
+    };
+  }, []);
+
+  useEffect(() => {
+    const qCheckIns = query(collection(db, 'weeklyCheckIns'), orderBy('submittedAt', 'desc'));
+    const unsubCheckIns = onSnapshot(qCheckIns, (snapshot) => {
+      setWeeklyCheckIns(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as WeeklyCheckIn)));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'weeklyCheckIns_intelligence');
+    });
+
+    return () => {
+      unsubCheckIns();
     };
   }, []);
 
@@ -538,6 +553,7 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
             { id: 'dash', label: 'Actions', icon: LayoutDashboard },
             { id: 'clients', label: 'Athletes', icon: Users, badge: unreadMessagesCount },
             { id: 'tracker', label: 'Flow', icon: Activity },
+            { id: 'pulse', label: 'Pulse', icon: Activity },
             { id: 'calendar', label: 'Plan', icon: Calendar },
             { id: 'broadcast', label: 'Broadcast', icon: Send },
             { id: 'templates', label: 'Vault', icon: BookOpen },
@@ -1304,6 +1320,7 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
                         <div className="lg:col-span-2 space-y-6">
                           <ClientDetailsEditor client={selectedClient} showToast={showToast} />
                           <WorkoutManager client={selectedClient} clients={clients} showToast={showToast} confirmAction={confirmAction} />
+                          <ClientUpcomingWorkouts client={selectedClient} />
                           <ClientHistory client={selectedClient} />
                         </div>
                         <div className="lg:col-span-1">
@@ -1551,7 +1568,7 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
           >
-            <TemplatesView clients={clients} showToast={showToast} confirmAction={confirmAction} />
+            <TemplatesView clients={clients} showToast={showToast} confirmAction={confirmAction} profile={profile} />
           </motion.div>
         )}
 
@@ -1652,6 +1669,56 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
                 </div>
               </div>
             </div>
+          </motion.div>
+        )}
+
+        {activeTab === 'pulse' && (
+          <motion.div
+            key="pulse"
+            initial={{ opacity: 0, y: 15 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -15 }}
+            className="space-y-8"
+          >
+            <div className="bg-zinc-900 border border-white/5 rounded-[40px] p-8 md:p-12 relative overflow-hidden shadow-2xl">
+              <div className="absolute top-0 right-0 p-8 opacity-[0.02] pointer-events-none">
+                <Activity className="w-64 h-64 text-orange-500 animate-pulse" />
+              </div>
+
+              <div className="relative z-10 max-w-3xl">
+                <div className="flex items-center gap-2.5 mb-4">
+                  <span className="p-2.5 bg-orange-500/10 text-orange-500 rounded-2xl">
+                    <Activity className="w-5 h-5 text-orange-500 animate-pulse" />
+                  </span>
+                  <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Athlete Intelligence Core</span>
+                </div>
+                <h1 className="text-3xl md:text-5xl font-black italic tracking-tighter text-white uppercase leading-none">Weekly Pulse</h1>
+                <p className="text-sm md:text-base text-zinc-400 mt-4 leading-relaxed font-semibold">
+                  Review how your athletes are progressing, moving, or recovering this week. Touch base with athletes who gave lower program ratings to optimize their compliance and trust.
+                </p>
+              </div>
+            </div>
+
+            <PulseGrid
+              clients={clients}
+              weeklyCheckIns={weeklyCheckIns}
+              onMessageClient={(uid) => {
+                const foundClient = clients.find(c => c.uid === uid);
+                if (foundClient) {
+                  setSelectedClient(foundClient);
+                  setActiveTab('clients');
+                  setClientViewTab('chat');
+                }
+              }}
+              onProgramClient={(uid) => {
+                const foundClient = clients.find(c => c.uid === uid);
+                if (foundClient) {
+                  setSelectedClient(foundClient);
+                  setActiveTab('clients');
+                  setClientViewTab('program');
+                }
+              }}
+            />
           </motion.div>
         )}
 
@@ -1911,7 +1978,7 @@ function FeedbackDetailModal({ feedback, workout, onClose }: { feedback: Feedbac
   );
 }
 
-function TemplatesView({ clients, showToast, confirmAction }: { clients: UserProfile[], showToast: (m: string, t?: 'success' | 'error') => void, confirmAction: (t: string, m: string, c: () => void) => void }) {
+function TemplatesView({ clients, showToast, confirmAction, profile }: { clients: UserProfile[], showToast: (m: string, t?: 'success' | 'error') => void, confirmAction: (t: string, m: string, c: () => void) => void, profile?: UserProfile }) {
   const [selectedTemplate, setSelectedTemplate] = useState<WorkoutTemplate | null>(null);
   const [selectedProgram, setSelectedProgram] = useState<ProgramTemplate | null>(null);
   const [selectedNutritionTemplate, setSelectedNutritionTemplate] = useState<NutritionTemplate | null>(null);
@@ -1935,6 +2002,95 @@ function TemplatesView({ clients, showToast, confirmAction }: { clients: UserPro
   const [editingTemplateCategory, setEditingTemplateCategory] = useState('');
   const [editingTemplateDescription, setEditingTemplateDescription] = useState('');
   const [savingTemplate, setSavingTemplate] = useState(false);
+  
+  const [exportingId, setExportingId] = useState<string | null>(null);
+
+  const handleExportToGoogleDoc = async (item: any, type: 'program' | 'workout' | 'nutrition') => {
+    if (profile?.role !== 'admin') {
+      showToast('Unauthorized: Only administrators can export protocols to Google Docs.', 'error');
+      return;
+    }
+
+    const itemId = item.id || item.name;
+    setExportingId(itemId);
+
+    try {
+      let sections: any[] = [];
+      let protocolName = item.name;
+
+      if (type === 'program') {
+        sections = item.weeks?.flatMap((week: any) => 
+          week.days?.map((day: any) => ({
+            name: `Week ${week.weekNumber} - Day ${day.dayNumber}: ${day.label || 'Workout'}`,
+            exercises: day.exercises?.map((e: any) => 
+              `${e.name} — ${e.sets} sets x ${e.reps} reps (Rest: ${e.rest || '60s'})${e.weight ? `, Weight: ${e.weight}` : ''}${e.coachNote ? ` | Note: ${e.coachNote}` : ''}`
+            ) || []
+          })) || []
+        ) || [];
+      } else if (type === 'workout') {
+        sections = [
+          {
+            name: "Exercises",
+            exercises: item.exercises?.map((e: any) => 
+              `${e.name} — ${e.sets} sets x ${e.reps} reps (Rest: ${e.rest || '60s'})${e.weight ? `, Weight: ${e.weight}` : ''}${e.coachNote ? ` | Note: ${e.coachNote}` : ''}`
+            ) || []
+          }
+        ];
+      } else if (type === 'nutrition') {
+        sections = [
+          {
+            name: "Macronutrient Targets",
+            exercises: [
+              `Calories: ${item.targetMacros?.calories || 0} kcal`,
+              `Protein: ${item.targetMacros?.protein || 0}g`,
+              `Carbs: ${item.targetMacros?.carbs || 0}g`,
+              `Fats: ${item.targetMacros?.fats || 0}g`
+            ]
+          },
+          {
+            name: "Guidelines & Protocols",
+            exercises: item.guidelines || []
+          }
+        ];
+        if (item.plannedMeals && item.plannedMeals.length > 0) {
+          sections.push({
+            name: "Meal Schedule",
+            exercises: item.plannedMeals.map((m: any) => `${m.time || 'Meal'} — ${m.name}: ${m.notes || ''}`)
+          });
+        }
+      }
+
+      const response = await fetch('/api/create-gdoc', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          protocolId: item.id || '',
+          protocolName,
+          sections
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to export protocol');
+      }
+
+      if (data.url) {
+        window.open(data.url, '_blank');
+        showToast('Protocol exported to Google Doc ✓', 'success');
+      } else {
+        throw new Error('No document URL returned from server.');
+      }
+    } catch (error: any) {
+      console.error('Error exporting to Google Doc:', error);
+      showToast(error.message || 'Error creating Google Document.', 'error');
+    } finally {
+      setExportingId(null);
+    }
+  };
 
   // States for duplicating exercises into program
   const [showProgramAddExerciseModal, setShowProgramAddExerciseModal] = useState(false);
@@ -2679,6 +2835,20 @@ function TemplatesView({ clients, showToast, confirmAction }: { clients: UserPro
                     >
                       <Copy className="w-5 h-5" />
                     </button>
+                    {profile?.role === 'admin' && (
+                      <button 
+                        onClick={() => handleExportToGoogleDoc(program, 'program')}
+                        disabled={exportingId !== null}
+                        className="p-4 bg-zinc-800 text-zinc-400 hover:text-blue-400 rounded-2xl transition-all flex items-center justify-center"
+                        title="Export to Google Doc"
+                      >
+                        {exportingId === (program.id || program.name) ? (
+                          <Loader2 className="w-5 h-5 animate-spin text-orange-500" />
+                        ) : (
+                          <FileText className="w-5 h-5" />
+                        )}
+                      </button>
+                    )}
                     {program.id && !WEEKLY_PROGRAMS.some(wp => wp.id === program.id) && (
                       <button 
                         onClick={() => deleteTemplate(program.id!, 'program')}
@@ -2776,6 +2946,20 @@ function TemplatesView({ clients, showToast, confirmAction }: { clients: UserPro
                       >
                         <Copy className="w-4 h-4" />
                       </button>
+                      {profile?.role === 'admin' && (
+                        <button 
+                          onClick={() => handleExportToGoogleDoc(template, 'workout')}
+                          disabled={exportingId !== null}
+                          className="p-3 bg-zinc-950 text-zinc-500 hover:text-blue-400 rounded-xl transition-all flex items-center justify-center"
+                          title="Export to Google Doc"
+                        >
+                          {exportingId === (template.id || template.name) ? (
+                            <Loader2 className="w-4 h-4 animate-spin text-orange-500" />
+                          ) : (
+                            <FileText className="w-4 h-4" />
+                          )}
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -2902,6 +3086,20 @@ function TemplatesView({ clients, showToast, confirmAction }: { clients: UserPro
                     >
                       <Edit2 className="w-4 h-4" />
                     </button>
+                    {profile?.role === 'admin' && (
+                      <button 
+                        onClick={() => handleExportToGoogleDoc(plan, 'nutrition')}
+                        disabled={exportingId !== null}
+                        className="p-3 bg-zinc-950 border border-white/5 text-zinc-500 hover:text-blue-400 transition-all rounded-xl flex items-center justify-center"
+                        title="Export to Google Doc"
+                      >
+                        {exportingId === (plan.id || plan.name) ? (
+                          <Loader2 className="w-4 h-4 animate-spin text-orange-500" />
+                        ) : (
+                          <FileText className="w-4 h-4" />
+                        )}
+                      </button>
+                    )}
                     {plan.id && !NUTRITION_TEMPLATES.some(nt => nt.id === plan.id) && (
                       <button 
                         onClick={() => deleteNutritionTemplate(plan.id!)}
@@ -4724,6 +4922,7 @@ function ClientDetailsEditor({ client, showToast }: { client: UserProfile, showT
   const [goals, setGoals] = useState(client.programGoals || '');
   const [details, setDetails] = useState(client.programDetails || '');
   const [photoURL, setPhotoURL] = useState(client.photoURL || '');
+  const [clientType, setClientType] = useState<ClientType>(client.clientType || 'fitness');
   const [saving, setSaving] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
 
@@ -4731,6 +4930,7 @@ function ClientDetailsEditor({ client, showToast }: { client: UserProfile, showT
     setGoals(client.programGoals || '');
     setDetails(client.programDetails || '');
     setPhotoURL(client.photoURL || '');
+    setClientType(client.clientType || 'fitness');
   }, [client]);
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -4764,7 +4964,8 @@ function ClientDetailsEditor({ client, showToast }: { client: UserProfile, showT
       await updateDoc(userDocRef, {
         programGoals: goals,
         programDetails: details,
-        photoURL: photoURL
+        photoURL: photoURL,
+        clientType: clientType
       }).catch(err => handleFirestoreError(err, OperationType.UPDATE, `users/${client.uid}`));
       showToast('Client profile and program updated!');
     } catch (error) {
@@ -4810,7 +5011,7 @@ function ClientDetailsEditor({ client, showToast }: { client: UserProfile, showT
           </label>
         </div>
 
-        <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-4 w-full">
+        <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-4 w-full">
           <div className="space-y-1">
             <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest">Photo Resource Link</label>
             <input 
@@ -4820,6 +5021,19 @@ function ClientDetailsEditor({ client, showToast }: { client: UserProfile, showT
               placeholder="https://..."
               className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-xs focus:ring-1 focus:ring-orange-500 outline-none"
             />
+          </div>
+          <div className="space-y-1">
+            <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest">Client Type</label>
+            <select
+              value={clientType}
+              onChange={(e) => setClientType(e.target.value as ClientType)}
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-xs focus:ring-1 focus:ring-orange-500 outline-none text-white font-bold"
+            >
+              <option value="fitness">Fitness</option>
+              <option value="knee_injury">Knee Injury</option>
+              <option value="back_injury">Back Injury</option>
+              <option value="shoulder_injury">Shoulder Injury</option>
+            </select>
           </div>
           <div className="space-y-1">
             <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest">Athlete Program Status</label>
@@ -4849,6 +5063,117 @@ function ClientDetailsEditor({ client, showToast }: { client: UserProfile, showT
             className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm focus:ring-1 focus:ring-orange-500 outline-none min-h-[100px]"
           />
         </div>
+      </div>
+    </div>
+  );
+}
+
+function ClientUpcomingWorkouts({ client }: { client: UserProfile }) {
+  const [workouts, setWorkouts] = useState<Workout[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const q = query(
+      collection(db, 'workouts'),
+      where('clientId', '==', client.uid)
+    );
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }) as Workout)
+        .filter(w => !!w.scheduledDate)
+        .sort((a, b) => {
+          const dateA = a.scheduledDate?.toString() || '';
+          const dateB = b.scheduledDate?.toString() || '';
+          return dateA.localeCompare(dateB);
+        });
+      setWorkouts(data);
+      setLoading(false);
+    }, (error) => {
+      console.error('Error fetching client workouts:', error);
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, [client.uid]);
+
+  return (
+    <div className="bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden flex flex-col p-6 space-y-4 shadow-[0_20px_50px_rgba(0,0,0,0.3)]">
+      <div className="flex items-center justify-between border-b border-zinc-800 pb-4">
+        <div className="flex items-center gap-2.5">
+          <div className="p-2 bg-orange-500/10 rounded-xl text-orange-500">
+            <Calendar className="w-4 h-4" />
+          </div>
+          <div>
+            <h3 className="font-bold text-base text-white">Upcoming Target Schedule</h3>
+            <p className="text-[10px] text-zinc-500 font-medium">Verify Google Calendar sync status for each assigned protocol.</p>
+          </div>
+        </div>
+        <span className="text-[9px] font-black uppercase text-zinc-400 bg-zinc-950 px-2.5 py-1 rounded-full border border-zinc-800 tracking-wider">
+          {workouts.length} Scheduled
+        </span>
+      </div>
+
+      <div className="divide-y divide-zinc-800/60 max-h-[380px] overflow-y-auto no-scrollbar">
+        {loading ? (
+          <div className="py-8 text-center text-xs text-zinc-500 italic">Retrieving synchronization status...</div>
+        ) : workouts.length === 0 ? (
+          <div className="py-12 text-center space-y-3">
+            <div className="w-12 h-12 bg-zinc-950 border border-zinc-800 rounded-2xl flex items-center justify-center mx-auto text-zinc-700">
+              <Calendar className="w-5 h-5" />
+            </div>
+            <p className="text-zinc-500 text-xs italic">No scheduled training sessions for this client.</p>
+          </div>
+        ) : (
+          workouts.map((w) => {
+            const status = w.calSyncStatus || 'not_connected';
+            const syncError = w.calSyncError;
+            
+            return (
+              <div key={w.id} className="py-3 flex items-center justify-between group first:pt-0 last:pb-0">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-white uppercase tracking-tight">
+                      Week {w.weekNumber} • Day {w.dayNumber}
+                    </span>
+                    <span className="text-[10px] text-zinc-500 font-mono">
+                      ({w.startTime || '09:00'}, {w.durationMinutes || 60}m)
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-zinc-400 font-semibold flex items-center gap-1">
+                    <span>📅</span> {w.scheduledDate}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {status === 'synced' && (
+                    <span 
+                      className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-[9px] font-bold leading-none bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 uppercase tracking-widest"
+                      title={`Synced! Google Event ID: ${w.calEventId || 'None'}`}
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                      Synced ✓
+                    </span>
+                  )}
+                  {status === 'not_connected' && (
+                    <span 
+                      className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-[9px] font-bold leading-none bg-zinc-950 border border-zinc-800 text-zinc-500 uppercase tracking-widest"
+                      title="Client has not connected their Google Calendar yet."
+                    >
+                      Not Connected
+                    </span>
+                  )}
+                  {status === 'error' && (
+                    <span 
+                      className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-[9px] font-bold leading-none bg-rose-500/15 border border-rose-500/30 text-rose-500 uppercase tracking-widest"
+                      title={syncError || "Failed to create Google Calendar event."}
+                    >
+                      ⚠️ Sync Error
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })
+        )}
       </div>
     </div>
   );
@@ -5991,6 +6316,14 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
   const [scheduledDate, setScheduledDate] = useState<string>(
     initialWorkout?.scheduledDate || (initialDate ? format(initialDate, 'yyyy-MM-dd') : '')
   );
+  const [startTime, setStartTime] = useState(initialWorkout?.startTime || '09:00');
+  const [durationMinutes, setDurationMinutes] = useState(initialWorkout?.durationMinutes || 60);
+  const [syncToCalendar, setSyncToCalendar] = useState(!!client?.googleCalTokens?.access_token);
+
+  useEffect(() => {
+    setSyncToCalendar(!!client?.googleCalTokens?.access_token);
+  }, [client?.googleCalTokens]);
+
   const [exercises, setExercises] = useState<Exercise[]>(
     initialWorkout?.exercises || [{ name: '', youtubeLink: '', sets: 3, reps: '12', weight: '', rest: '60s', coachNote: '' }]
   );
@@ -6298,17 +6631,25 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
         exercises: exercises.filter(e => e.name.trim() !== ''),
         notes: workoutNotes,
         scheduledDate: scheduledDate || null,
+        startTime: startTime,
+        durationMinutes: durationMinutes,
         updatedAt: serverTimestamp()
       };
+
+      let workoutIdSaved = initialWorkout?.id || '';
 
       if (initialWorkout?.id) {
         await updateDoc(doc(db, 'workouts', initialWorkout.id), workoutData)
           .catch(err => handleFirestoreError(err, OperationType.UPDATE, 'workouts'));
       } else {
-        await addDoc(collection(db, 'workouts'), {
+        const docRef = await addDoc(collection(db, 'workouts'), {
           ...workoutData,
           createdAt: serverTimestamp()
         }).catch(err => handleFirestoreError(err, OperationType.CREATE, 'workouts'));
+        
+        if (docRef) {
+          workoutIdSaved = docRef.id;
+        }
 
         // Automated Milestone: New activity assigned
         const q = query(collection(db, 'users'), where('role', '==', 'admin'), limit(1));
@@ -6332,6 +6673,35 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
           { type: 'workout', week, day }
         );
       }
+
+      if (syncToCalendar && scheduledDate && workoutIdSaved) {
+        try {
+          const syncRes = await fetch('/api/create-cal-event', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              clientUid: client.uid,
+              workoutId: workoutIdSaved,
+              workoutName: `Week ${week}, Day ${day}`,
+              date: scheduledDate,
+              startTime: startTime,
+              durationMinutes: durationMinutes,
+              notes: workoutNotes
+            })
+          });
+          const syncData = await syncRes.json();
+          if (syncData.status === 'not_connected') {
+            showToast('Workout saved. Note: client has not connected Google Calendar.', 'success');
+          } else if (syncRes.ok) {
+            console.log('[Google Cal] Synced successfully:', syncData);
+          } else {
+            console.error('[Google Cal] Failed calendar sync:', syncData);
+          }
+        } catch (syncErr) {
+          console.error('[Google Cal] Sync request caught exception:', syncErr);
+        }
+      }
+
       if (!onSave) {
         showToast(initialWorkout?.id ? 'Workout updated successfully!' : 'Workout assigned successfully!', 'success');
       } else {
@@ -6566,7 +6936,53 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
               onChange={(e) => setScheduledDate(e.target.value)}
               className="bg-transparent text-[10px] font-black uppercase outline-none text-zinc-400 px-2"
             />
+            {scheduledDate && (
+              <>
+                <div className="w-[1px] h-4 bg-white/5" />
+                <div className="flex items-center gap-1.5 px-2">
+                  <span className="text-[10px] text-zinc-600 uppercase font-bold">Time</span>
+                  <input 
+                    type="time" 
+                    value={startTime} 
+                    onChange={(e) => setStartTime(e.target.value)}
+                    className="bg-transparent text-xs font-black text-white outline-none w-[70px]"
+                  />
+                </div>
+                <div className="w-[1px] h-4 bg-white/5" />
+                <div className="flex items-center gap-1.5 px-2">
+                  <span className="text-[10px] text-zinc-600 uppercase font-bold">Mins</span>
+                  <input 
+                    type="number" 
+                    value={durationMinutes} 
+                    onChange={(e) => setDurationMinutes(parseInt(e.target.value) || 0)}
+                    className="w-12 bg-transparent text-xs font-black text-white text-center outline-none"
+                    min="1"
+                  />
+                </div>
+              </>
+            )}
           </div>
+
+          {scheduledDate && (
+            <div className="flex items-center gap-2 bg-zinc-950 p-1.5 rounded-2xl border border-white/5 px-4 shrink-0 shadow-inner">
+              <label className="flex items-center gap-2 select-none cursor-pointer">
+                <input 
+                  type="checkbox" 
+                  checked={syncToCalendar} 
+                  onChange={(e) => setSyncToCalendar(e.target.checked)}
+                  className="w-4 h-4 rounded border-white/10 bg-zinc-900 text-orange-500 focus:ring-0 outline-none cursor-pointer"
+                />
+                <span className="text-[9px] font-black uppercase tracking-wider text-zinc-400">
+                  Sync to Calendar
+                </span>
+              </label>
+              <div className="w-[1px] h-3 bg-zinc-800" />
+              <span className={cn(
+                "inline-block w-1.5 h-1.5 rounded-full",
+                client?.googleCalTokens?.access_token ? "bg-green-500 animate-pulse" : "bg-zinc-600"
+              )} title={client?.googleCalTokens?.access_token ? "Google Calendar Connected" : "No Google Calendar connected"} />
+            </div>
+          )}
 
           <button 
             onClick={() => setShowTemplateModal(true)}

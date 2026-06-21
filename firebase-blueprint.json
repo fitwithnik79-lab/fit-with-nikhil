@@ -203,6 +203,30 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["clientId", "title", "message", "type", "isRead", "createdAt"]
+    },
+    "WeeklyCheckIn": {
+      "title": "Weekly Check-In",
+      "description": "An athlete's weekly review of performance, pain, and compliance.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "UID of the athlete" },
+        "clientType": { "type": "string", "enum": ["fitness", "knee_injury", "back_injury", "shoulder_injury"] },
+        "weekOf": { "type": "string", "format": "date" },
+        "submittedAt": { "type": "string", "format": "date-time" },
+        "programRating": { "type": "number" },
+        "energyLevel": { "type": "number" },
+        "strengthGain": { "type": "string", "enum": ["yes", "no"] },
+        "painReduction": { "type": "string", "enum": ["slight", "moderate", "no"] },
+        "movementImprovement": { "type": "string", "enum": ["slight", "moderate", "no", "yes", "no_improvement"] },
+        "workoutPattern": { "type": "string", "enum": ["boring", "interesting"] },
+        "sharpPain": { "type": "string", "enum": ["yes", "no"] },
+        "kneeStiffness": { "type": "string", "enum": ["yes", "no"] },
+        "overheadReach": { "type": "string", "enum": ["yes", "no"] },
+        "sleepAffected": { "type": "string", "enum": ["yes", "no"] },
+        "dietAdherence": { "type": "string", "enum": ["yes", "partially", "no"] },
+        "freeText": { "type": "string" }
+      },
+      "required": ["uid", "clientType", "weekOf", "submittedAt"]
     }
   },
   "firestore": {
@@ -253,6 +277,10 @@
     "/notifications/{notificationId}": {
       "schema": "Notification",
       "description": "In-app notifications for users"
+    },
+    "/weeklyCheckIns/{checkInId}": {
+      "schema": "WeeklyCheckIn",
+      "description": "Weekly athlete check-in responses"
     }
   }
 }
