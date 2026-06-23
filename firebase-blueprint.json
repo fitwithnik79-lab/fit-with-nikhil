@@ -227,6 +227,20 @@
         "freeText": { "type": "string" }
       },
       "required": ["uid", "clientType", "weekOf", "submittedAt"]
+    },
+    "Badge": {
+      "title": "Badge",
+      "description": "An earned achievement or milestone badge.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "icon": { "type": "string" },
+        "description": { "type": "string" },
+        "unlockedAt": { "type": "string" },
+        "category": { "type": "string" }
+      },
+      "required": ["id", "name", "icon", "description", "unlockedAt", "category"]
     }
   },
   "firestore": {
@@ -281,6 +295,10 @@
     "/weeklyCheckIns/{checkInId}": {
       "schema": "WeeklyCheckIn",
       "description": "Weekly athlete check-in responses"
+    },
+    "/users/{uid}/badges/{badgeId}": {
+      "schema": "Badge",
+      "description": "Subcollection storing unlocked achievement badges for a user"
     }
   }
 }

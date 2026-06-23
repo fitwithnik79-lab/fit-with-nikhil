@@ -35,7 +35,8 @@ import { format } from 'date-fns';
 
 interface HeroMomentumBannerProps {
   profile: UserProfile;
-  streak: number;
+  workoutStreak: number;
+  habitStreak: number;
   completedToday: boolean;
   todayWorkout: Workout | null;
   completedSessions: number;
@@ -70,11 +71,10 @@ function getGreeting(): string {
 
 function getMotivationalLine(streak: number, completedToday: boolean): string {
   if (completedToday) return "Session complete. Coach Nik is proud. 🏆";
-  if (streak >= 21) return "Legendary status. Don't break the chain.";
-  if (streak >= 14) return "Two weeks straight. You're built different.";
-  if (streak >= 7) return "One week strong. Keep the fire burning.";
-  if (streak >= 3) return "Building momentum. Today matters.";
-  return "Your next session starts your streak.";
+  if (streak >= 4) return "Four consecutive weeks. Legendary consistency! 🏆";
+  if (streak >= 2) return "Two weeks straight. You're building solid momentum!";
+  if (streak >= 1) return "Week streak active. Keep the fire burning.";
+  return "Crush your workout to build your weekly streak.";
 }
 
 const containerVariants = {
@@ -88,7 +88,8 @@ const itemVariants = {
 
 export function HeroMomentumBanner({
   profile,
-  streak,
+  workoutStreak,
+  habitStreak,
   completedToday,
   todayWorkout,
   completedSessions,
@@ -100,7 +101,7 @@ export function HeroMomentumBanner({
   className,
 }: HeroMomentumBannerProps) {
   const greeting = useMemo(() => getGreeting(), []);
-  const motivationalLine = useMemo(() => getMotivationalLine(streak, completedToday), [streak, completedToday]);
+  const motivationalLine = useMemo(() => getMotivationalLine(workoutStreak, completedToday), [workoutStreak, completedToday]);
   const firstName = profile.displayName?.split(' ')[0] || 'Athlete';
   const todayStr = format(new Date(), 'EEEE, MMMM d');
 
@@ -226,13 +227,24 @@ export function HeroMomentumBanner({
           </div>
         </motion.div>
 
-        {/* Right: Streak ring */}
-        <motion.div variants={itemVariants} className="flex justify-center lg:justify-end">
+        {/* Right: Streak rings */}
+        <motion.div variants={itemVariants} className="flex flex-col sm:flex-row gap-6 justify-center lg:justify-end w-full lg:w-auto self-center lg:self-start">
           <StreakRingWidget
-            streak={streak}
+            streak={workoutStreak}
             completedToday={completedToday}
             totalSessions={completedSessions}
-            size="lg"
+            size="md"
+            label="Workout Streak"
+            unit={workoutStreak === 1 ? "week" : "weeks"}
+            colorTheme="orange"
+          />
+          <StreakRingWidget
+            streak={habitStreak}
+            completedToday={habitsCompletedToday > 0}
+            size="md"
+            label="Daily Habits"
+            unit={habitStreak === 1 ? "day" : "days"}
+            colorTheme="green"
           />
         </motion.div>
       </div>

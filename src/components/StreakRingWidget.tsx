@@ -19,6 +19,9 @@ interface StreakRingWidgetProps {
   totalSessions?: number;
   className?: string;
   size?: 'sm' | 'md' | 'lg';
+  label?: string;
+  unit?: string;
+  colorTheme?: 'orange' | 'green';
 }
 
 const SIZE_MAP = {
@@ -33,6 +36,9 @@ export function StreakRingWidget({
   totalSessions = 0,
   className,
   size = 'md',
+  label,
+  unit,
+  colorTheme = 'orange',
 }: StreakRingWidgetProps) {
   const prevCompleted = useRef(completedToday);
   const [pulseRing, setPulseRing] = useState(false);
@@ -43,9 +49,16 @@ export function StreakRingWidget({
   const offset = circumference - progress * circumference;
 
   // Milestones for colour shift
+  const isGreen = colorTheme === 'green';
   const ringColor =
     streak === 0
       ? '#27272a' // zinc-800
+      : isGreen
+      ? streak < 7
+        ? '#10b981' // emerald-500
+        : streak < 14
+        ? '#059669' // emerald-600
+        : '#34d399' // emerald-400
       : streak < 7
       ? '#f97316' // orange-500
       : streak < 14
@@ -55,6 +68,12 @@ export function StreakRingWidget({
   const glowColor =
     streak === 0
       ? 'transparent'
+      : isGreen
+      ? streak < 7
+        ? 'rgba(16,185,129,0.35)'
+        : streak < 14
+        ? 'rgba(5,150,105,0.35)'
+        : 'rgba(52,211,153,0.40)'
       : streak < 7
       ? 'rgba(249,115,22,0.35)'
       : streak < 14
@@ -70,14 +89,16 @@ export function StreakRingWidget({
         particleCount: 120,
         spread: 80,
         origin: { y: 0.6 },
-        colors: ['#ff4d00', '#f97316', '#facc15', '#ffffff'],
+        colors: isGreen ? ['#10b981', '#34d399', '#a7f3d0', '#ffffff'] : ['#ff4d00', '#f97316', '#facc15', '#ffffff'],
         gravity: 1.2,
       });
     }
     prevCompleted.current = completedToday;
-  }, [completedToday]);
+  }, [completedToday, isGreen]);
 
-  const flameEmoji = streak >= 30 ? '🏆' : streak >= 14 ? '⚡' : '🔥';
+  const flameEmoji = isGreen 
+    ? (streak >= 30 ? '🌱🏆' : streak >= 14 ? '⚡' : '🌱') 
+    : (streak >= 30 ? '🏆' : streak >= 14 ? '⚡' : '🔥');
 
   return (
     <div className={cn('relative flex flex-col items-center gap-3', className)}>
@@ -176,7 +197,7 @@ export function StreakRingWidget({
             {streak}
           </motion.span>
           <span className={cn('font-black uppercase tracking-widest text-zinc-500 mt-0.5', dims.subFontSize)}>
-            day{streak !== 1 ? 's' : ''}
+            {unit || (streak === 1 ? 'day' : 'days')}
           </span>
           <span className="text-base mt-1 leading-none">{flameEmoji}</span>
         </div>
@@ -185,17 +206,20 @@ export function StreakRingWidget({
       {/* Labels */}
       <div className="text-center space-y-1">
         <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500">
-          Current Streak
+          {label || 'Current Streak'}
         </p>
         <div className="flex items-center justify-center gap-3">
           {streak >= 7 && (
             <motion.div
               initial={{ opacity: 0, scale: 0.5 }}
               animate={{ opacity: 1, scale: 1 }}
-              className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-orange-500/10 border border-orange-500/20"
+              className={cn(
+                "flex items-center gap-1 px-2 py-0.5 rounded-full",
+                isGreen ? "bg-emerald-500/10 border border-emerald-500/20" : "bg-orange-500/10 border border-orange-500/20"
+              )}
             >
-              <Zap className="w-2.5 h-2.5 text-orange-500" />
-              <span className="text-[9px] font-black uppercase tracking-wider text-orange-500">
+              <Zap className={cn("w-2.5 h-2.5", isGreen ? "text-emerald-500" : "text-orange-500")} />
+              <span className={cn("text-[9px] font-black uppercase tracking-wider", isGreen ? "text-emerald-400" : "text-orange-500")}>
                 {streak >= 21 ? 'Legendary' : streak >= 14 ? 'On Fire' : 'Hot Streak'}
               </span>
             </motion.div>

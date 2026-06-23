@@ -633,6 +633,99 @@ async function startServer() {
     }
   });
 
+  app.post('/api/evaluate-badges', async (req, res) => {
+    const { uid } = req.body;
+    if (!uid) {
+      return res.status(400).json({ error: 'Missing uid' });
+    }
+
+    try {
+      const db = getFirestore();
+      
+      const result = await db.runTransaction(async (transaction) => {
+        // Reads
+        const userRef = db.collection('users').doc(uid);
+        const userDoc = await transaction.get(userRef);
+        if (!userDoc.exists) {
+          throw new Error('User does not exist');
+        }
+        const userData = userDoc.data() || {};
+        const streak = userData.streak || 0;
+
+        const feedbackQuery = db.collection('feedback')
+          .where('clientId', '==', uid)
+          .where('completionStatus', '==', true);
+        const feedbackSnapshot = await transaction.get(feedbackQuery);
+        const completedWorkoutsCount = feedbackSnapshot.size;
+
+        const mealsQuery = db.collection('meals')
+          .where('clientId', '==', uid);
+        const mealsSnapshot = await transaction.get(mealsQuery);
+        const mealsCount = mealsSnapshot.size;
+
+        const badgesSubcollectionRef = db.collection('users').doc(uid).collection('badges');
+        const badgesSnapshot = await transaction.get(badgesSubcollectionRef);
+        const existingBadgeIds = new Set(badgesSnapshot.docs.map(doc => doc.id));
+
+        const newBadgesToInsert: any[] = [];
+
+        // Check Badges:
+        // 1. Consistency King (Streak >= 7)
+        if (streak >= 7 && !existingBadgeIds.has('consistency_1')) {
+          newBadgesToInsert.push({
+            id: 'consistency_1',
+            name: '7-Day Streak',
+            icon: 'Flame',
+            description: 'Maintain a 7-day activity streak',
+            unlockedAt: new Date().toISOString(),
+            category: 'consistency'
+          });
+        }
+
+        // 2. Decathlon (Workout Count >= 10)
+        if (completedWorkoutsCount >= 10 && !existingBadgeIds.has('workout_10')) {
+          newBadgesToInsert.push({
+            id: 'workout_10',
+            name: 'Decathlon',
+            icon: 'Shield',
+            description: 'Complete 10 full workouts',
+            unlockedAt: new Date().toISOString(),
+            category: 'workout'
+          });
+        }
+
+        // 3. Meal Master (Meal Count >= 50)
+        if (mealsCount >= 50 && !existingBadgeIds.has('nutrition_log')) {
+          newBadgesToInsert.push({
+            id: 'nutrition_log',
+            name: 'Meal Master',
+            icon: 'Utensils',
+            description: 'Log 50 meals with AI',
+            unlockedAt: new Date().toISOString(),
+            category: 'nutrition'
+          });
+        }
+
+        // Writes
+        for (const badge of newBadgesToInsert) {
+          const badgeDocRef = badgesSubcollectionRef.doc(badge.id);
+          transaction.set(badgeDocRef, badge);
+        }
+
+        return {
+          evaluated: true,
+          newBadgesCount: newBadgesToInsert.length,
+          newBadges: newBadgesToInsert
+        };
+      });
+
+      res.json(result);
+    } catch (error: any) {
+      console.error('Error in /api/evaluate-badges:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Health check
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', environment: process.env.NODE_ENV, timestamp: new Date().toISOString() });
@@ -1569,39 +1662,53 @@ async function startServer() {
       return res.status(400).json({ error: 'Sections array is required' });
     }
 
+    const authHeader = req.headers.authorization;
+    const isUserToken = authHeader && authHeader.startsWith('Bearer ');
     const serviceAccountJson = process.env.GOOGLE_DOCS_SERVICE_ACCOUNT_JSON;
-    if (!serviceAccountJson) {
-      console.warn('[Google Docs Export] GOOGLE_DOCS_SERVICE_ACCOUNT_JSON is not configured.');
+
+    if (!isUserToken && !serviceAccountJson) {
+      console.warn('[Google Docs Export] Neither user OAuth token nor GOOGLE_DOCS_SERVICE_ACCOUNT_JSON is provided.');
       return res.status(400).json({ 
-        error: 'Google Docs integration is not fully configured on the server. Please define GOOGLE_DOCS_SERVICE_ACCOUNT_JSON inside environment variables.' 
+        error: 'Google Docs integration is not configured. Please define GOOGLE_DOCS_SERVICE_ACCOUNT_JSON inside environment variables or connect your Google Account.' 
       });
     }
 
     try {
-      let credentials;
-      try {
-        credentials = JSON.parse(serviceAccountJson);
-      } catch (parseErr: any) {
-        throw new Error(`Failed to parse service account JSON: ${parseErr.message}`);
+      let authClient: any;
+
+      if (isUserToken) {
+        const userAccessToken = authHeader.substring(7);
+        const oauthClient = new google.auth.OAuth2();
+        oauthClient.setCredentials({ access_token: userAccessToken });
+        authClient = oauthClient;
+        console.log(`[Google Docs Export] Authenticating via User OAuth2 Access Token.`);
+      } else {
+        let credentials;
+        try {
+          credentials = JSON.parse(serviceAccountJson!);
+        } catch (parseErr: any) {
+          throw new Error(`Failed to parse service account JSON: ${parseErr.message}`);
+        }
+
+        const cleanPrivateKey = credentials.private_key
+          ? credentials.private_key.replace(/\\n/g, '\n')
+          : undefined;
+
+        if (!credentials.client_email || !cleanPrivateKey) {
+          throw new Error('Service account credentials must include client_email and private_key.');
+        }
+
+        // Initialize JWT Authentication Client for Google APIs using options object
+        authClient = new google.auth.JWT({
+          email: credentials.client_email,
+          key: cleanPrivateKey,
+          scopes: [
+            'https://www.googleapis.com/auth/documents',
+            'https://www.googleapis.com/auth/drive'
+          ]
+        });
+        console.log(`[Google Docs Export] Authenticating via configured Service Account.`);
       }
-
-      const cleanPrivateKey = credentials.private_key
-        ? credentials.private_key.replace(/\\n/g, '\n')
-        : undefined;
-
-      if (!credentials.client_email || !cleanPrivateKey) {
-        throw new Error('Service account credentials must include client_email and private_key.');
-      }
-
-      // Initialize JWT Authentication Client for Google APIs using options object
-      const authClient = new google.auth.JWT({
-        email: credentials.client_email,
-        key: cleanPrivateKey,
-        scopes: [
-          'https://www.googleapis.com/auth/documents',
-          'https://www.googleapis.com/auth/drive'
-        ]
-      });
 
       const docs = google.docs({ version: 'v1', auth: authClient });
       const drive = google.drive({ version: 'v3', auth: authClient });
@@ -1756,13 +1863,38 @@ async function startServer() {
 
       // Step 5: Update Permissions using Drive API to share with 'anyone' as reader
       console.log(`[Google Docs Export] Granting reader permission via Link sharing`);
-      await drive.permissions.create({
-        fileId: documentId,
-        requestBody: {
-          role: 'reader',
-          type: 'anyone'
+      let sharedSuccessfully = false;
+      try {
+        await drive.permissions.create({
+          fileId: documentId,
+          requestBody: {
+            role: 'reader',
+            type: 'anyone'
+          }
+        });
+        sharedSuccessfully = true;
+      } catch (shareErr: any) {
+        console.warn('[Google Docs Export] Failed to grant public reader permission:', shareErr.message || shareErr);
+        // If link sharing fails, try sharing directly with the owner/user email if passed in request
+        const { userEmail } = req.body;
+        if (userEmail) {
+          console.log(`[Google Docs Export] Attempting specific user address share with: ${userEmail}`);
+          try {
+            await drive.permissions.create({
+              fileId: documentId,
+              requestBody: {
+                role: 'writer',
+                type: 'user',
+                emailAddress: userEmail
+              }
+            });
+            sharedSuccessfully = true;
+            console.log(`[Google Docs Export] Successfully shared Google Doc with specific user: ${userEmail}`);
+          } catch (specificShareErr: any) {
+            console.error('[Google Docs Export] Direct user address share unsuccessful:', specificShareErr.message || specificShareErr);
+          }
         }
-      });
+      }
 
       const docUrl = `https://docs.google.com/document/d/${documentId}/edit`;
       console.log(`[Google Docs Export] Success. Document URL: ${docUrl}`);

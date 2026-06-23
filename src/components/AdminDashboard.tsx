@@ -90,8 +90,13 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
   const [clientSearch, setClientSearch] = useState('');
   const [clientStatusTab, setClientStatusTab] = useState<'active' | 'inactive' | 'all'>('active');
   const [isSeeding, setIsSeeding] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
 
   const handleSeedRoster = async () => {
+    if (!(import.meta as any).env?.DEV) {
+      showToast("Failsafe database seeding is disabled in production.", "error");
+      return;
+    }
     setIsSeeding(true);
     try {
       await seedDemoRosterAndPlans();
@@ -615,40 +620,90 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
             {clients.length === 0 && (
               <motion.div 
                 variants={bentoItemVariants}
-                className="col-span-full bg-gradient-to-br from-zinc-900 to-zinc-950 border border-orange-500/30 p-10 rounded-[40px] shadow-2xl relative overflow-hidden"
+                className="col-span-full bg-gradient-to-br from-zinc-900 to-zinc-950 border border-zinc-800 p-10 rounded-[40px] shadow-2xl relative overflow-hidden"
               >
                 <div className="absolute top-0 right-0 w-96 h-96 bg-orange-500/5 rounded-full blur-3xl -mr-20 -mt-20 pointer-events-none" />
-                <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-8 relative z-10">
-                  <div className="space-y-4 max-w-2xl">
+                <div className="flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-8 relative z-10">
+                  <div className="space-y-6 max-w-2xl">
                     <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-orange-500/10 border border-orange-500/20 text-orange-400 text-xs font-black uppercase tracking-wider">
-                      <Sparkles className="w-4 h-4" /> DB Synchronization Required
+                      <Users className="w-4 h-4" /> Coach Onboarding
                     </div>
                     <h3 className="text-3xl font-black italic tracking-tight uppercase leading-none">
-                      Restore Your <span className="text-orange-500">21 Athlete Profiles</span>
+                      Add Your <span className="text-orange-500 font-extrabold">First Client</span>
                     </h3>
                     <p className="text-zinc-400 text-sm leading-relaxed">
-                      Your Firestore database is currently empty. Easily restore and re-synchronize your entire 21 elite fitness rosters, detailed nutrition regimes, historical logging metrics, and workout routines instantly.
+                      Your coaching portal is active and online. Connect with your athletes by sharing your portal invitation link. Once they register and sign in, their profile will automatically sync and populate in your dashboard.
                     </p>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+                      <div className="bg-zinc-950/50 rounded-2xl p-4 border border-zinc-800/60">
+                        <span className="text-orange-500 font-black text-lg block mb-1">Step 1</span>
+                        <span className="text-zinc-300 text-xs font-semibold">Copy Portal Link</span>
+                        <p className="text-zinc-500 text-[11px] mt-1">Copy and share your portal URL with athletes.</p>
+                      </div>
+                      <div className="bg-zinc-950/50 rounded-2xl p-4 border border-zinc-800/60">
+                        <span className="text-orange-500 font-black text-lg block mb-1">Step 2</span>
+                        <span className="text-zinc-300 text-xs font-semibold">Athlete Sign-up</span>
+                        <p className="text-zinc-500 text-[11px] mt-1">They log in using their own Google account.</p>
+                      </div>
+                      <div className="bg-zinc-950/50 rounded-2xl p-4 border border-zinc-800/60">
+                        <span className="text-orange-500 font-black text-lg block mb-1">Step 3</span>
+                        <span className="text-zinc-300 text-xs font-semibold">Roster Synced</span>
+                        <p className="text-zinc-500 text-[11px] mt-1">Begin programming custom fitness splits!</p>
+                      </div>
+                    </div>
                   </div>
-                  <motion.button
-                    whileHover={{ scale: 1.03 }}
-                    whileTap={{ scale: 0.98 }}
-                    onClick={handleSeedRoster}
-                    disabled={isSeeding}
-                    className="px-8 py-4 bg-orange-500 hover:bg-orange-600 disabled:bg-zinc-800 text-white font-black uppercase tracking-wider text-xs rounded-2xl flex items-center gap-3 shadow-xl shadow-orange-950/50 transition-all border border-orange-400/20 self-stretch lg:self-auto justify-center cursor-pointer"
-                  >
-                    {isSeeding ? (
-                      <>
-                        <Loader2 className="w-5 h-5 animate-spin" />
-                        Synchronizing...
-                      </>
-                    ) : (
-                      <>
-                        <RefreshCcw className="w-5 h-5 animate-spin-once" />
-                        Deploy 21 Profiles
-                      </>
+
+                  <div className="flex flex-col gap-3 justify-center min-w-[280px]">
+                    <motion.button
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={() => {
+                        navigator.clipboard.writeText(window.location.origin);
+                        setCopiedLink(true);
+                        showToast("Invitation Link Copied!", "success");
+                        setTimeout(() => setCopiedLink(false), 2000);
+                      }}
+                      className="px-6 py-4 bg-orange-500 hover:bg-orange-600 text-white font-black uppercase tracking-wider text-xs rounded-2xl flex items-center justify-center gap-3 shadow-xl shadow-orange-950/50 transition-all border border-orange-400/20 cursor-pointer"
+                    >
+                      {copiedLink ? (
+                        <>
+                          <Check className="w-5 h-5" />
+                          Link Copied!
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-5 h-5" />
+                          Copy Invitation Link
+                        </>
+                      )}
+                    </motion.button>
+
+                    {(import.meta as any).env?.DEV && (
+                      <div className="border-t border-zinc-800 mt-2 pt-4">
+                        <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-extrabold mb-2 text-center">Local Dev Utility</p>
+                        <motion.button
+                          whileHover={{ scale: 1.02 }}
+                          whileTap={{ scale: 0.98 }}
+                          onClick={handleSeedRoster}
+                          disabled={isSeeding}
+                          className="w-full px-6 py-3 bg-zinc-950 hover:bg-zinc-900 border border-zinc-800 hover:border-orange-500/30 text-zinc-400 hover:text-zinc-200 font-bold uppercase tracking-wider text-[10px] rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer"
+                        >
+                          {isSeeding ? (
+                            <>
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              Seeding Demo...
+                            </>
+                          ) : (
+                            <>
+                              <RefreshCcw className="w-3.5 h-3.5" />
+                              Seed Demo Roster
+                            </>
+                          )}
+                        </motion.button>
+                      </div>
                     )}
-                  </motion.button>
+                  </div>
                 </div>
               </motion.div>
             )}
@@ -1731,7 +1786,6 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
           >
             <AdminProfileSection user={user} profile={profile} showToast={showToast} />
             <IntegrationSection showToast={showToast} />
-            <RosterRestoreSection isSeeding={isSeeding} handleSeedRoster={handleSeedRoster} />
           </motion.div>
         )}
       </AnimatePresence>
@@ -1979,6 +2033,27 @@ function FeedbackDetailModal({ feedback, workout, onClose }: { feedback: Feedbac
 }
 
 function TemplatesView({ clients, showToast, confirmAction, profile }: { clients: UserProfile[], showToast: (m: string, t?: 'success' | 'error') => void, confirmAction: (t: string, m: string, c: () => void) => void, profile?: UserProfile }) {
+  const [googleAccessToken, setGoogleAccessTokenState] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('google_access_token_fitwithnik');
+    } catch {
+      return null;
+    }
+  });
+
+  const setGoogleAccessToken = (token: string | null) => {
+    setGoogleAccessTokenState(token);
+    try {
+      if (token) {
+        localStorage.setItem('google_access_token_fitwithnik', token);
+      } else {
+        localStorage.removeItem('google_access_token_fitwithnik');
+      }
+    } catch (e) {
+      console.warn('Could not store google access token in localStorage:', e);
+    }
+  };
+
   const [selectedTemplate, setSelectedTemplate] = useState<WorkoutTemplate | null>(null);
   const [selectedProgram, setSelectedProgram] = useState<ProgramTemplate | null>(null);
   const [selectedNutritionTemplate, setSelectedNutritionTemplate] = useState<NutritionTemplate | null>(null);
@@ -2004,11 +2079,41 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
   const [savingTemplate, setSavingTemplate] = useState(false);
   
   const [exportingId, setExportingId] = useState<string | null>(null);
+  const [isAuthorizingGDoc, setIsAuthorizingGDoc] = useState(false);
+  const [gDocPendingExport, setGDocPendingExport] = useState<{ item: any, type: 'program' | 'workout' | 'nutrition' } | null>(null);
 
-  const handleExportToGoogleDoc = async (item: any, type: 'program' | 'workout' | 'nutrition') => {
+  const handleExportToGoogleDoc = async (item: any, type: 'program' | 'workout' | 'nutrition', forceUserOAuth = false) => {
     if (profile?.role !== 'admin') {
       showToast('Unauthorized: Only administrators can export protocols to Google Docs.', 'error');
       return;
+    }
+
+    let currentToken = googleAccessToken;
+
+    if (forceUserOAuth && !currentToken) {
+      try {
+        setIsAuthorizingGDoc(true);
+        const provider = new GoogleAuthProvider();
+        provider.addScope('https://www.googleapis.com/auth/documents');
+        provider.addScope('https://www.googleapis.com/auth/drive.file');
+        const result = await signInWithPopup(auth, provider);
+        const credential = GoogleAuthProvider.credentialFromResult(result);
+        if (credential?.accessToken) {
+          currentToken = credential.accessToken;
+          if (setGoogleAccessToken) {
+            setGoogleAccessToken(currentToken);
+          }
+          showToast('Google Account connected successfully! Transferring document...', 'success');
+        } else {
+          throw new Error('Failed to obtain Google access token.');
+        }
+      } catch (authError: any) {
+        console.error('Google Auth Popup Error:', authError);
+        showToast(`Google Authentication failed: ${authError.message || authError}`, 'error');
+        return;
+      } finally {
+        setIsAuthorizingGDoc(false);
+      }
     }
 
     const itemId = item.id || item.name;
@@ -2060,21 +2165,32 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
         }
       }
 
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json'
+      };
+
+      if (currentToken) {
+        headers['Authorization'] = `Bearer ${currentToken}`;
+      }
+
       const response = await fetch('/api/create-gdoc', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        headers,
         body: JSON.stringify({
           protocolId: item.id || '',
           protocolName,
-          sections
+          sections,
+          userEmail: auth.currentUser?.email || profile?.email || ''
         })
       });
 
       const data = await response.json();
 
       if (!response.ok) {
+        if (!currentToken && (response.status === 400 || response.status === 403 || response.status === 500)) {
+          setGDocPendingExport({ item, type });
+          return;
+        }
         throw new Error(data.error || 'Failed to export protocol');
       }
 
@@ -2090,6 +2206,149 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
     } finally {
       setExportingId(null);
     }
+  };
+
+  const downloadAsWordDoc = (item: any, type: 'program' | 'workout' | 'nutrition') => {
+    let sections: any[] = [];
+    let protocolName = item.name;
+
+    if (type === 'program') {
+      sections = item.weeks?.flatMap((week: any) => 
+        week.days?.map((day: any) => ({
+          name: `Week ${week.weekNumber} - Day ${day.dayNumber}: ${day.label || 'Workout'}`,
+          exercises: day.exercises?.map((e: any) => 
+            `${e.name} — ${e.sets} sets x ${e.reps} reps (Rest: ${e.rest || '60s'})${e.weight ? `, Weight: ${e.weight}` : ''}${e.coachNote ? ` | Note: ${e.coachNote}` : ''}`
+          ) || []
+        })) || []
+      ) || [];
+    } else if (type === 'workout') {
+      sections = [
+        {
+          name: "Exercises",
+          exercises: item.exercises?.map((e: any) => 
+            `${e.name} — ${e.sets} sets x ${e.reps} reps (Rest: ${e.rest || '60s'})${e.weight ? `, Weight: ${e.weight}` : ''}${e.coachNote ? ` | Note: ${e.coachNote}` : ''}`
+          ) || []
+        }
+      ];
+    } else if (type === 'nutrition') {
+      sections = [
+        {
+          name: "Macronutrient Targets",
+          exercises: [
+            `Calories: ${item.targetMacros?.calories || 0} kcal`,
+            `Protein: ${item.targetMacros?.protein || 0}g`,
+            `Carbs: ${item.targetMacros?.carbs || 0}g`,
+            `Fats: ${item.targetMacros?.fats || 0}g`
+          ]
+        },
+        {
+          name: "Guidelines & Protocols",
+          exercises: item.guidelines || []
+        }
+      ];
+      if (item.plannedMeals && item.plannedMeals.length > 0) {
+        sections.push({
+          name: "Meal Schedule",
+          exercises: item.plannedMeals.map((m: any) => `${m.time || 'Meal'} — ${m.name}: ${m.notes || ''}`)
+        });
+      }
+    }
+
+    const dateStr = format(new Date(), 'MMMM d, yyyy');
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>${protocolName}</title>
+        <style>
+          body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #1a1a1a;
+            margin: 40px;
+          }
+          .header-box {
+            border-bottom: 3px solid #ea580c;
+            padding-bottom: 12px;
+            margin-bottom: 30px;
+          }
+          h1 {
+            font-size: 26pt;
+            color: #ea580c; /* Brand orange color */
+            margin: 0 0 6px 0;
+            font-weight: bold;
+          }
+          .subtitle {
+            font-size: 11pt;
+            color: #71717a;
+            margin: 0;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+          }
+          h2 {
+            font-size: 16pt;
+            color: #27272a;
+            margin-top: 35px;
+            margin-bottom: 15px;
+            border-left: 5px solid #ea580c;
+            padding-left: 12px;
+            font-weight: bold;
+          }
+          ul {
+            margin-top: 5px;
+            margin-bottom: 25px;
+            padding-left: 24px;
+          }
+          li {
+            margin-bottom: 10px;
+            font-size: 11pt;
+            color: #3f3f46;
+          }
+          .footer {
+            margin-top: 60px;
+            border-top: 1px solid #e4e4e7;
+            padding-top: 20px;
+            font-size: 9pt;
+            font-style: italic;
+            color: #71717a;
+            text-align: center;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="header-box">
+          <h1>${protocolName}</h1>
+          <p class="subtitle">Fit with Nik — Private Client Protocol</p>
+        </div>
+        
+        ${sections.map(section => `
+          <h2>${section.name}</h2>
+          <ul>
+            ${(section.exercises || []).map((exercise: string) => `
+              <li>${exercise}</li>
+            `).join('')}
+          </ul>
+        `).join('')}
+        
+        <div class="footer">
+          Generated via Coach Admin Dashboard on ${dateStr}
+        </div>
+      </body>
+      </html>
+    `;
+
+    const blob = new Blob(['\ufeff' + htmlContent], { type: 'application/msword' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    const safeFilename = protocolName.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    link.download = `${safeFilename}_protocol.doc`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showToast('Vault Protocol downloaded as Microsoft Word document ✓', 'success');
   };
 
   // States for duplicating exercises into program
@@ -4094,6 +4353,89 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
                 >
                   Close
                 </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {gDocPendingExport && (
+          <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-[100] flex items-center justify-center p-6">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="bg-zinc-950 border border-zinc-800 rounded-[32px] p-8 max-w-md w-full relative overflow-hidden"
+            >
+              <div className="absolute top-0 right-0 p-6">
+                <button
+                  type="button"
+                  onClick={() => setGDocPendingExport(null)}
+                  className="p-2 bg-zinc-900 border border-zinc-800 rounded-full text-zinc-400 hover:text-white hover:border-zinc-700 transition-all"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="flex flex-col items-center text-center space-y-6">
+                <div className="inline-flex p-4 bg-orange-500/10 border border-orange-500/20 rounded-3xl text-orange-500">
+                  <Shield className="w-8 h-8" />
+                </div>
+
+                <div className="space-y-2">
+                  <h3 className="text-xl font-bold tracking-tight text-white">Google Integration Restricted</h3>
+                  <p className="text-zinc-450 text-xs leading-relaxed">
+                    The default server-side service account is restricted or not authorized in this workspace. 
+                    Connect your personal Google account to export this protocol safely, or download it immediately as a formatted offline Word Document!
+                  </p>
+                </div>
+
+                <div className="w-full space-y-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const pending = gDocPendingExport;
+                      setGDocPendingExport(null);
+                      await handleExportToGoogleDoc(pending.item, pending.type, true);
+                    }}
+                    disabled={isAuthorizingGDoc}
+                    className="w-full py-4 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white font-black text-xs uppercase tracking-widest rounded-2xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-orange-500/20"
+                  >
+                    {isAuthorizingGDoc ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Authorizing...
+                      </>
+                    ) : (
+                      <>
+                        <ExternalLink className="w-4 h-4" />
+                        Connect Account & Export
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const pending = gDocPendingExport;
+                      setGDocPendingExport(null);
+                      downloadAsWordDoc(pending.item, pending.type);
+                    }}
+                    className="w-full py-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-white font-black text-xs uppercase tracking-widest rounded-2xl transition-all flex items-center justify-center gap-2"
+                  >
+                    <Download className="w-4 h-4 text-orange-500" />
+                    Download Word Doc (.doc)
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setGDocPendingExport(null)}
+                    className="w-full py-4 text-zinc-500 hover:text-zinc-450 font-black text-xs uppercase tracking-widest rounded-2xl transition-all"
+                  >
+                    Cancel Action
+                  </button>
+                </div>
               </div>
             </motion.div>
           </div>
@@ -9393,43 +9735,6 @@ const IntegrationSection = ({ showToast }: { showToast: (m: string) => void }) =
   );
 };
 
-const RosterRestoreSection = ({ isSeeding, handleSeedRoster }: { isSeeding: boolean, handleSeedRoster: () => void }) => {
-  return (
-    <div className="mt-8">
-      <div className="bg-zinc-900 border border-white/5 rounded-[40px] p-8 md:p-12">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="space-y-2">
-            <h3 className="text-3xl font-black uppercase italic tracking-tighter text-orange-500 flex items-center gap-3">
-              <Users className="w-8 h-8" />
-              Roster & Backup Recovery
-            </h3>
-            <p className="text-zinc-500 text-sm max-w-xl">
-              Force direct synchronization of your full athlete registry with original training logs, nutrition protocols, daily track metrics, and habit schedules.
-            </p>
-          </div>
-          <motion.button
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={handleSeedRoster}
-            disabled={isSeeding}
-            className="px-6 py-4 bg-zinc-950 border border-white/10 hover:border-orange-500/50 hover:text-orange-400 text-zinc-100 font-black uppercase tracking-wider text-xs rounded-2xl flex items-center gap-3 transition-all cursor-pointer"
-          >
-            {isSeeding ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Synchronizing Database...
-              </>
-            ) : (
-              <>
-                <RefreshCcw className="w-4 h-4" />
-                Rebuild 21 Athlete Profiles
-              </>
-            )}
-          </motion.button>
-        </div>
-      </div>
-    </div>
-  );
-};
+
 
 

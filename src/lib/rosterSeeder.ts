@@ -277,6 +277,10 @@ export async function hasRosterSufficientData(coachEmail: string): Promise<boole
 }
 
 export async function seedDemoRosterAndPlans() {
+  if (!(import.meta as any).env?.DEV) {
+    console.warn("Seeding roster of athletes is disabled outside development environment (import.meta.env.DEV check failed).");
+    return;
+  }
   const batch = writeBatch(db);
 
   for (const client of DEMO_CLIENTS) {

@@ -132,6 +132,16 @@ service cloud.firestore {
              (!('energyLevel' in data) || (data.energyLevel is int || data.energyLevel is float));
     }
 
+    function isValidBadge(data) {
+      return data.keys().hasAll(['id', 'name', 'icon', 'description', 'unlockedAt', 'category']) &&
+             data.id is string && data.id.size() <= 128 &&
+             data.name is string && data.name.size() <= 128 &&
+             data.icon is string && data.icon.size() <= 128 &&
+             data.description is string && data.description.size() <= 1024 &&
+             data.unlockedAt is string && data.unlockedAt.size() <= 64 &&
+             data.category is string && data.category.size() <= 128;
+    }
+
     // ===============================================================
     // Collection Rules
     // ===============================================================
@@ -144,6 +154,11 @@ service cloud.firestore {
       );
       allow create: if isSignedIn() && request.auth.uid == userId && isValidUser(incoming());
       allow update: if isSignedIn() && (isAdmin() || (request.auth.uid == userId && incoming().role == existing().role));
+
+      match /badges/{badgeId} {
+        allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+        allow write: if isAdmin() && isValidBadge(incoming());
+      }
     }
 
     match /nutritionPlans/{planId} {

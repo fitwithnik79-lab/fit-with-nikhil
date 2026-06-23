@@ -90,6 +90,7 @@ import {
   addMonths, 
   subMonths,
   subDays,
+  subWeeks,
   isToday,
   parseISO,
   startOfDay,
@@ -1354,6 +1355,45 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     return streak;
   };
 
+  const calculateWorkoutStreak = (feedbacks: Feedback[]): number => {
+    const completedFeeds = feedbacks.filter(f => f.completionStatus === true);
+    if (completedFeeds.length === 0) return 0;
+
+    const weekKeys = new Set<string>();
+    completedFeeds.forEach(f => {
+      if (!f.createdAt) return;
+      const date = (f.createdAt as any).toDate ? (f.createdAt as any).toDate() : new Date(f.createdAt as any);
+      if (date instanceof Date && !isNaN(date.getTime())) {
+        const weekStart = startOfWeek(date, { weekStartsOn: 0 }); // Sunday-based standard
+        weekKeys.add(format(weekStart, 'yyyy-MM-dd'));
+      }
+    });
+
+    if (weekKeys.size === 0) return 0;
+
+    let currentRef = startOfWeek(new Date(), { weekStartsOn: 0 });
+    let currentRefKey = format(currentRef, 'yyyy-MM-dd');
+
+    // If neither current week nor last week has completion, streak is broken (0)
+    if (!weekKeys.has(currentRefKey)) {
+      currentRef = subWeeks(currentRef, 1);
+      currentRefKey = format(currentRef, 'yyyy-MM-dd');
+      if (!weekKeys.has(currentRefKey)) {
+        return 0;
+      }
+    }
+
+    // Traverse backward
+    let streak = 0;
+    while (weekKeys.has(currentRefKey)) {
+      streak++;
+      currentRef = subWeeks(currentRef, 1);
+      currentRefKey = format(currentRef, 'yyyy-MM-dd');
+    }
+
+    return streak;
+  };
+
   const [currentWorkout, setCurrentWorkout] = useState<Workout | null>(null);
   const [allWorkouts, setAllWorkouts] = useState<Workout[]>([]);
   const [allFeedback, setAllFeedback] = useState<Feedback[]>([]);
@@ -1665,47 +1705,19 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     return () => unsubscribe();
   }, [clientId]);
 
-  // Achievement Badge Logic
+  // Real-time subcollection Badge subscription
+  const [unlockedBadges, setUnlockedBadges] = useState<any[]>([]);
+
   useEffect(() => {
-    if (!clientId || !profile) return;
-    
-    const checkBadges = async () => {
-      const currentBadges = profile.badges || [];
-      const newBadges = [...currentBadges];
-      let updated = false;
-
-      // 1. Consistency King (Streak)
-      if (profile.streak && profile.streak >= 7 && !currentBadges.find(b => b.id === 'consistency_1')) {
-        newBadges.push({ id: 'consistency_1', name: '7-Day Streak', icon: 'Flame', description: 'Maintain a 7-day activity streak', unlockedAt: new Date().toISOString(), category: 'consistency' });
-        updated = true;
-      }
-
-      // 2. Decathlon (Workout Count)
-      const completedWorkouts = allFeedback.filter(f => f.completionStatus).length;
-      if (completedWorkouts >= 10 && !currentBadges.find(b => b.id === 'workout_10')) {
-        newBadges.push({ id: 'workout_10', name: 'Decathlon', icon: 'Shield', description: 'Complete 10 full workouts', unlockedAt: new Date().toISOString(), category: 'workout' });
-        updated = true;
-      }
-
-      // 3. Meal Master (Meal Count)
-      if (meals.length >= 50 && !currentBadges.find(b => b.id === 'nutrition_log')) {
-        newBadges.push({ id: 'nutrition_log', name: 'Meal Master', icon: 'Utensils', description: 'Log 50 meals with AI', unlockedAt: new Date().toISOString(), category: 'nutrition' });
-        updated = true;
-      }
-
-      if (updated && !isPreview) {
-        try {
-          await updateDoc(doc(db, 'users', clientId), { badges: newBadges });
-        } catch (error) {
-          handleFirestoreError(error, OperationType.UPDATE, `users/${clientId}`);
-        }
-      }
-    };
-
-    if (!loading) {
-      checkBadges();
-    }
-  }, [profile?.streak, allFeedback.length, meals.length, clientId, loading, isPreview]);
+    if (!clientId) return;
+    const unsubscribe = onSnapshot(collection(db, 'users', clientId, 'badges'), (snapshot) => {
+      const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setUnlockedBadges(list);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, `users/${clientId}/badges`);
+    });
+    return () => unsubscribe();
+  }, [clientId]);
 
   const handleTogglePlannedMeal = async (mealId: string) => {
     if (!activeNutritionPlan?.id || !activeNutritionPlan.plannedMeals) return;
@@ -1963,12 +1975,10 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   }, [clientId]);
 
   useEffect(() => {
-    // Get feedback for the last 30 days
-    const thirtyDaysAgo = subDays(new Date(), 90);
+    // Get all feedback for accurate historical streak calculation
     const q = query(
       collection(db, 'feedback'),
       where('clientId', '==', clientId),
-      where('createdAt', '>=', thirtyDaysAgo),
       orderBy('createdAt', 'desc')
     );
 
@@ -2068,6 +2078,32 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
         motivationalMessage,
         createdAt: serverTimestamp()
       }).catch(err => handleFirestoreError(err, OperationType.CREATE, 'feedback'));
+
+      // Calculate the new week-based workout streak including this new workout, and update profile.streak in Firestore
+      const newFeedbackItem: Feedback = {
+        clientId: clientId,
+        workoutId: workout.id || "",
+        weekNumber: workout.weekNumber,
+        dayNumber: workout.dayNumber,
+        completionStatus: true,
+        clientNote: clientNote,
+        createdAt: new Date() as any // immediate local date for calculation
+      };
+      const computedNewWorkoutStreak = calculateWorkoutStreak([newFeedbackItem, ...allFeedback]);
+      await updateDoc(doc(db, 'users', clientId), {
+        streak: computedNewWorkoutStreak
+      }).catch(err => {
+        console.error("Failed to update profile.streak in Firestore:", err);
+      });
+
+      // Fire badge evaluation server endpoint
+      if (!isPreview) {
+        fetch('/api/evaluate-badges', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ uid: clientId })
+        }).catch(err => console.error("Failed to fire badge evaluation:", err));
+      }
 
       // AI Milestone Messages
       const workoutCount = allWorkouts.filter(w => w.id && w.exercises.some(e => e.completedWeight)).length + 1;
@@ -2390,7 +2426,8 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                     {/* Welcome Section */}
                     <HeroMomentumBanner
                       profile={profile}
-                      streak={profile.streak || calculateStreakFromMetrics(metrics)}
+                      workoutStreak={profile.streak !== undefined && profile.streak > 0 ? profile.streak : calculateWorkoutStreak(allFeedback)}
+                      habitStreak={calculateStreakFromMetrics(metrics)}
                       completedToday={isWorkoutCompletedToday}
                       todayWorkout={currentWorkout}
                       completedSessions={allFeedback.filter(f => f.completionStatus).length}
@@ -2649,6 +2686,8 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                   user={user} 
                   profile={profile} 
                   setShowChat={setShowChat} 
+                  isCalConnected={isCalConnected}
+                  handleConnectGoogleCalendar={handleConnectGoogleCalendar}
                 />
               </motion.div>
             )}
@@ -2989,7 +3028,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                        Achievements & Badges
                     </h3>
                     <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest bg-zinc-950 px-3 py-1 rounded-full border border-zinc-800">
-                      {profile.badges?.filter(b => b.unlockedAt).length || 0} / 8 UNLOCKED
+                      {unlockedBadges?.filter(b => b.unlockedAt).length || 0} / 8 UNLOCKED
                     </span>
                   </div>
                   
@@ -3004,7 +3043,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                       { id: 'elite_tier', name: 'Elite Status', icon: 'Crown', desc: 'Coach Nik marked you as Elite', cat: 'milestone' },
                       { id: 'macro_perfect', name: 'Macro Perfect', icon: 'Target', desc: 'Hit targets within 5% error', cat: 'nutrition' },
                     ].map((b) => {
-                      const isUnlocked = profile.badges?.find(pb => pb.id === b.id)?.unlockedAt;
+                      const isUnlocked = unlockedBadges?.find(pb => pb.id === b.id)?.unlockedAt;
                       const IconComp = {
                          Flame, Shield, Utensils, Sun, Zap, Droplets, Crown, Target
                       }[b.icon] || Award;
@@ -5245,6 +5284,7 @@ function MealAI({
     setLogging(true);
     setLogMealError(null);
     try {
+      const isPreview = user.uid !== profile.uid;
       const todayStr = format(new Date(), 'yyyy-MM-dd');
       
       const mealCounts = meals.filter(m => m.date === todayStr).length;
@@ -5310,6 +5350,15 @@ function MealAI({
         await sendAutomatedCoachMessage("Great start to the day! Tracking your first meal is 80% of the battle. Keep it up! 🥗");
       } else if (mealCounts === 2) {
         await sendAutomatedCoachMessage("Consistency is key! You've tracked 3 meals today. Your body will thank you! 🌟");
+      }
+
+      // Fire badge evaluation server endpoint
+      if (!isPreview) {
+        fetch('/api/evaluate-badges', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ uid: user.uid })
+        }).catch(err => console.error("Failed to fire badge evaluation on meal log:", err));
       }
 
       setImage(null);
@@ -6028,10 +6077,18 @@ function MealAI({
   );
 }
 
-function ProfileSection({ user, profile, setShowChat }: { 
+function ProfileSection({ 
+  user, 
+  profile, 
+  setShowChat, 
+  isCalConnected = false, 
+  handleConnectGoogleCalendar 
+}: { 
   user: User, 
   profile: UserProfile, 
-  setShowChat: (s: boolean) => void
+  setShowChat: (s: boolean) => void,
+  isCalConnected?: boolean,
+  handleConnectGoogleCalendar?: () => void
 }) {
   const [formData, setFormData] = useState({
     displayName: profile.displayName || '',
@@ -6196,6 +6253,54 @@ function ProfileSection({ user, profile, setShowChat }: {
             placeholder="What are you working towards?"
             className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:ring-1 focus:ring-orange-500 outline-none min-h-[100px]"
           />
+        </div>
+
+        {/* Google Calendar Integration Section */}
+        <div className="bg-zinc-950/50 border border-white/5 rounded-2xl p-6 space-y-4">
+          <div className="flex items-start gap-4">
+            <div className="p-3 bg-blue-500/10 rounded-xl text-blue-400">
+              <CalendarIcon className="w-5 h-5" />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-sm font-bold text-white">Google Calendar Integration</h3>
+              <p className="text-zinc-500 text-xs mt-1 leading-relaxed">
+                Synchronize scheduled workouts directly to your personal Google Calendar to never miss a coaching session.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-3 border-t border-white/5">
+            <div>
+              <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Connection Status</span>
+              <div className="mt-1">
+                {isCalConnected ? (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-green-500/10 text-green-500 text-xs font-bold rounded-full border border-green-500/20">
+                    <Check className="w-3.5 h-3.5" /> Calendar Connected ✓
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-zinc-900 text-zinc-500 text-xs font-bold rounded-full border border-white/5">
+                    Not Connected
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {handleConnectGoogleCalendar && (
+              <button
+                type="button"
+                onClick={handleConnectGoogleCalendar}
+                className={cn(
+                  "px-5 py-3 rounded-xl font-bold text-xs uppercase tracking-widest transition-all border flex items-center justify-center gap-2 cursor-pointer",
+                  isCalConnected 
+                    ? "bg-transparent border-zinc-850 text-zinc-400 hover:text-white hover:border-zinc-700 hover:bg-zinc-900" 
+                    : "bg-blue-600 border-blue-500 text-white hover:bg-blue-700 hover:shadow-lg hover:shadow-blue-500/10"
+                )}
+              >
+                <CalendarIcon className="w-3.5 h-3.5" />
+                {isCalConnected ? 'Reconnect Calendar' : 'Connect Calendar'}
+              </button>
+            )}
+          </div>
         </div>
 
         {message && (
