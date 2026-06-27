@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Star, Sparkles, Loader2, CheckCircle, AlertTriangle, HelpCircle } from 'lucide-react';
+import { Star, Sparkles, Loader2, CheckCircle, AlertTriangle } from 'lucide-react';
 import { ClientType, UserProfile } from '../types';
-import { collection, addDoc } from 'firebase/firestore';
+import { collection, addDoc, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
+import { triggerPushNotification, sendInAppNotification } from '../lib/notifications';
 
 interface WeeklyCheckInFormProps {
   profile: UserProfile;
@@ -20,46 +21,55 @@ export function WeeklyCheckInForm({ profile, weekOf, onSuccess, onCancel }: Week
   const [success, setSuccess] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
 
-  // Question States
-  const [strengthGain, setStrengthGain] = useState<'yes' | 'no' | null>(null);
-  const [painReduction, setPainReduction] = useState<'slight' | 'moderate' | 'no' | null>(null);
-  const [movementImprovement, setMovementImprovement] = useState<'slight' | 'moderate' | 'no' | null>(null);
+  // --- QUESTION STATES ---
+  // Common to all
   const [workoutPattern, setWorkoutPattern] = useState<'boring' | 'interesting' | null>(null);
   const [programRating, setProgramRating] = useState<number>(5);
-  const [sharpPain, setSharpPain] = useState<'yes' | 'no' | null>(null);
-  const [kneeStiffness, setKneeStiffness] = useState<'yes' | 'no' | null>(null);
-  const [overheadReach, setOverheadReach] = useState<'yes' | 'no' | null>(null);
-  const [sleepAffected, setSleepAffected] = useState<'yes' | 'no' | null>(null);
-  const [energyLevel, setEnergyLevel] = useState<number>(3);
-  const [dietAdherence, setDietAdherence] = useState<'yes' | 'partially' | 'no' | null>(null);
   const [freeText, setFreeText] = useState('');
 
+  // Fitness only
+  const [strengthGain, setStrengthGain] = useState<boolean | null>(null);
+  const [energyLevel, setEnergyLevel] = useState<number | null>(null);
+  const [dietAdherence, setDietAdherence] = useState<'yes' | 'partial' | 'no' | null>(null);
+
+  // Injury clients (Knee, Back, Shoulder)
+  const [painReduction, setPainReduction] = useState<'better' | 'same' | 'worse' | null>(null);
+  const [movementImprovement, setMovementImprovement] = useState<'easier' | 'same' | 'harder' | null>(null);
+
+  // Knee only
+  const [kneeStiffness, setKneeStiffness] = useState<boolean | null>(null);
+
+  // Back only
+  const [sharpPain, setSharpPain] = useState<boolean | null>(null);
+
+  // Shoulder only
+  const [overheadReach, setOverheadReach] = useState<'yes' | 'no' | 'didnt_test' | null>(null);
+  const [sleepAffected, setSleepAffected] = useState<boolean | null>(null);
+
   const validateForm = (): boolean => {
+    if (!workoutPattern) return setErrorMsg('Please choose your workout pattern (Boring or Interesting).');
+    if (programRating === undefined || programRating < 1) return setErrorMsg('Please rate your program.');
+
     if (clientType === 'fitness') {
-      if (!strengthGain) return setErrorMsg('Please answer if you felt stronger this week.');
-      if (!workoutPattern) return setErrorMsg('Please share how your workout pattern felt.');
-      if (!energyLevel) return setErrorMsg('Please rate your energy level.');
+      if (strengthGain === null) return setErrorMsg('Please answer if you felt stronger this week.');
+      if (energyLevel === null) return setErrorMsg('Please rate your energy level.');
       if (!dietAdherence) return setErrorMsg('Please rate your nutrition plan adherence.');
-      if (programRating === undefined) return setErrorMsg('Please rate last week\'s program.');
-    } else if (clientType === 'knee_injury') {
-      if (!painReduction) return setErrorMsg('Please rate your pain reduction.');
-      if (!movementImprovement) return setErrorMsg('Please rate your daily movement improvement.');
-      if (!kneeStiffness) return setErrorMsg('Please let us know if your knee was stiff today.');
-      if (!workoutPattern) return setErrorMsg('Please share your workout pattern feel.');
-      if (programRating === undefined) return setErrorMsg('Please rate last week\'s program.');
-    } else if (clientType === 'back_injury') {
-      if (!painReduction) return setErrorMsg('Please rate your pain reduction.');
-      if (!movementImprovement) return setErrorMsg('Please rate your daily movement improvement.');
-      if (!sharpPain) return setErrorMsg('Please indicate if you felt any sharp pain during exercise.');
-      if (!workoutPattern) return setErrorMsg('Please share your workout pattern feel.');
-      if (programRating === undefined) return setErrorMsg('Please rate last week\'s program.');
-    } else if (clientType === 'shoulder_injury') {
-      if (!painReduction) return setErrorMsg('Please rate your pain reduction.');
-      if (!overheadReach) return setErrorMsg('Please indicate if your overhead reach improved.');
-      if (!sleepAffected) return setErrorMsg('Please share if pain affected your sleep.');
-      if (!workoutPattern) return setErrorMsg('Please share your workout pattern feel.');
-      if (programRating === undefined) return setErrorMsg('Please rate last week\'s program.');
+    } else {
+      // Injury common
+      if (!painReduction) return setErrorMsg('Please answer: Pain this week vs last week?');
+      
+      if (clientType === 'knee_injury') {
+        if (!movementImprovement) return setErrorMsg('Please answer: Daily movement (walking, stairs)?');
+        if (kneeStiffness === null) return setErrorMsg('Please answer: Knee stiff today?');
+      } else if (clientType === 'back_injury') {
+        if (!movementImprovement) return setErrorMsg('Please answer: Daily movement?');
+        if (sharpPain === null) return setErrorMsg('Please answer: Any sharp or shooting pain during exercises?');
+      } else if (clientType === 'shoulder_injury') {
+        if (!overheadReach) return setErrorMsg('Please answer: Overhead reach improved?');
+        if (sleepAffected === null) return setErrorMsg('Please answer: Is pain affecting your sleep?');
+      }
     }
+
     setValidationError(null);
     return true;
   };
@@ -75,44 +85,85 @@ export function WeeklyCheckInForm({ profile, weekOf, onSuccess, onCancel }: Week
 
     setLoading(true);
     try {
+      // Mapping logic to fit the database schema in types.ts
       const payload: any = {
         uid: profile.uid,
         clientType,
         weekOf,
         submittedAt: new Date().toISOString(),
-        freeText,
-        programRating,
         workoutPattern,
+        programRating,
+        freeText: freeText.trim() || undefined
       };
 
       if (clientType === 'fitness') {
         payload.strengthGain = strengthGain;
         payload.energyLevel = energyLevel;
         payload.dietAdherence = dietAdherence;
-      } else if (clientType === 'knee_injury') {
-        payload.painReduction = painReduction;
-        payload.movementImprovement = movementImprovement;
-        payload.kneeStiffness = kneeStiffness;
-      } else if (clientType === 'back_injury') {
-        payload.painReduction = painReduction;
-        payload.movementImprovement = movementImprovement;
-        payload.sharpPain = sharpPain;
-      } else if (clientType === 'shoulder_injury') {
-        payload.painReduction = painReduction;
-        payload.overheadReach = overheadReach;
-        payload.sleepAffected = sleepAffected;
+      } else {
+        // Map BETTER/SAME/WORSE to 'moderate'/'slight'/'no'
+        if (painReduction === 'better') payload.painReduction = 'moderate';
+        else if (painReduction === 'same') payload.painReduction = 'slight';
+        else if (painReduction === 'worse') payload.painReduction = 'no';
+
+        if (clientType === 'knee_injury') {
+          if (movementImprovement === 'easier') payload.movementImprovement = 'moderate';
+          else if (movementImprovement === 'same') payload.movementImprovement = 'slight';
+          else if (movementImprovement === 'harder') payload.movementImprovement = 'no';
+
+          payload.kneeStiffness = kneeStiffness;
+        } else if (clientType === 'back_injury') {
+          if (movementImprovement === 'easier') payload.movementImprovement = 'moderate';
+          else if (movementImprovement === 'same') payload.movementImprovement = 'slight';
+          else if (movementImprovement === 'harder') payload.movementImprovement = 'no';
+
+          payload.sharpPain = sharpPain;
+        } else if (clientType === 'shoulder_injury') {
+          if (overheadReach === 'yes') payload.overheadReach = true;
+          else if (overheadReach === 'no') payload.overheadReach = false;
+          // if 'didnt_test', omit or set to undefined
+
+          payload.sleepAffected = sleepAffected;
+        }
       }
 
       await addDoc(collection(db, 'weeklyCheckIns'), payload).catch(err => {
         handleFirestoreError(err, OperationType.CREATE, 'weeklyCheckIns');
       });
 
+      // Send push and in-app notifications to all admins
+      try {
+        const adminsQuery = query(collection(db, 'users'), where('role', '==', 'admin'));
+        const adminsSnap = await getDocs(adminsQuery);
+        const clientName = profile.displayName || 'An athlete';
+
+        adminsSnap.forEach((adminDoc) => {
+          const adminId = adminDoc.id;
+          triggerPushNotification(
+            adminId,
+            'Check-In Submitted 📋',
+            `${clientName} submitted their weekly check-in.`,
+            { type: 'checkin', clientId: profile.uid }
+          ).catch(e => console.error("Admin push failed:", e));
+
+          sendInAppNotification(
+            adminId,
+            'Check-In Submitted 📋',
+            `${clientName} submitted their weekly check-in.`,
+            'feedback',
+            profile.uid
+          ).catch(e => console.error("Admin in-app notification failed:", e));
+        });
+      } catch (notifyErr) {
+        console.error("Failed to notify admin:", notifyErr);
+      }
+
       setSuccess(true);
       setTimeout(() => {
         onSuccess();
       }, 3000);
     } catch (err) {
-      console.error('Check-in error:', err);
+      console.error('Check-in submission error:', err);
       setValidationError('Failed to submit weekly check-in. Please try again.');
     } finally {
       setLoading(false);
@@ -122,9 +173,9 @@ export function WeeklyCheckInForm({ profile, weekOf, onSuccess, onCancel }: Week
   const getClientTypeLabel = (type: ClientType) => {
     switch (type) {
       case 'fitness': return 'Fitness';
-      case 'knee_injury': return 'Knee Injury Rehab';
-      case 'back_injury': return 'Back Injury Rehab';
-      case 'shoulder_injury': return 'Shoulder Injury Rehab';
+      case 'knee_injury': return 'Knee Injury';
+      case 'back_injury': return 'Back Injury';
+      case 'shoulder_injury': return 'Shoulder Injury';
       default: return 'Fitness';
     }
   };
@@ -147,9 +198,9 @@ export function WeeklyCheckInForm({ profile, weekOf, onSuccess, onCancel }: Week
             <div className="p-4 bg-green-500/10 text-green-500 rounded-full animate-bounce">
               <CheckCircle className="w-16 h-16" />
             </div>
-            <h3 className="text-2xl font-black tracking-tight text-white">Check-In Completed!</h3>
+            <h3 className="text-2xl font-black tracking-tight text-white">Sent to Nik 🙌</h3>
             <p className="text-zinc-400 max-w-md font-medium">
-              Thanks! Nik will review this before your next session 🙌
+              Thanks! Nik will review this before tuning your program.
             </p>
           </motion.div>
         ) : (
@@ -163,7 +214,7 @@ export function WeeklyCheckInForm({ profile, weekOf, onSuccess, onCancel }: Week
             <div>
               <div className="flex items-center gap-2 mb-2">
                 <span className="bg-orange-500/10 text-orange-500 text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-full">
-                  {getClientTypeLabel(clientType)}
+                  {getClientTypeLabel(clientType)} check-in
                 </span>
                 <span className="text-zinc-500 text-xs font-semibold">Week of {weekOf}</span>
               </div>
@@ -171,7 +222,7 @@ export function WeeklyCheckInForm({ profile, weekOf, onSuccess, onCancel }: Week
                 How was your training & body this week?
               </h2>
               <p className="text-sm text-zinc-400 mt-2">
-                Help Nik tailor your upcoming program changes by answering these specialized questions.
+                Help Nik tune your program by completing this quick 2-minute update.
               </p>
             </div>
 
@@ -182,436 +233,547 @@ export function WeeklyCheckInForm({ profile, weekOf, onSuccess, onCancel }: Week
               </div>
             )}
 
-            <div className="space-y-6 divide-y divide-zinc-900">
-              {/* Question Sets depending on Type */}
+            <div className="space-y-8">
+              {/* === FITNESS ONLY (Show first) === */}
               {clientType === 'fitness' && (
                 <div className="space-y-6">
-                  {/* Q1: Did you feel stronger this week? -> Yes/No Toggle */}
+                  {/* Q1: Did you feel stronger this week? YES / NO (min 56px height) */}
                   <div className="space-y-3">
                     <label className="text-sm font-bold text-zinc-200">
                       Did you feel stronger this week?
                     </label>
                     <div className="grid grid-cols-2 gap-4">
-                      {['yes', 'no'].map((val) => (
-                        <button
-                          key={val}
-                          type="button"
-                          onClick={() => setStrengthGain(val as 'yes' | 'no')}
-                          className={`py-3.5 px-6 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
-                            strengthGain === val
-                              ? 'bg-orange-500 border-orange-400 text-white shadow-lg shadow-orange-500/20'
-                              : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
-                          }`}
-                        >
-                          {val}
-                        </button>
-                      ))}
+                      <button
+                        type="button"
+                        onClick={() => setStrengthGain(true)}
+                        className={`min-h-[56px] px-6 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
+                          strengthGain === true
+                            ? 'bg-orange-500 border-orange-400 text-white shadow-lg shadow-orange-500/20'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                        }`}
+                      >
+                        YES
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setStrengthGain(false)}
+                        className={`min-h-[56px] px-6 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
+                          strengthGain === false
+                            ? 'bg-orange-500 border-orange-400 text-white shadow-lg shadow-orange-500/20'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                        }`}
+                      >
+                        NO
+                      </button>
                     </div>
                   </div>
 
-                  {/* Q2: Workout Pattern -> Boring/Interesting */}
-                  <div className="space-y-3 pt-6">
-                    <label className="text-sm font-bold text-zinc-200">
-                      How was your workout pattern?
-                    </label>
-                    <div className="grid grid-cols-2 gap-4">
-                      {['boring', 'interesting'].map((val) => (
-                        <button
-                          key={val}
-                          type="button"
-                          onClick={() => setWorkoutPattern(val as 'boring' | 'interesting')}
-                          className={`py-3.5 px-6 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
-                            workoutPattern === val
-                              ? 'bg-orange-500 border-orange-400 text-white shadow-lg shadow-orange-500/20'
-                              : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
-                          }`}
-                        >
-                          {val}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Q3: Energy Level -> 1-5 Star Tap */}
-                  <div className="space-y-3 pt-6">
+                  {/* Q2: Energy level -> 5 large numbered buttons (1-5) */}
+                  <div className="space-y-3">
                     <label className="text-sm font-bold text-zinc-200 block">
-                      Energy level this week:
+                      Energy level:
                     </label>
                     <div className="flex items-center gap-3">
-                      {[1, 2, 3, 4, 5].map((star) => (
+                      {[1, 2, 3, 4, 5].map((num) => (
                         <button
-                          key={star}
+                          key={num}
                           type="button"
-                          onClick={() => setEnergyLevel(star)}
-                          className="focus:outline-none transition-transform active:scale-95"
+                          onClick={() => setEnergyLevel(num)}
+                          className={`w-14 h-14 rounded-2xl text-lg font-black transition-all border flex items-center justify-center ${
+                            energyLevel === num
+                              ? 'bg-orange-500 border-orange-400 text-white shadow-lg shadow-orange-500/20'
+                              : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-white'
+                          }`}
                         >
-                          <Star
-                            className={`w-10 h-10 transition-all ${
-                              star <= energyLevel
-                                ? 'text-amber-400 fill-amber-400 drop-shadow-[0_0_8px_rgba(250,204,21,0.4)]'
-                                : 'text-zinc-700 hover:text-zinc-500'
-                            }`}
-                          />
+                          {num}
                         </button>
                       ))}
                     </div>
                   </div>
 
-                  {/* Q4: Nutrition plan adherence -> Yes, Partially, No (3 Button select) */}
-                  <div className="space-y-3 pt-6">
+                  {/* Q3: Nutrition plan adherence -> YES / PARTLY / NO */}
+                  <div className="space-y-3">
                     <label className="text-sm font-bold text-zinc-200">
                       Did you follow your nutrition plan?
                     </label>
                     <div className="grid grid-cols-3 gap-3">
-                      {['yes', 'partially', 'no'].map((val) => (
-                        <button
-                          key={val}
-                          type="button"
-                          onClick={() => setDietAdherence(val as 'yes' | 'partially' | 'no')}
-                          className={`py-3 px-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border ${
-                            dietAdherence === val
-                              ? 'bg-orange-500 border-orange-400 text-white'
-                              : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
-                          }`}
-                        >
-                          {val}
-                        </button>
-                      ))}
+                      <button
+                        type="button"
+                        onClick={() => setDietAdherence('yes')}
+                        className={`py-4 px-2 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
+                          dietAdherence === 'yes'
+                            ? 'bg-orange-500 border-orange-400 text-white'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                        }`}
+                      >
+                        YES
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDietAdherence('partial')}
+                        className={`py-4 px-2 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
+                          dietAdherence === 'partial'
+                            ? 'bg-orange-500 border-orange-400 text-white'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                        }`}
+                      >
+                        PARTLY
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDietAdherence('no')}
+                        className={`py-4 px-2 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
+                          dietAdherence === 'no'
+                            ? 'bg-orange-500 border-orange-400 text-white'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                        }`}
+                      >
+                        NO
+                      </button>
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* Knee Injury Form */}
+              {/* === KNEE INJURY SPECIFIC === */}
               {clientType === 'knee_injury' && (
                 <div className="space-y-6">
-                  {/* Q1: pain reduction -> Slight, Moderate, No */}
+                  {/* Q1: Pain this week vs last week? -> BETTER / SAME / WORSE */}
                   <div className="space-y-3">
-                    <label className="text-sm font-bold text-zinc-200 block">
-                      Did you experience pain reduction this week?
-                    </label>
-                    <div className="grid grid-cols-3 gap-3">
-                      {['slight', 'moderate', 'no'].map((val) => (
-                        <button
-                          key={val}
-                          type="button"
-                          onClick={() => setPainReduction(val as 'slight' | 'moderate' | 'no')}
-                          className={`py-3 px-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border ${
-                            painReduction === val
-                              ? 'bg-orange-500 border-orange-400 text-white'
-                              : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
-                          }`}
-                        >
-                          {val}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Q2: movement improvement -> Slight, Moderate, No */}
-                  <div className="space-y-3 pt-6">
-                    <label className="text-sm font-bold text-zinc-200 block">
-                      Daily movement improvement?
-                    </label>
-                    <div className="grid grid-cols-3 gap-3">
-                      {['slight', 'moderate', 'no'].map((val) => (
-                        <button
-                          key={val}
-                          type="button"
-                          onClick={() => setMovementImprovement(val as 'slight' | 'moderate' | 'no')}
-                          className={`py-3 px-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border ${
-                            movementImprovement === val
-                              ? 'bg-orange-500 border-orange-400 text-white'
-                              : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
-                          }`}
-                        >
-                          {val}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Q3: was knee stiff today? Toggle */}
-                  <div className="space-y-3 pt-6">
-                    <label className="text-sm font-bold text-zinc-200 block">
-                      Was your knee stiff today?
-                    </label>
-                    <div className="grid grid-cols-2 gap-4">
-                      {['yes', 'no'].map((val) => (
-                        <button
-                          key={val}
-                          type="button"
-                          onClick={() => setKneeStiffness(val as 'yes' | 'no')}
-                          className={`py-3.5 px-6 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
-                            kneeStiffness === val
-                              ? 'bg-orange-500 border-orange-400 text-white'
-                              : 'bg-zinc-900 border-zinc-800 text-zinc-400'
-                          }`}
-                        >
-                          {val}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Q4: workout pattern */}
-                  <div className="space-y-3 pt-6">
                     <label className="text-sm font-bold text-zinc-200">
-                      How was your workout pattern?
+                      Pain this week vs last week?
+                    </label>
+                    <div className="grid grid-cols-3 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setPainReduction('better')}
+                        className={`py-4 px-2 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
+                          painReduction === 'better'
+                            ? 'bg-emerald-500 border-emerald-400 text-white shadow-lg shadow-emerald-500/10'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-white'
+                        }`}
+                      >
+                        BETTER
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPainReduction('same')}
+                        className={`py-4 px-2 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
+                          painReduction === 'same'
+                            ? 'bg-zinc-600 border-zinc-550 text-white'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-white'
+                        }`}
+                      >
+                        SAME
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPainReduction('worse')}
+                        className={`py-4 px-2 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
+                          painReduction === 'worse'
+                            ? 'bg-rose-600 border-rose-500 text-white shadow-lg shadow-rose-600/10'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-white'
+                        }`}
+                      >
+                        WORSE
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Q2: Daily movement (walking, stairs)? -> EASIER / SAME / HARDER */}
+                  <div className="space-y-3">
+                    <label className="text-sm font-bold text-zinc-200">
+                      Daily movement (walking, stairs)?
+                    </label>
+                    <div className="grid grid-cols-3 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setMovementImprovement('easier')}
+                        className={`py-4 px-2 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
+                          movementImprovement === 'easier'
+                            ? 'bg-orange-500 border-orange-400 text-white'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                        }`}
+                      >
+                        EASIER
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMovementImprovement('same')}
+                        className={`py-4 px-2 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
+                          movementImprovement === 'same'
+                            ? 'bg-orange-500 border-orange-400 text-white'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                        }`}
+                      >
+                        SAME
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMovementImprovement('harder')}
+                        className={`py-4 px-2 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
+                          movementImprovement === 'harder'
+                            ? 'bg-orange-500 border-orange-400 text-white'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                        }`}
+                      >
+                        HARDER
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Q3: Knee stiff today? -> YES / NO */}
+                  <div className="space-y-3">
+                    <label className="text-sm font-bold text-zinc-200">
+                      Knee stiff today?
                     </label>
                     <div className="grid grid-cols-2 gap-4">
-                      {['boring', 'interesting'].map((val) => (
-                        <button
-                          key={val}
-                          type="button"
-                          onClick={() => setWorkoutPattern(val as 'boring' | 'interesting')}
-                          className={`py-3.5 px-6 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
-                            workoutPattern === val
-                              ? 'bg-orange-500 border-orange-400 text-white'
-                              : 'bg-zinc-900 border-zinc-800 text-zinc-400'
-                          }`}
-                        >
-                          {val}
-                        </button>
-                      ))}
+                      <button
+                        type="button"
+                        onClick={() => setKneeStiffness(true)}
+                        className={`min-h-[56px] px-6 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
+                          kneeStiffness === true
+                            ? 'bg-orange-500 border-orange-400 text-white'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                        }`}
+                      >
+                        YES
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setKneeStiffness(false)}
+                        className={`min-h-[56px] px-6 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
+                          kneeStiffness === false
+                            ? 'bg-orange-500 border-orange-400 text-white'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                        }`}
+                      >
+                        NO
+                      </button>
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* Back Injury Form */}
+              {/* === BACK INJURY SPECIFIC === */}
               {clientType === 'back_injury' && (
                 <div className="space-y-6">
-                  {/* Q1: pain reduction */}
+                  {/* Q1: Pain this week vs last week? -> BETTER / SAME / WORSE */}
                   <div className="space-y-3">
-                    <label className="text-sm font-bold text-zinc-200 block">
-                      Pain reduction this week?
-                    </label>
-                    <div className="grid grid-cols-3 gap-3">
-                      {['slight', 'moderate', 'no'].map((val) => (
-                        <button
-                          key={val}
-                          type="button"
-                          onClick={() => setPainReduction(val as 'slight' | 'moderate' | 'no')}
-                          className={`py-3 px-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border ${
-                            painReduction === val
-                              ? 'bg-orange-500 border-orange-400 text-white'
-                              : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
-                          }`}
-                        >
-                          {val}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Q2: movement improvement */}
-                  <div className="space-y-3 pt-6">
-                    <label className="text-sm font-bold text-zinc-200 block">
-                      Daily movement improvement?
-                    </label>
-                    <div className="grid grid-cols-3 gap-3">
-                      {['slight', 'moderate', 'no'].map((val) => (
-                        <button
-                          key={val}
-                          type="button"
-                          onClick={() => setMovementImprovement(val as 'slight' | 'moderate' | 'no')}
-                          className={`py-3 px-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border ${
-                            movementImprovement === val
-                              ? 'bg-orange-500 border-orange-400 text-white'
-                              : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
-                          }`}
-                        >
-                          {val}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Q3: sharp pain Toggle */}
-                  <div className="space-y-3 pt-6">
-                    <label className="text-sm font-bold text-zinc-200 block">
-                      Did you feel any sharp pain during exercises?
-                    </label>
-                    <div className="grid grid-cols-2 gap-4">
-                      {['yes', 'no'].map((val) => (
-                        <button
-                          key={val}
-                          type="button"
-                          onClick={() => setSharpPain(val as 'yes' | 'no')}
-                          className={`py-3.5 px-6 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
-                            sharpPain === val
-                              ? 'bg-orange-500 border-orange-400 text-white'
-                              : 'bg-zinc-900 border-zinc-800 text-zinc-400'
-                          }`}
-                        >
-                          {val}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Q4: workout pattern */}
-                  <div className="space-y-3 pt-6">
                     <label className="text-sm font-bold text-zinc-200">
-                      How was your workout pattern?
+                      Pain this week vs last week?
+                    </label>
+                    <div className="grid grid-cols-3 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setPainReduction('better')}
+                        className={`py-4 px-2 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
+                          painReduction === 'better'
+                            ? 'bg-emerald-500 border-emerald-400 text-white shadow-lg shadow-emerald-500/10'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-white'
+                        }`}
+                      >
+                        BETTER
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPainReduction('same')}
+                        className={`py-4 px-2 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
+                          painReduction === 'same'
+                            ? 'bg-zinc-600 border-zinc-550 text-white'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-white'
+                        }`}
+                      >
+                        SAME
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPainReduction('worse')}
+                        className={`py-4 px-2 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
+                          painReduction === 'worse'
+                            ? 'bg-rose-600 border-rose-500 text-white shadow-lg shadow-rose-600/10'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-white'
+                        }`}
+                      >
+                        WORSE
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Q2: Daily movement? -> EASIER / SAME / HARDER */}
+                  <div className="space-y-3">
+                    <label className="text-sm font-bold text-zinc-200">
+                      Daily movement?
+                    </label>
+                    <div className="grid grid-cols-3 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setMovementImprovement('easier')}
+                        className={`py-4 px-2 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
+                          movementImprovement === 'easier'
+                            ? 'bg-orange-500 border-orange-400 text-white'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                        }`}
+                      >
+                        EASIER
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMovementImprovement('same')}
+                        className={`py-4 px-2 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
+                          movementImprovement === 'same'
+                            ? 'bg-orange-500 border-orange-400 text-white'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                        }`}
+                      >
+                        SAME
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMovementImprovement('harder')}
+                        className={`py-4 px-2 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
+                          movementImprovement === 'harder'
+                            ? 'bg-orange-500 border-orange-400 text-white'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                        }`}
+                      >
+                        HARDER
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Q3: Any sharp or shooting pain during exercises? -> YES / NO */}
+                  <div className="space-y-3">
+                    <label className="text-sm font-bold text-zinc-200">
+                      Any sharp or shooting pain during exercises?
                     </label>
                     <div className="grid grid-cols-2 gap-4">
-                      {['boring', 'interesting'].map((val) => (
-                        <button
-                          key={val}
-                          type="button"
-                          onClick={() => setWorkoutPattern(val as 'boring' | 'interesting')}
-                          className={`py-3.5 px-6 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
-                            workoutPattern === val
-                              ? 'bg-orange-500 border-orange-400 text-white'
-                              : 'bg-zinc-900 border-zinc-800 text-zinc-400'
-                          }`}
-                        >
-                          {val}
-                        </button>
-                      ))}
+                      <button
+                        type="button"
+                        onClick={() => setSharpPain(true)}
+                        className={`min-h-[56px] px-6 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
+                          sharpPain === true
+                            ? 'bg-orange-500 border-orange-400 text-white'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                        }`}
+                      >
+                        YES
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSharpPain(false)}
+                        className={`min-h-[56px] px-6 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
+                          sharpPain === false
+                            ? 'bg-orange-500 border-orange-400 text-white'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                        }`}
+                      >
+                        NO
+                      </button>
                     </div>
+                    {sharpPain === true && (
+                      <div className="flex items-center gap-2 mt-3 p-3 bg-amber-500/10 border border-amber-500/20 text-amber-500 rounded-xl text-xs font-semibold animate-pulse">
+                        <AlertTriangle className="w-4 h-4" />
+                        <span>Note this to Nik →</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
 
-              {/* Shoulder Injury Form */}
+              {/* === SHOULDER INJURY SPECIFIC === */}
               {clientType === 'shoulder_injury' && (
                 <div className="space-y-6">
-                  {/* Q1: pain reduction */}
+                  {/* Q1: Pain this week vs last week? -> BETTER / SAME / WORSE */}
                   <div className="space-y-3">
-                    <label className="text-sm font-bold text-zinc-200 block">
-                      Pain reduction this week?
+                    <label className="text-sm font-bold text-zinc-200">
+                      Pain this week vs last week?
                     </label>
                     <div className="grid grid-cols-3 gap-3">
-                      {['slight', 'moderate', 'no'].map((val) => (
-                        <button
-                          key={val}
-                          type="button"
-                          onClick={() => setPainReduction(val as 'slight' | 'moderate' | 'no')}
-                          className={`py-3 px-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border ${
-                            painReduction === val
-                              ? 'bg-orange-500 border-orange-400 text-white'
-                              : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
-                          }`}
-                        >
-                          {val}
-                        </button>
-                      ))}
+                      <button
+                        type="button"
+                        onClick={() => setPainReduction('better')}
+                        className={`py-4 px-2 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
+                          painReduction === 'better'
+                            ? 'bg-emerald-500 border-emerald-400 text-white shadow-lg shadow-emerald-500/10'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-white'
+                        }`}
+                      >
+                        BETTER
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPainReduction('same')}
+                        className={`py-4 px-2 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
+                          painReduction === 'same'
+                            ? 'bg-zinc-600 border-zinc-550 text-white'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-white'
+                        }`}
+                      >
+                        SAME
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPainReduction('worse')}
+                        className={`py-4 px-2 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
+                          painReduction === 'worse'
+                            ? 'bg-rose-600 border-rose-500 text-white shadow-lg shadow-rose-600/10'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-white'
+                        }`}
+                      >
+                        WORSE
+                      </button>
                     </div>
                   </div>
 
-                  {/* Q2: overhead reach Toggle */}
-                  <div className="space-y-3 pt-6">
-                    <label className="text-sm font-bold text-zinc-200 block">
-                      Overhead reach improvement?
+                  {/* Q2: Overhead reach improved? -> YES / NO / DIDN'T TEST */}
+                  <div className="space-y-3">
+                    <label className="text-sm font-bold text-zinc-200">
+                      Overhead reach improved?
                     </label>
-                    <div className="grid grid-cols-2 gap-4">
-                      {['yes', 'no'].map((val) => (
-                        <button
-                          key={val}
-                          type="button"
-                          onClick={() => setOverheadReach(val as 'yes' | 'no')}
-                          className={`py-3.5 px-6 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
-                            overheadReach === val
-                              ? 'bg-orange-500 border-orange-400 text-white'
-                              : 'bg-zinc-900 border-zinc-800 text-zinc-400'
-                          }`}
-                        >
-                          {val}
-                        </button>
-                      ))}
+                    <div className="grid grid-cols-3 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setOverheadReach('yes')}
+                        className={`py-4 px-1 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border ${
+                          overheadReach === 'yes'
+                            ? 'bg-orange-500 border-orange-400 text-white'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                        }`}
+                      >
+                        YES
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setOverheadReach('no')}
+                        className={`py-4 px-1 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border ${
+                          overheadReach === 'no'
+                            ? 'bg-orange-500 border-orange-400 text-white'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                        }`}
+                      >
+                        NO
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setOverheadReach('didnt_test')}
+                        className={`py-4 px-1 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border ${
+                          overheadReach === 'didnt_test'
+                            ? 'bg-orange-500 border-orange-400 text-white'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                        }`}
+                      >
+                        DIDN'T TEST
+                      </button>
                     </div>
                   </div>
 
-                  {/* Q3: sleep affected Toggle */}
-                  <div className="space-y-3 pt-6">
-                    <label className="text-sm font-bold text-zinc-200 block">
+                  {/* Q3: Is pain affecting your sleep? -> YES / NO */}
+                  <div className="space-y-3">
+                    <label className="text-sm font-bold text-zinc-200">
                       Is pain affecting your sleep?
                     </label>
                     <div className="grid grid-cols-2 gap-4">
-                      {['yes', 'no'].map((val) => (
-                        <button
-                          key={val}
-                          type="button"
-                          onClick={() => setSleepAffected(val as 'yes' | 'no')}
-                          className={`py-3.5 px-6 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
-                            sleepAffected === val
-                              ? 'bg-orange-500 border-orange-400 text-white'
-                              : 'bg-zinc-900 border-zinc-800 text-zinc-400'
-                          }`}
-                        >
-                          {val}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Q4: workout pattern */}
-                  <div className="space-y-3 pt-6">
-                    <label className="text-sm font-bold text-zinc-200">
-                      How was your workout pattern?
-                    </label>
-                    <div className="grid grid-cols-2 gap-4">
-                      {['boring', 'interesting'].map((val) => (
-                        <button
-                          key={val}
-                          type="button"
-                          onClick={() => setWorkoutPattern(val as 'boring' | 'interesting')}
-                          className={`py-3.5 px-6 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
-                            workoutPattern === val
-                              ? 'bg-orange-500 border-orange-400 text-white'
-                              : 'bg-zinc-900 border-zinc-800 text-zinc-400'
-                          }`}
-                        >
-                          {val}
-                        </button>
-                      ))}
+                      <button
+                        type="button"
+                        onClick={() => setSleepAffected(true)}
+                        className={`min-h-[56px] px-6 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
+                          sleepAffected === true
+                            ? 'bg-orange-500 border-orange-400 text-white'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                        }`}
+                      >
+                        YES
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSleepAffected(false)}
+                        className={`min-h-[56px] px-6 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
+                          sleepAffected === false
+                            ? 'bg-orange-500 border-orange-400 text-white'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                        }`}
+                      >
+                        NO
+                      </button>
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* Shared Question Q5: Program Rating (0-5 stars) */}
-              <div className="space-y-3 pt-6">
-                <label className="text-sm font-bold text-zinc-200 block">
-                  Rate last week's program:
-                </label>
-                <div className="flex items-center gap-3">
-                  {[1, 2, 3, 4, 5].map((star) => (
+              {/* === COMMON QUESTIONS (Show last) === */}
+              <div className="pt-6 border-t border-zinc-900 space-y-6">
+                {/* Workout Pattern: "😴 Boring" | "💪 Interesting" */}
+                <div className="space-y-3">
+                  <label className="text-sm font-bold text-zinc-200">
+                    Workout pattern:
+                  </label>
+                  <div className="grid grid-cols-2 gap-4">
                     <button
-                      key={star}
                       type="button"
-                      onClick={() => setProgramRating(star)}
-                      className="focus:outline-none transition-transform active:scale-95"
+                      onClick={() => setWorkoutPattern('boring')}
+                      className={`min-h-[56px] px-6 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
+                        workoutPattern === 'boring'
+                          ? 'bg-orange-500 border-orange-400 text-white shadow-lg shadow-orange-500/20'
+                          : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                      }`}
                     >
-                      <Star
-                        className={`w-10 h-10 transition-all ${
-                          star <= programRating
-                            ? 'text-orange-500 fill-orange-500 drop-shadow-[0_0_8px_rgba(249,115,22,0.4)]'
-                            : 'text-zinc-700 hover:text-zinc-500'
-                        }`}
-                      />
+                      😴 Boring
                     </button>
-                  ))}
-                  <span className="text-zinc-500 text-xs font-bold uppercase tracking-widest ml-2">
-                    {programRating} / 5 Stars
-                  </span>
+                    <button
+                      type="button"
+                      onClick={() => setWorkoutPattern('interesting')}
+                      className={`min-h-[56px] px-6 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
+                        workoutPattern === 'interesting'
+                          ? 'bg-orange-500 border-orange-400 text-white shadow-lg shadow-orange-500/20'
+                          : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                      }`}
+                    >
+                      💪 Interesting
+                    </button>
+                  </div>
                 </div>
-              </div>
 
-              {/* Shared Question Q6: Free text field anything else (optional) */}
-              <div className="space-y-3 pt-6">
-                <label className="text-sm font-bold text-zinc-200 block">
-                  {clientType === 'fitness' ? 'Anything else?' : 'Any pain notes, limitations or comments? (optional)'}
-                </label>
-                <textarea
-                  value={freeText}
-                  onChange={(e) => setFreeText(e.target.value)}
-                  placeholder="Tell Nik how you felt, where you struggled, or any milestones..."
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-3xl p-5 text-sm focus:ring-1 focus:ring-orange-500 outline-none min-h-[120px] text-zinc-100 placeholder:text-zinc-600"
-                />
+                {/* Program Rating: 5 tap-able stars */}
+                <div className="space-y-3">
+                  <label className="text-sm font-bold text-zinc-200 block">
+                    Program rating:
+                  </label>
+                  <div className="flex items-center gap-3">
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <button
+                        key={star}
+                        type="button"
+                        onClick={() => setProgramRating(star)}
+                        className="focus:outline-none transition-transform active:scale-95 animate-none"
+                      >
+                        <Star
+                          className={`w-10 h-10 transition-all ${
+                            star <= programRating
+                              ? 'text-orange-500 fill-orange-500 drop-shadow-[0_0_8px_rgba(249,115,22,0.4)]'
+                              : 'text-zinc-700 hover:text-zinc-500'
+                          }`}
+                        />
+                      </button>
+                    ))}
+                    <span className="text-zinc-500 text-xs font-bold uppercase tracking-widest ml-2">
+                      {programRating} / 5 Stars
+                    </span>
+                  </div>
+                </div>
+
+                {/* Free Text: optional textarea "Anything Nik should know?" */}
+                <div className="space-y-3">
+                  <label className="text-sm font-bold text-zinc-200 block">
+                    Anything Nik should know?
+                  </label>
+                  <textarea
+                    value={freeText}
+                    onChange={(e) => setFreeText(e.target.value)}
+                    placeholder="Tell Nik how you felt, where you struggled, or any milestones..."
+                    className="w-full bg-zinc-900 border border-zinc-800 rounded-3xl p-5 text-sm focus:ring-1 focus:ring-orange-500 outline-none min-h-[120px] text-zinc-100 placeholder:text-zinc-600"
+                  />
+                </div>
               </div>
             </div>
 

@@ -336,6 +336,14 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
     });
   }, [activeClients, allWorkouts, feedbacks, allGoals]);
 
+  const getHabitCompliance = (clientUid: string): number => {
+    const thisWeekStart = format(startOfWeek(new Date(), {weekStartsOn: 1}), 'yyyy-MM-dd');
+    const clientLogs = allHabitLogs.filter(l => l.clientId === clientUid && l.date >= thisWeekStart);
+    const completed = clientLogs.filter(l => l.completed).length;
+    const total = clientLogs.length;
+    return total === 0 ? -1 : Math.round((completed / total) * 100);
+  };
+
   const filteredClientsList = useMemo(() => {
     return clients.filter((client) => {
       const queryStr = clientSearch.toLowerCase().trim();
@@ -1250,6 +1258,37 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
                             {!isActive && <span className="ml-1.5 text-[9px] uppercase tracking-normal bg-zinc-800 text-zinc-500 px-1 py-0.2 rounded font-black pr-1">Inactive</span>}
                           </div>
                           <div className="text-xs opacity-60 truncate max-w-[120px]">{client.email}</div>
+                          <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                            {client.clientType && (
+                              <div className={cn(
+                                "inline-block text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded border",
+                                client.clientType === 'fitness' && "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+                                client.clientType === 'knee_injury' && "bg-sky-500/10 text-sky-400 border-sky-500/20",
+                                client.clientType === 'back_injury' && "bg-rose-500/10 text-rose-400 border-rose-500/20",
+                                client.clientType === 'shoulder_injury' && "bg-purple-500/10 text-purple-400 border-purple-500/20"
+                              )}>
+                                {client.clientType.replace('_', ' ')}
+                              </div>
+                            )}
+
+                            {(() => {
+                              const compliance = getHabitCompliance(client.uid);
+                              return compliance === -1 ? (
+                                <span className="inline-block text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border bg-zinc-950/40 text-zinc-600 border-zinc-800/50">
+                                  No habit data
+                                </span>
+                              ) : (
+                                <span className={cn(
+                                  "inline-block text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border",
+                                  compliance >= 70 ? "bg-green-500/10 text-green-500 border-green-500/20" : 
+                                  compliance >= 40 ? "bg-amber-500/10 text-amber-500 border-amber-500/20" : 
+                                  "bg-red-500/10 text-red-500 border-red-500/20"
+                                )}>
+                                  Habits: {compliance}% this week
+                                </span>
+                              );
+                            })()}
+                          </div>
                         </div>
                       </div>
                       <ChevronRight className="w-4 h-4 opacity-40" />
@@ -4451,6 +4490,8 @@ function RemindersView({ clients, showToast, currentUser }: { clients: UserProfi
   const [messageText, setMessageText] = useState('');
   const [sending, setSending] = useState(false);
   const [dbTemplates, setDbTemplates] = useState<MessageTemplate[]>([]);
+  const [generatingAi, setGeneratingAi] = useState(false);
+  const [scanningAdherence, setScanningAdherence] = useState(false);
 
   useEffect(() => {
     const q = query(collection(db, 'messageTemplates'), orderBy('createdAt', 'desc'));
@@ -4466,12 +4507,67 @@ function RemindersView({ clients, showToast, currentUser }: { clients: UserProfi
     );
   };
 
+  const generateWithAi = async () => {
+    setGeneratingAi(true);
+    try {
+      let clientName = 'Champ';
+      if (selectedClients.length > 0) {
+        const firstClient = clients.find(c => c.uid === selectedClients[0]);
+        if (firstClient?.displayName) {
+          clientName = firstClient.displayName.split(' ')[0];
+        }
+      }
+
+      const res = await fetch('/api/notifications/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: messageType,
+          clientName,
+          context: 'Encourage maximum training discipline and physical momentum'
+        })
+      });
+
+      if (!res.ok) throw new Error('Failed to generate template copy');
+      const data = await res.json();
+      if (data.text) {
+        setMessageText(data.text);
+        showToast('AI copy written successfully!');
+      }
+    } catch (err: any) {
+      console.error(err);
+      showToast('AI copywriting error: ' + err.message);
+    } finally {
+      setGeneratingAi(false);
+    }
+  };
+
+  const triggerAdherenceScan = async () => {
+    setScanningAdherence(true);
+    try {
+      const res = await fetch('/api/notifications/schedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'adherence_check' })
+      });
+      if (!res.ok) throw new Error('Adherence scanning failed');
+      const data = await res.json();
+      showToast(data.message || 'Adherence check successfully executed.');
+    } catch (err: any) {
+      console.error(err);
+      showToast('Scan failed: ' + err.message);
+    } finally {
+      setScanningAdherence(false);
+    }
+  };
+
   const sendBroadcast = async () => {
     if (selectedClients.length === 0 || !messageText.trim()) return;
     setSending(true);
     try {
-      const promises = selectedClients.map(clientId => 
-        addDoc(collection(db, 'messages'), {
+      const promises = selectedClients.map(async (clientId) => {
+        // 1. Write in-app notification message
+        await addDoc(collection(db, 'messages'), {
           senderId: currentUser.uid,
           receiverId: clientId,
           participants: [currentUser.uid, clientId],
@@ -4479,10 +4575,19 @@ function RemindersView({ clients, showToast, currentUser }: { clients: UserProfi
           type: messageType,
           isRead: false,
           createdAt: serverTimestamp()
-        })
-      );
+        });
+
+        // 2. Trigger Real-Time FCM Push Notification
+        await triggerPushNotification(
+          clientId,
+          messageType === 'motivation' ? 'Coach Nik Motivation ⚡️' : 'Coach Nik Reminder 📋',
+          messageText,
+          { type: messageType }
+        ).catch(err => console.error(`FCM Broadcast failed for client ${clientId}:`, err));
+      });
+
       await Promise.all(promises);
-      showToast(`Successfully sent ${messageType} to ${selectedClients.length} clients!`);
+      showToast(`Delivered Real-Time FCM Broadcast to ${selectedClients.length} clients!`);
       setMessageText('');
       setSelectedClients([]);
     } catch (error) {
@@ -4524,17 +4629,28 @@ function RemindersView({ clients, showToast, currentUser }: { clients: UserProfi
   return (
     <div className="space-y-8">
       <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 space-y-8">
-        <div className="flex items-center gap-4">
-          <div className={cn(
-            "p-4 rounded-2xl text-white shadow-lg",
-            messageType === 'motivation' ? "bg-purple-500 shadow-purple-500/20" : "bg-blue-500 shadow-blue-500/20"
-          )}>
-            {messageType === 'motivation' ? <Sparkles className="w-6 h-6" /> : <Bell className="w-6 h-6" />}
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-zinc-800 pb-6">
+          <div className="flex items-center gap-4">
+            <div className={cn(
+              "p-4 rounded-2xl text-white shadow-lg",
+              messageType === 'motivation' ? "bg-purple-500 shadow-purple-500/20" : "bg-blue-500 shadow-blue-500/20"
+            )}>
+              {messageType === 'motivation' ? <Sparkles className="w-6 h-6" /> : <Bell className="w-6 h-6" />}
+            </div>
+            <div>
+              <h3 className="text-2xl font-black uppercase tracking-tighter italic text-white">Coach <span className="text-orange-500">Broadcast</span> Console</h3>
+              <p className="text-zinc-500 text-sm font-medium">Deploy motivational tactical alerts or discipline reminders to multiple athletes.</p>
+            </div>
           </div>
-          <div>
-            <h3 className="text-2xl font-black uppercase tracking-tighter italic">Coach <span className="text-orange-500">Broadcast</span> Console</h3>
-            <p className="text-zinc-500 text-sm font-medium">Deploy motivational tactical alerts or discipline reminders to multiple athletes.</p>
-          </div>
+          <button
+            onClick={triggerAdherenceScan}
+            disabled={scanningAdherence}
+            className="px-4 py-2.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-450 border border-rose-500/20 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 self-start sm:self-auto"
+            title="Scan all athletes for declining consistency (<50% adherence) and alert both coach and athletes."
+          >
+            {scanningAdherence ? <Loader2 className="w-4 h-4 animate-spin" /> : <Activity className="w-4 h-4 text-rose-450 animate-pulse" />}
+            Scan Compliance Risks
+          </button>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -4568,7 +4684,18 @@ function RemindersView({ clients, showToast, currentUser }: { clients: UserProfi
             </div>
 
             <div className="space-y-3">
-              <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest">2. Choose Template or Write</label>
+              <div className="flex justify-between items-center">
+                <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest">2. Choose Template or Write</label>
+                <button
+                  type="button"
+                  onClick={generateWithAi}
+                  disabled={generatingAi}
+                  className="text-[10px] bg-orange-500/10 hover:bg-orange-500/20 text-orange-450 font-bold px-3 py-1.5 rounded-xl border border-orange-500/20 transition-all flex items-center gap-1.5 shadow-sm"
+                >
+                  {generatingAi ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 text-orange-400" />}
+                  Generate with AI
+                </button>
+              </div>
               <div className="flex flex-wrap gap-2">
                 {(messageType === 'motivation' ? motivationTemplates : reminderTemplates).map((t, i) => (
                   <button
@@ -4580,12 +4707,18 @@ function RemindersView({ clients, showToast, currentUser }: { clients: UserProfi
                   </button>
                 ))}
               </div>
-              <textarea
-                value={messageText}
-                onChange={(e) => setMessageText(e.target.value)}
-                placeholder="Type your message here..."
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl p-4 text-sm focus:ring-1 focus:ring-orange-500 outline-none min-h-[120px]"
-              />
+              <div className="relative">
+                <textarea
+                  value={messageText}
+                  onChange={(e) => setMessageText(e.target.value)}
+                  placeholder="Type your message here..."
+                  maxLength={160}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl p-4 text-sm text-white focus:ring-1 focus:ring-orange-500 outline-none min-h-[120px] pr-4"
+                />
+                <div className="absolute bottom-3 right-4 text-[10px] font-bold text-zinc-550">
+                  {messageText.length} / 160 characters
+                </div>
+              </div>
             </div>
           </div>
 
@@ -7015,6 +7148,15 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
           { type: 'workout', week, day }
         );
       }
+
+      const selectedClient = client;
+      const weekNumber = week;
+      const dayNumber = day;
+      await triggerPushNotification(
+        selectedClient.uid,
+        "New workout ready! 💪",
+        `Coach Nik just added your Week ${weekNumber} Day ${dayNumber} session — let's get it!`
+      );
 
       if (syncToCalendar && scheduledDate && workoutIdSaved) {
         try {

@@ -225,6 +225,28 @@ export function HeroMomentumBanner({
               />
             )}
           </div>
+
+          {/* Streak Overview Display */}
+          <div className="flex flex-col sm:flex-row gap-6 pt-6 mt-4 border-t border-white/5">
+            <div className="flex items-center gap-3 text-sm font-bold text-zinc-300">
+              <div className="p-2.5 bg-orange-500/10 rounded-2xl text-orange-500">
+                <Dumbbell className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-[10px] text-zinc-500 font-black uppercase tracking-wider">Workout streak</p>
+                <p className="text-sm font-black text-white">{workoutStreak} {workoutStreak === 1 ? 'week' : 'weeks'}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 text-sm font-bold text-zinc-300">
+              <div className="p-2.5 bg-red-500/10 rounded-2xl text-red-500">
+                <Flame className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-[10px] text-zinc-500 font-black uppercase tracking-wider">Daily streak</p>
+                <p className="text-sm font-black text-white">{habitStreak} {habitStreak === 1 ? 'day' : 'days'}</p>
+              </div>
+            </div>
+          </div>
         </motion.div>
 
         {/* Right: Streak rings */}

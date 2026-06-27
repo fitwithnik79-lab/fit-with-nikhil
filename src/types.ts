@@ -271,18 +271,33 @@ export interface WeeklyCheckIn {
   id?: string;
   uid: string;
   clientType: ClientType;
-  weekOf: string; // ISO date string of the Sunday (YYYY-MM-DD or full ISO)
-  submittedAt: string; // ISO date string of submission
-  strengthGain?: 'yes' | 'no';
-  painReduction?: 'slight' | 'moderate' | 'no';
-  movementImprovement?: 'slight' | 'moderate' | 'no' | 'yes' | 'no_improvement';
+  weekOf: string;
+  submittedAt: string;
   workoutPattern?: 'boring' | 'interesting';
   programRating?: number;
-  sharpPain?: 'yes' | 'no';
-  kneeStiffness?: 'yes' | 'no';
-  overheadReach?: 'yes' | 'no';
-  sleepAffected?: 'yes' | 'no';
-  energyLevel?: number;
-  dietAdherence?: 'yes' | 'partially' | 'no';
   freeText?: string;
+  // fitness only:
+  strengthGain?: boolean;
+  energyLevel?: number;
+  dietAdherence?: 'yes' | 'partial' | 'no';
+  // injury clients:
+  painReduction?: 'slight' | 'moderate' | 'no';
+  movementImprovement?: 'slight' | 'moderate' | 'no';
+  // knee only:
+  kneeStiffness?: boolean;
+  // back only:
+  sharpPain?: boolean;
+  // shoulder only:
+  overheadReach?: boolean;
+  sleepAffected?: boolean;
+}
+
+export interface PersonalRecord {
+  id?: string;
+  clientId: string;
+  exerciseName: string;
+  weight: number;  // stored as number (kg)
+  reps: string;
+  achievedAt: string;  // ISO date
+  weekNumber: number;
 }

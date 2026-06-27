@@ -23,9 +23,11 @@ service cloud.firestore {
     }
 
     function isCoach() {
-      return isSignedIn() && 
-             'email' in request.auth.token &&
-             request.auth.token.email == "fitwithnik79@gmail.com";
+      return isSignedIn() && (
+        request.auth.uid == "pamN9t6TaBa9q1cXJ61AOkXgWJi2" ||
+        ('email' in request.auth.token && request.auth.token.email == "fitwithnik79@gmail.com") ||
+        ('email' in request.auth.token && request.auth.token.email.lower() == "fitwithnik79@gmail.com")
+      );
     }
 
     function isAdmin() {
@@ -140,6 +142,16 @@ service cloud.firestore {
              data.description is string && data.description.size() <= 1024 &&
              data.unlockedAt is string && data.unlockedAt.size() <= 64 &&
              data.category is string && data.category.size() <= 128;
+    }
+
+    function isValidPersonalRecord(data) {
+      return data.keys().hasAll(['clientId', 'exerciseName', 'weight', 'reps', 'achievedAt', 'weekNumber']) &&
+             data.clientId is string &&
+             data.exerciseName is string && data.exerciseName.size() <= 256 &&
+             (data.weight is int || data.weight is float) &&
+             data.reps is string && data.reps.size() <= 64 &&
+             data.achievedAt is string && data.achievedAt.size() <= 64 &&
+             data.weekNumber is int;
     }
 
     // ===============================================================
@@ -287,6 +299,13 @@ service cloud.firestore {
       allow create: if isSignedIn() && isValidId(checkInId) && (incoming().uid == request.auth.uid || isAdmin()) && isValidWeeklyCheckIn(incoming());
       allow update: if isSignedIn() && isValidId(checkInId) && (resource.data.uid == request.auth.uid || isAdmin()) && isValidWeeklyCheckIn(incoming());
       allow delete: if isAdmin() && isValidId(checkInId);
+    }
+
+    match /personalRecords/{recordId} {
+      allow read: if isSignedIn() && (resource.data.clientId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && (incoming().clientId == request.auth.uid || isAdmin()) && isValidPersonalRecord(incoming());
+      allow update: if isSignedIn() && (resource.data.clientId == request.auth.uid || isAdmin()) && isValidPersonalRecord(incoming());
+      allow delete: if isAdmin();
     }
   }
 }

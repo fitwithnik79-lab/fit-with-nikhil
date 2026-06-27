@@ -5,7 +5,7 @@ import { DynamicKineticLogo } from './DynamicKineticLogo';
 import { collection, query, where, onSnapshot, addDoc, serverTimestamp, orderBy, limit, getDocs, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db, storage } from '../lib/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { BodyMetrics, Workout, Exercise, Feedback, UserProfile, NutritionPlan, Message, Habit, HabitLog, Goal, WeeklyCheckIn } from '../types';
+import { BodyMetrics, Workout, Exercise, Feedback, UserProfile, NutritionPlan, Message, Habit, HabitLog, Goal, WeeklyCheckIn, Badge, PersonalRecord } from '../types';
 import { WeeklyCheckInForm } from './WeeklyCheckInForm';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { 
@@ -13,6 +13,7 @@ import {
   Minimize2,
   CheckCircle, 
   Check,
+  CheckSquare,
   ExternalLink, 
   Play, 
   MessageSquare, 
@@ -1326,7 +1327,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   
   const todayStr = format(new Date(), 'yyyy-MM-dd');
   const isSunday = new Date().getDay() === 0;
-  const thisSundayStr = format(startOfWeek(new Date(), { weekStartsOn: 0 }), 'yyyy-MM-dd');
+  const thisMonday = format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd');
   
   const calculateStreakFromMetrics = (history: BodyMetrics[]) => {
     if (history.length === 0) return 0;
@@ -1356,41 +1357,22 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   };
 
   const calculateWorkoutStreak = (feedbacks: Feedback[]): number => {
-    const completedFeeds = feedbacks.filter(f => f.completionStatus === true);
-    if (completedFeeds.length === 0) return 0;
-
-    const weekKeys = new Set<string>();
-    completedFeeds.forEach(f => {
-      if (!f.createdAt) return;
-      const date = (f.createdAt as any).toDate ? (f.createdAt as any).toDate() : new Date(f.createdAt as any);
-      if (date instanceof Date && !isNaN(date.getTime())) {
-        const weekStart = startOfWeek(date, { weekStartsOn: 0 }); // Sunday-based standard
-        weekKeys.add(format(weekStart, 'yyyy-MM-dd'));
-      }
-    });
-
-    if (weekKeys.size === 0) return 0;
-
-    let currentRef = startOfWeek(new Date(), { weekStartsOn: 0 });
-    let currentRefKey = format(currentRef, 'yyyy-MM-dd');
-
-    // If neither current week nor last week has completion, streak is broken (0)
-    if (!weekKeys.has(currentRefKey)) {
-      currentRef = subWeeks(currentRef, 1);
-      currentRefKey = format(currentRef, 'yyyy-MM-dd');
-      if (!weekKeys.has(currentRefKey)) {
-        return 0;
+    const completedWeeks = [...new Set(
+      feedbacks
+        .filter(f => f.completionStatus)
+        .map(f => f.weekNumber)
+    )].sort((a, b) => b - a);
+    
+    if (completedWeeks.length === 0) return 0;
+    
+    let streak = 1;
+    for (let i = 0; i < completedWeeks.length - 1; i++) {
+      if (completedWeeks[i] - completedWeeks[i + 1] === 1) {
+        streak++;
+      } else {
+        break;
       }
     }
-
-    // Traverse backward
-    let streak = 0;
-    while (weekKeys.has(currentRefKey)) {
-      streak++;
-      currentRef = subWeeks(currentRef, 1);
-      currentRefKey = format(currentRef, 'yyyy-MM-dd');
-    }
-
     return streak;
   };
 
@@ -1407,11 +1389,53 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   const [submitting, setSubmitting] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
+  const [newSessionPRs, setNewSessionPRs] = useState<PersonalRecord[]>([]);
+  const [newlyUnlockedBadge, setNewlyUnlockedBadge] = useState<Badge | null>(null);
+  const [sessionCompletedStreak, setSessionCompletedStreak] = useState<number>(0);
+  const [sessionMotivationalMessage, setSessionMotivationalMessage] = useState<string>('');
+  const [completedWorkoutInfo, setCompletedWorkoutInfo] = useState<{ weekNumber: number, dayNumber: number } | null>(null);
+  const [personalRecords, setPersonalRecords] = useState<PersonalRecord[]>([]);
   const [adminProfile, setAdminProfile] = useState<UserProfile | null>(null);
-  const [activeTab, setActiveTab] = useState<'dash' | 'calendar' | 'goals' | 'tasks' | 'program' | 'meal' | 'progress' | 'badges' | 'classes' | 'profile' | 'meal-ai' | 'nutrition'>('dash');
+  const [activeTab, setActiveTab] = useState<'dash' | 'calendar' | 'goals' | 'tasks' | 'program' | 'progress' | 'profile' | 'meal-ai' | 'nutrition'>('dash');
   const [showWeeklyCheckIn, setShowWeeklyCheckIn] = useState(false);
   const [hasCheckedInThisWeek, setHasCheckedInThisWeek] = useState(false);
   const [weeklyCheckIn, setWeeklyCheckIn] = useState<WeeklyCheckIn | null>(null);
+
+  const handleToggleHabit = async (habitId: string) => {
+    const todayStr = format(new Date(), 'yyyy-MM-dd');
+    const existingLog = habitLogs.find(l => l.habitId === habitId && l.date === todayStr);
+    try {
+      if (existingLog) {
+        const nextCompletedState = !existingLog.completed;
+        await updateDoc(doc(db, 'habitLogs', existingLog.id!), {
+          completed: nextCompletedState,
+          updatedAt: serverTimestamp()
+        });
+        if (nextCompletedState) {
+          confetti({
+            particleCount: 50,
+            spread: 60,
+            origin: { y: 0.75 }
+          });
+        }
+      } else {
+        await addDoc(collection(db, 'habitLogs'), {
+          habitId,
+          clientId: clientId,
+          date: todayStr,
+          completed: true,
+          updatedAt: serverTimestamp()
+        });
+        confetti({
+          particleCount: 50,
+          spread: 60,
+          origin: { y: 0.75 }
+        });
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `habitLogs/${existingLog?.id || 'new'}`);
+    }
+  };
 
   useEffect(() => {
     window.dispatchEvent(new CustomEvent('app-tab-changed', { 
@@ -1549,11 +1573,11 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
 
   useEffect(() => {
     if (!clientId) return;
-    const thisSundayStr = format(startOfWeek(new Date(), { weekStartsOn: 0 }), 'yyyy-MM-dd');
+    const thisMonday = format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd');
     const qCheckIn = query(
       collection(db, 'weeklyCheckIns'),
       where('uid', '==', clientId),
-      where('weekOf', '==', thisSundayStr)
+      where('weekOf', '==', thisMonday)
     );
 
     const unsubscribeCheckIn = onSnapshot(qCheckIn, (snapshot) => {
@@ -1995,6 +2019,23 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     return () => unsubscribe();
   }, [clientId]);
 
+  useEffect(() => {
+    const q = query(
+      collection(db, 'personalRecords'),
+      where('clientId', '==', clientId),
+      orderBy('achievedAt', 'desc')
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const records = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as PersonalRecord);
+      setPersonalRecords(records);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'personalRecords');
+    });
+
+    return () => unsubscribe();
+  }, [clientId]);
+
   // Automated reminders for missed workouts/meals
   useEffect(() => {
     const checkMissedCheckins = async () => {
@@ -2050,7 +2091,15 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     setSubmitting(true);
     setSubmittingError(null);
     try {
-      const motivationalMessage = await generateMotivationalMessage(profile.displayName || 'Champ', workout.weekNumber);
+      const motivationalMessage = await generateMotivationalMessage(
+        profile.displayName || 'Champ',
+        workout.weekNumber,
+        profile.clientType,
+        allFeedback.filter(f => f.completionStatus).length,
+        calculateWorkoutStreak(allFeedback),
+        clientNote,
+        profile.programGoals
+      );
       
       // Update the workout document with the client's actual performance
       if (workout.id && exerciseFeedback) {
@@ -2127,19 +2176,78 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
           createdAt: serverTimestamp()
         }).catch(err => handleFirestoreError(err, OperationType.CREATE, 'messages'));
       }
+
+      // PART 2 — PR detection
+      const newPRs: PersonalRecord[] = [];
+      
+      if (exerciseFeedback) {
+        for (const [idx, ef] of Object.entries(exerciseFeedback)) {
+          const exercise = workout.exercises[parseInt(idx)];
+          if (!ef.completedWeight || ef.completedWeight === '' || ef.completedWeight === '0') continue;
+          
+          // Parse weight to number (handle "80kg", "80", "bodyweight")
+          const weightNum = parseFloat(ef.completedWeight.replace(/[^\d.]/g, '')) || 0;
+          if (weightNum === 0) continue;
+          
+          // Query previous best for this exercise
+          const prQuery = query(
+            collection(db, 'personalRecords'),
+            where('clientId', '==', clientId),
+            where('exerciseName', '==', exercise.name),
+            orderBy('weight', 'desc'),
+            limit(1)
+          );
+          const prSnap = await getDocs(prQuery);
+          const previousBest = prSnap.empty ? 0 : prSnap.docs[0].data().weight;
+          
+          if (weightNum > previousBest) {
+            // New PR!
+            const pr: PersonalRecord = {
+              clientId,
+              exerciseName: exercise.name,
+              weight: weightNum,
+              reps: ef.completedReps,
+              achievedAt: new Date().toISOString(),
+              weekNumber: workout.weekNumber
+            };
+            await addDoc(collection(db, 'personalRecords'), pr).catch(err => handleFirestoreError(err, OperationType.CREATE, 'personalRecords'));
+            newPRs.push(pr);
+          }
+        }
+      }
+      
+      // Save PRs to state for rendering on completion screen
+      setNewSessionPRs(newPRs);
+      setSessionCompletedStreak(computedNewWorkoutStreak);
+      setSessionMotivationalMessage(motivationalMessage);
+
+      // Award "Heavy Hitter" badge if first PR
+      if (newPRs.length > 0 && !profile.badges?.find(b => b.id === 'heavy_hitter')) {
+        const heavyHitterBadge: Badge = {
+          id: 'heavy_hitter',
+          name: 'Heavy Hitter',
+          icon: 'Zap',
+          description: 'Set a personal record on a lift',
+          unlockedAt: new Date().toISOString(),
+          category: 'workout'
+        };
+        await updateDoc(doc(db, 'users', clientId), {
+          badges: [...(profile.badges || []), heavyHitterBadge]
+        }).catch(err => handleFirestoreError(err, OperationType.UPDATE, `users/${clientId}`));
+        setNewlyUnlockedBadge(heavyHitterBadge);
+      } else {
+        setNewlyUnlockedBadge(null);
+      }
       
       setShowFeedbackForm(false);
       setClientNote('');
+      setCompletedWorkoutInfo({ weekNumber: workout.weekNumber, dayNumber: workout.dayNumber });
       setShowSuccess(true);
 
-      // Grand celebration fireworks cascade with canvas-confetti
-      const duration = 2.5 * 1000;
+      // Run confetti for 4 seconds: use canvas-confetti with colors ['#f97316', '#ffffff', '#fbbf24']
+      const duration = 4000;
       const animationEnd = Date.now() + duration;
-      const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 9999 };
-
-      const randomInRange = (min: number, max: number) => {
-        return Math.random() * (max - min) + min;
-      };
+      const colors = ['#f97316', '#ffffff', '#fbbf24'];
 
       const interval: any = setInterval(function() {
         const timeLeft = animationEnd - Date.now();
@@ -2148,16 +2256,29 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
           return clearInterval(interval);
         }
 
-        const particleCount = 50 * (timeLeft / duration);
-        confetti({ ...defaults, particleCount, origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 } });
-        confetti({ ...defaults, particleCount, origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 } });
+        confetti({
+          particleCount: 40,
+          angle: 60,
+          spread: 55,
+          origin: { x: 0, y: 0.8 },
+          colors: colors,
+          zIndex: 9999
+        });
+        confetti({
+          particleCount: 40,
+          angle: 120,
+          spread: 55,
+          origin: { x: 1, y: 0.8 },
+          colors: colors,
+          zIndex: 9999
+        });
       }, 250);
 
       if (selectedWorkout?.id === workout.id) {
         // We delay closing the modal slightly so the user sees the success state if it's there
         setTimeout(() => setSelectedWorkout(null), 1000);
       }
-      setTimeout(() => setShowSuccess(false), 4000);
+      setTimeout(() => setShowSuccess(false), 8000);
     } catch (error) {
       console.error('Error submitting feedback:', error);
       setSubmittingError("There was an issue submitting your workout. Please try again. If it persists, please message your coach.");
@@ -2426,7 +2547,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                     {/* Welcome Section */}
                     <HeroMomentumBanner
                       profile={profile}
-                      workoutStreak={profile.streak !== undefined && profile.streak > 0 ? profile.streak : calculateWorkoutStreak(allFeedback)}
+                      workoutStreak={calculateWorkoutStreak(allFeedback)}
                       habitStreak={calculateStreakFromMetrics(metrics)}
                       completedToday={isWorkoutCompletedToday}
                       todayWorkout={currentWorkout}
@@ -2447,14 +2568,14 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                         <div>
                           <p className="text-[10px] bg-white/20 text-white font-black uppercase tracking-widest px-3 py-1 rounded-full w-fit mb-3">ACTION REQUIRED</p>
                           <h3 className="text-xl md:text-2xl font-black tracking-tight text-white flex items-center gap-2">
-                            It's check-in day! Help Nik understand your week 👇
+                            📋 Sunday Check-in — 2 minutes, helps Nik tune your program
                           </h3>
                         </div>
                         <button
                           onClick={() => setShowWeeklyCheckIn(true)}
-                          className="bg-zinc-950 text-white hover:bg-orange-600 hover:text-white font-black uppercase text-xs tracking-widest px-6 py-4 rounded-2xl transition-all self-start md:self-auto shrink-0 shadow-lg"
+                          className="bg-zinc-950 text-white hover:bg-orange-600 hover:text-white font-black uppercase text-xs tracking-widest px-8 py-4 rounded-2xl transition-all self-start md:self-auto shrink-0 shadow-lg"
                         >
-                          Fill Check-In
+                          Start
                         </button>
                       </motion.div>
                     )}
@@ -2463,7 +2584,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                       <motion.div variants={bentoItemVariants}>
                         <WeeklyCheckInForm
                           profile={profile}
-                          weekOf={thisSundayStr}
+                          weekOf={thisMonday}
                           onSuccess={() => {
                             setShowWeeklyCheckIn(false);
                             setHasCheckedInThisWeek(true);
@@ -2595,6 +2716,156 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                           </motion.div>
                         )}
 
+                        {/* PART 1 — Today's dash tab enhancements */}
+                        {habits.length > 0 && (
+                          <motion.div 
+                            variants={bentoItemVariants}
+                            className="bg-zinc-900 border border-white/5 rounded-3xl p-6 shadow-2xl space-y-4"
+                          >
+                            <div className="flex items-center justify-between">
+                              <h4 className="text-xs font-black uppercase tracking-widest text-zinc-500 flex items-center gap-2">
+                                <CheckSquare className="w-4 h-4 text-orange-500" />
+                                Habit Check-off
+                              </h4>
+                              <span className="text-xs font-black text-orange-500 bg-orange-500/10 px-3 py-1 rounded-full">
+                                {habits.filter(h => habitLogs.some(l => l.habitId === h.id && l.date === todayStr && l.completed)).length}/{habits.length} done
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-3 overflow-x-auto pb-2 -mx-2 px-2 scrollbar-none">
+                              {habits.map((habit) => {
+                                const isCompleted = habitLogs.some(l => l.habitId === habit.id && l.date === todayStr && l.completed);
+                                const iconLetter = habit.title ? habit.title.charAt(0).toUpperCase() : 'H';
+                                return (
+                                  <button
+                                    key={habit.id}
+                                    onClick={() => handleToggleHabit(habit.id!)}
+                                    className={cn(
+                                      "flex items-center gap-3 px-4 py-2.5 rounded-2xl border transition-all shrink-0 cursor-pointer text-left hover:scale-[1.02] active:scale-95",
+                                      isCompleted 
+                                        ? "bg-orange-500/10 border-orange-500/30 text-orange-500 font-bold" 
+                                        : "bg-zinc-950 border-zinc-800 text-zinc-400 font-semibold hover:border-zinc-700"
+                                    )}
+                                  >
+                                    <span className="text-xs font-black flex items-center justify-center w-6 h-6 rounded-xl bg-zinc-900 text-zinc-300 font-mono">
+                                      {iconLetter}
+                                    </span>
+                                    <span className="text-xs">{habit.title}</span>
+                                    <div className={cn(
+                                      "w-4 h-4 rounded border flex items-center justify-center transition-all",
+                                      isCompleted ? "bg-orange-500 border-orange-500 text-white" : "border-zinc-700"
+                                    )}>
+                                      {isCompleted && <Check className="w-3 h-3 stroke-[3]" />}
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </motion.div>
+                        )}
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                          {/* B) Nutrition Ring */}
+                          {activeNutritionPlan && todayMetrics && (() => {
+                            const loggedCal = todayMetrics.calories || 0;
+                            const targetCal = activeNutritionPlan.targetMacros?.calories || 2000;
+                            const percent = Math.min((loggedCal / targetCal) * 100, 100);
+                            const radius = 30;
+                            const circumference = 2 * Math.PI * radius;
+                            const strokeDashoffset = circumference - (percent / 100) * circumference;
+
+                            let ringColorClass = "text-orange-500";
+                            if (loggedCal > targetCal * 1.2) {
+                              ringColorClass = "text-red-500";
+                            } else if (loggedCal >= targetCal * 0.8) {
+                              ringColorClass = "text-emerald-500";
+                            }
+
+                            return (
+                              <motion.div
+                                variants={bentoItemVariants}
+                                whileHover={{ y: -4, scale: 1.01 }}
+                                onClick={() => setActiveTab('nutrition')}
+                                className="bg-zinc-900 border border-white/5 rounded-[32px] p-6 flex items-center justify-between gap-6 cursor-pointer shadow-xl hover:border-orange-500/30 transition-all"
+                              >
+                                <div className="space-y-2 min-w-0">
+                                  <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Nutrition Ring</span>
+                                  <h4 className="text-lg font-black text-white leading-none">Daily Calorie Target</h4>
+                                  <p className="text-xs font-bold text-zinc-400 mt-1">
+                                    <span className="text-white font-black text-base">{loggedCal.toLocaleString()}</span> / {targetCal.toLocaleString()} kcal
+                                  </p>
+                                </div>
+
+                                <div className="relative w-20 h-20 flex items-center justify-center shrink-0">
+                                  <svg className="w-full h-full transform -rotate-90">
+                                    <circle
+                                      cx="40"
+                                      cy="40"
+                                      r="30"
+                                      stroke="currentColor"
+                                      strokeWidth="6"
+                                      fill="transparent"
+                                      className="text-zinc-800"
+                                    />
+                                    <motion.circle
+                                      cx="40"
+                                      cy="40"
+                                      r="30"
+                                      stroke="currentColor"
+                                      strokeWidth="6"
+                                      fill="transparent"
+                                      strokeDasharray={circumference}
+                                      initial={{ strokeDashoffset: circumference }}
+                                      animate={{ strokeDashoffset: strokeDashoffset }}
+                                      transition={{ duration: 1, ease: "easeOut" }}
+                                      className={ringColorClass}
+                                    />
+                                  </svg>
+                                  <div className="absolute font-black text-xs text-white">
+                                    {Math.round(percent)}%
+                                  </div>
+                                </div>
+                              </motion.div>
+                            );
+                          })()}
+
+                          {/* C) Message Preview Card */}
+                          {messages.some(m => !m.isRead && m.receiverId === profile.uid) && (() => {
+                            const unreadMsgs = messages.filter(m => !m.isRead && m.receiverId === profile.uid);
+                            const latestUnread = unreadMsgs[0];
+                            const first40 = latestUnread?.text 
+                              ? (latestUnread.text.length > 40 ? latestUnread.text.substring(0, 40) + '...' : latestUnread.text) 
+                              : '';
+                            return (
+                              <motion.div
+                                variants={bentoItemVariants}
+                                whileHover={{ y: -4, scale: 1.01 }}
+                                onClick={() => setShowChat(true)}
+                                className="bg-zinc-900 border border-white/5 rounded-[32px] p-6 flex items-center justify-between gap-4 cursor-pointer shadow-xl hover:border-orange-500/30 transition-all"
+                              >
+                                <div className="flex items-center gap-4 min-w-0">
+                                  <div className="relative shrink-0">
+                                    <img
+                                      src={getAvatarUrl(adminProfile?.email || undefined, adminProfile?.gender || 'male', adminProfile?.photoURL)}
+                                      alt="Coach Nik"
+                                      className="w-12 h-12 rounded-full object-cover border border-zinc-800"
+                                      referrerPolicy="no-referrer"
+                                    />
+                                    <span className="absolute bottom-0 right-0 w-3 h-3 bg-orange-500 border-2 border-zinc-900 rounded-full animate-pulse" />
+                                  </div>
+                                  <div className="min-w-0">
+                                    <span className="text-[10px] font-black uppercase tracking-widest text-orange-500">Unread Message</span>
+                                    <h4 className="text-sm font-black text-white truncate leading-none">Nik says:</h4>
+                                    <p className="text-xs text-zinc-400 truncate mt-1 italic font-medium">"{first40}"</p>
+                                  </div>
+                                </div>
+                                <div className="text-zinc-500 hover:text-white transition-colors p-2 bg-zinc-950 rounded-full border border-zinc-800 shrink-0">
+                                  <ArrowRight className="w-4 h-4" />
+                                </div>
+                              </motion.div>
+                            );
+                          })()}
+                        </div>
+
                         <motion.div variants={bentoItemVariants}>
                           <WorkoutHistoryList 
                             workouts={allWorkouts}
@@ -2707,6 +2978,94 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                   <h2 className="text-3xl font-bold">Your Nutrition Framework</h2>
                   <p className="text-zinc-500">Structured eating for massive results, designed by Coach Nik.</p>
                 </div>
+
+                {/* PART 2 — Nutrition tab: logged vs plan comparison */}
+                {activeNutritionPlan && (
+                  todayMetrics ? (
+                    <div className="bg-zinc-900 border border-white/5 rounded-[32px] p-8 space-y-6 shadow-2xl">
+                      <div className="flex items-center gap-2">
+                        <span className="p-1.5 bg-orange-500/10 rounded-lg text-orange-500">
+                          <TrendingUp className="w-4 h-4" />
+                        </span>
+                        <h3 className="text-sm font-black text-white uppercase tracking-wider">Today's Progress</h3>
+                      </div>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        {(() => {
+                          const targets = activeNutritionPlan.targetMacros;
+                          const logged = {
+                            calories: todayMetrics.calories || 0,
+                            protein: todayMetrics.protein || 0,
+                            carbs: todayMetrics.carbs || 0,
+                            fats: todayMetrics.fats || 0
+                          };
+                          
+                          const metricsList = [
+                            { label: 'Calories', logged: logged.calories, target: targets.calories, unit: ' kcal' },
+                            { label: 'Protein', logged: logged.protein, target: targets.protein, unit: 'g' },
+                            { label: 'Carbs', logged: logged.carbs, target: targets.carbs, unit: 'g' },
+                            { label: 'Fats', logged: logged.fats, target: targets.fats, unit: 'g' }
+                          ];
+                          
+                          return metricsList.map((m) => {
+                            const ratio = m.target > 0 ? (m.logged / m.target) : 0;
+                            const percent = Math.min(ratio * 100, 100);
+                            
+                            let barColor = "bg-amber-500";
+                            let textColor = "text-amber-500";
+                            if (ratio >= 0.5 && ratio <= 1.1) {
+                              barColor = "bg-emerald-500";
+                              textColor = "text-emerald-500";
+                            } else if (ratio > 1.1) {
+                              barColor = "bg-red-500";
+                              textColor = "text-red-500";
+                            }
+                            
+                            return (
+                              <div key={m.label} className="space-y-2">
+                                <div className="flex justify-between items-end">
+                                  <span className="text-xs font-black uppercase tracking-widest text-zinc-400">{m.label}</span>
+                                  <span className="text-sm font-bold text-zinc-350">
+                                    <span className={cn("font-black text-base", textColor)}>{m.logged.toLocaleString()}</span>{m.unit} / {m.target.toLocaleString()}{m.unit}
+                                  </span>
+                                </div>
+                                <div className="w-full h-3 bg-zinc-950 rounded-full overflow-hidden border border-zinc-800">
+                                  <motion.div 
+                                    initial={{ width: 0 }}
+                                    animate={{ width: `${percent}%` }}
+                                    transition={{ duration: 0.8, ease: "easeOut" }}
+                                    className={cn("h-full rounded-full", barColor)}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          });
+                        })()}
+                      </div>
+                    </div>
+                  ) : (
+                    <motion.div
+                      whileHover={{ scale: 1.01 }}
+                      onClick={() => setActiveTab('progress')}
+                      className="bg-gradient-to-r from-orange-500/10 to-amber-500/10 border border-orange-500/20 rounded-[32px] p-6 flex items-center justify-between gap-4 cursor-pointer hover:border-orange-500/50 transition-all"
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="p-3 bg-orange-500/20 text-orange-500 rounded-2xl">
+                          <Flame className="w-6 h-6 animate-pulse" />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-black text-white uppercase tracking-wider">Nutritional Tracking Incomplete</h4>
+                          <p className="text-xs text-zinc-400 mt-1 font-semibold">
+                            Log today's nutrition below to see your progress →
+                          </p>
+                        </div>
+                      </div>
+                      <div className="p-2 bg-zinc-900 border border-zinc-800 text-zinc-400 rounded-full">
+                        <ArrowRight className="w-5 h-5" />
+                      </div>
+                    </motion.div>
+                  )
+                )}
 
                 {activeNutritionPlan ? (
                   <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -3034,7 +3393,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                   
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                     {[
-                      { id: 'consistency_1', name: '7-Day Streak', icon: 'Flame', desc: 'Maintain a 7-day activity streak', cat: 'consistency' },
+                      { id: 'consistency_1', name: '4-Week Streak', icon: 'Flame', desc: 'Maintain a 4-week workout streak', cat: 'consistency' },
                       { id: 'workout_10', name: 'Decathlon', icon: 'Shield', desc: 'Complete 10 full workouts', cat: 'workout' },
                       { id: 'nutrition_log', name: 'Meal Master', icon: 'Utensils', desc: 'Log 50 meals with AI', cat: 'nutrition' },
                       { id: 'early_bird', name: 'Early Bird', icon: 'Sun', desc: 'Finish 5 workouts before 9 AM', cat: 'milestone' },
@@ -3079,6 +3438,59 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                       );
                     })}
                   </div>
+                </div>
+
+                {/* Personal Records History */}
+                <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 space-y-6">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xl font-bold flex items-center gap-2">
+                      <Trophy className="w-5 h-5 text-amber-500" />
+                      Personal Records (PRs)
+                    </h3>
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest bg-zinc-950 px-3 py-1 rounded-full border border-zinc-800">
+                      {personalRecords.length} records achieved
+                    </span>
+                  </div>
+
+                  {personalRecords.length === 0 ? (
+                    <div className="text-center py-10 bg-zinc-950/40 rounded-2xl border border-zinc-800/50 p-6">
+                      <Trophy className="w-10 h-10 text-zinc-700 mx-auto mb-3 animate-pulse" />
+                      <p className="text-zinc-400 font-bold text-sm">No personal records logged yet</p>
+                      <p className="text-zinc-600 text-xs mt-1">Complete your workouts and log higher weights to achieve your first PR!</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {personalRecords.map((record, index) => (
+                        <div 
+                          key={record.id || index}
+                          className="bg-zinc-950/60 border border-zinc-800/80 rounded-2xl p-5 flex items-center justify-between relative overflow-hidden group hover:border-amber-500/30 transition-all duration-300"
+                        >
+                          <div className="space-y-1">
+                            <span className="text-[10px] font-black uppercase tracking-widest text-amber-500/80">
+                              Week {record.weekNumber} Lift
+                            </span>
+                            <h4 className="text-lg font-black text-white group-hover:text-amber-200 transition-colors">
+                              {record.exerciseName}
+                            </h4>
+                            <p className="text-[11px] text-zinc-500">
+                              Achieved on {format(parseISO(record.achievedAt), 'MMM d, yyyy')}
+                            </p>
+                          </div>
+                          
+                          <div className="text-right">
+                            <div className="text-2xl font-black text-white italic">
+                              {record.weight} <span className="text-xs font-normal text-zinc-500">kg</span>
+                            </div>
+                            {record.reps && (
+                              <div className="text-xs text-zinc-400 font-medium">
+                                {record.reps} reps
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {/* Google Fit Integration Widget */}
@@ -3451,28 +3863,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
               </motion.div>
             )}
 
-            {['meal', 'badges', 'classes'].includes(activeTab) && (
-              <motion.div
-                key="placeholder"
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                className="h-full flex flex-col items-center justify-center text-center space-y-4 py-20"
-              >
-                <div className="p-6 bg-zinc-900 rounded-full border border-zinc-800">
-                  {activeTab === 'goals' && <Target className="w-12 h-12 text-zinc-700" />}
-                  {activeTab === 'meal' && <Utensils className="w-12 h-12 text-zinc-700" />}
-                  {activeTab === 'progress' && <TrendingUp className="w-12 h-12 text-zinc-700" />}
-                  {activeTab === 'badges' && <Award className="w-12 h-12 text-zinc-700" />}
-                  {activeTab === 'classes' && <Users className="w-12 h-12 text-zinc-700" />}
-                </div>
-                <div>
-                  <h3 className="text-2xl font-bold capitalize">{activeTab.replace(/([A-Z])/g, ' $1')}</h3>
-                  <p className="text-zinc-500 max-w-xs mx-auto">
-                    This section is being customized for your fitness journey. Stay tuned!
-                  </p>
-                </div>
-              </motion.div>
-            )}
+
           </AnimatePresence>
             </div>
           </div>
@@ -3894,73 +4285,135 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md"
+            className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md overflow-y-auto"
           >
             <motion.div
-              initial={{ scale: 0.5, y: 50, opacity: 0 }}
+              initial={{ scale: 0.85, y: 30, opacity: 0 }}
               animate={{ scale: 1, y: 0, opacity: 1 }}
-              exit={{ scale: 0.8, y: -20, opacity: 0 }}
-              className="bg-zinc-900 border border-zinc-800 rounded-[40px] p-12 text-center shadow-2xl max-w-sm relative overflow-hidden"
+              exit={{ scale: 0.9, y: -20, opacity: 0 }}
+              className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-8 text-center shadow-2xl max-w-md w-full relative overflow-hidden my-auto"
             >
-              <div className="absolute inset-0 bg-gradient-to-b from-orange-500/10 to-transparent pointer-events-none" />
+              <div className="absolute inset-0 bg-gradient-to-b from-orange-500/10 via-transparent to-transparent pointer-events-none" />
               
-              <motion.div 
-                animate={{ rotate: [0, 10, -10, 10, 0], scale: [1, 1.1, 1] }}
-                transition={{ duration: 1, repeat: Infinity }}
-                className="inline-flex p-6 bg-orange-500 rounded-full text-white mb-8 shadow-xl shadow-orange-500/40 relative z-10"
+              {/* Large checkmark animation (motion/react scale from 0 to 1) */}
+              <motion.div
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+                transition={{ type: 'spring', stiffness: 200, damping: 15 }}
+                className="w-20 h-20 bg-emerald-500 rounded-full flex items-center justify-center text-white mb-6 mx-auto shadow-lg shadow-emerald-500/20"
               >
-                <Trophy className="w-12 h-12" />
+                <Check className="w-12 h-12 stroke-[3]" />
               </motion.div>
 
-              <div className="space-y-4 relative z-10">
+              <div className="space-y-2 relative z-10">
                 <motion.h2 
-                  initial={{ y: 20, opacity: 0 }}
+                  initial={{ y: 15, opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  transition={{ delay: 0.15 }}
+                  className="text-3xl font-black text-white tracking-tight"
+                >
+                  Session Complete! 🔥
+                </motion.h2>
+                
+                {/* Client's updated workout streak */}
+                <motion.p 
+                  initial={{ y: 15, opacity: 0 }}
                   animate={{ y: 0, opacity: 1 }}
                   transition={{ delay: 0.2 }}
-                  className="text-3xl font-black text-white"
+                  className="text-orange-500 text-sm font-black uppercase tracking-widest"
                 >
-                  WORKOUT CRUSHED!
-                </motion.h2>
-                <motion.p 
-                  initial={{ y: 20, opacity: 0 }}
-                  animate={{ y: 0, opacity: 1 }}
-                  transition={{ delay: 0.3 }}
-                  className="text-zinc-400 font-medium"
-                >
-                  Every session brings you closer to your elite version. Coach Nik is proud of your effort!
+                  {sessionCompletedStreak}-week streak
                 </motion.p>
               </div>
 
-              <motion.div 
-                initial={{ scale: 0 }}
-                animate={{ scale: 1 }}
-                transition={{ delay: 0.5, type: 'spring' }}
-                className="mt-8 flex justify-center gap-2"
-              >
-                {[...Array(5)].map((_, i) => (
-                  <motion.div
-                    key={i}
-                    animate={{ 
-                      y: [0, -10, 0],
-                      opacity: [0.5, 1, 0.5]
-                    }}
-                    transition={{ 
-                      duration: 1.5, 
-                      repeat: Infinity, 
-                      delay: i * 0.1 
-                    }}
-                  >
-                    <Sparkles className="w-5 h-5 text-orange-400" />
-                  </motion.div>
-                ))}
-              </motion.div>
+              {/* If newPRs.length > 0: "🏆 New PR! [exercise name] — [weight]kg" for each PR (amber highlight box) */}
+              {newSessionPRs.length > 0 && (
+                <div className="space-y-2 my-5">
+                  {newSessionPRs.map((pr, idx) => (
+                    <motion.div
+                      key={idx}
+                      initial={{ scale: 0.9, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      transition={{ delay: 0.25 + idx * 0.1 }}
+                      className="bg-amber-500/10 border border-amber-500/30 text-amber-200 rounded-2xl px-4 py-3 text-sm flex items-center gap-2.5 justify-center font-bold shadow-sm"
+                    >
+                      <Trophy className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span>New PR! {pr.exerciseName} — {pr.weight}kg</span>
+                    </motion.div>
+                  ))}
+                </div>
+              )}
 
-              <button 
-                onClick={() => setShowSuccess(false)}
-                className="mt-10 w-full py-4 bg-zinc-800 hover:bg-zinc-700 text-white font-bold rounded-2xl transition-all uppercase tracking-widest text-xs"
-              >
-                Let's Keep Going
-              </button>
+              {/* If badge just unlocked: badge name and icon with confetti */}
+              {newlyUnlockedBadge && (
+                <motion.div
+                  initial={{ scale: 0.9, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  transition={{ delay: 0.4 }}
+                  className="bg-zinc-950 border border-orange-500/40 rounded-2xl p-5 flex flex-col items-center gap-2 my-5 relative overflow-hidden shadow-lg shadow-orange-500/5"
+                >
+                  <div className="absolute inset-0 bg-gradient-to-r from-orange-500/5 to-transparent pointer-events-none" />
+                  <div className="flex items-center gap-1.5 text-orange-400 font-bold text-[10px] uppercase tracking-widest">
+                    <Sparkles className="w-3.5 h-3.5 animate-pulse text-orange-400" />
+                    Badge Unlocked!
+                    <Sparkles className="w-3.5 h-3.5 animate-pulse text-orange-400" />
+                  </div>
+                  <div className="p-3 bg-orange-500/10 rounded-full text-orange-400">
+                    {(() => {
+                      const IconComp = {
+                        Flame, Shield, Utensils, Sun, Zap, Droplets, Crown, Target
+                      }[newlyUnlockedBadge.icon] || Award;
+                      return <IconComp className="w-6 h-6" />;
+                    })()}
+                  </div>
+                  <p className="font-black text-white text-base leading-none">{newlyUnlockedBadge.name}</p>
+                  <p className="text-xs text-zinc-400 font-medium px-2">{newlyUnlockedBadge.description}</p>
+                </motion.div>
+              )}
+
+              {/* The Gemini motivational message */}
+              {sessionMotivationalMessage && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.5 }}
+                  className="bg-zinc-950/40 border border-zinc-800/60 rounded-2xl p-5 my-5 text-left"
+                >
+                  <p className="text-[10px] font-black text-orange-500 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
+                    <Sparkles className="w-3 h-3" /> Coach Nik says
+                  </p>
+                  <p className="text-sm font-medium text-zinc-300 italic leading-relaxed">
+                    "{sessionMotivationalMessage}"
+                  </p>
+                </motion.div>
+              )}
+
+              {/* Two buttons: "Share your win" and "Close" */}
+              <div className="flex gap-3 mt-8 relative z-10">
+                <button
+                  onClick={() => {
+                    const week = completedWorkoutInfo?.weekNumber || 1;
+                    const day = completedWorkoutInfo?.dayNumber || 1;
+                    const shareText = `Just crushed Week ${week} Day ${day} on Fit with Nik! 💪`;
+                    navigator.clipboard.writeText(shareText);
+                    setToastNotification({
+                      title: "Shared!",
+                      message: "Shareable win copied to clipboard! 💪",
+                      type: "success"
+                    });
+                  }}
+                  className="flex-1 py-4 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-2xl transition-all uppercase tracking-widest text-xs flex items-center justify-center gap-2 shadow-lg shadow-orange-500/20 active:scale-95"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  Share win
+                </button>
+                <button
+                  onClick={() => setShowSuccess(false)}
+                  className="flex-1 py-4 bg-zinc-800 hover:bg-zinc-700 text-white font-bold rounded-2xl transition-all uppercase tracking-widest text-xs active:scale-95"
+                >
+                  Close
+                </button>
+              </div>
             </motion.div>
           </motion.div>
         )}

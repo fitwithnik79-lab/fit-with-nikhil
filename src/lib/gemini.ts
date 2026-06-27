@@ -4,12 +4,20 @@
  * The client now calls /api/gemini/* endpoints.
  */
 
-export async function generateMotivationalMessage(clientName: string, weekNumber: number) {
+export async function generateMotivationalMessage(
+  clientName: string, 
+  weekNumber: number,
+  clientType?: string,
+  completedCount?: number,
+  streak?: number,
+  lastNote?: string,
+  programGoal?: string
+) {
   try {
     const response = await fetch('/api/gemini/motivate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ clientName, weekNumber }),
+      body: JSON.stringify({ clientName, weekNumber, clientType, completedCount, streak, lastNote, programGoal }),
     });
     const data = await response.json();
     return data.text || "Great job this week! Keep pushing!";

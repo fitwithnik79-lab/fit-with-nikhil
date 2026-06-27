@@ -41,10 +41,10 @@ function sanitizeLogText(text: string): string {
 
 // Resilient fallback interceptor to prevent 503 (High Demand) and 404 (Unsupported) errors
 const originalGenerateContent = ai.models.generateContent.bind(ai.models);
-let preferredModel = "gemini-3.5-flash";
+let preferredModel = "gemini-2.0-flash";
 
 ai.models.generateContent = async function (params: any): Promise<any> {
-  const modelsToTry = ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"];
+  const modelsToTry = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-flash-8b"];
   const initialModel = params.model || preferredModel;
   const modelQueue = [initialModel, ...modelsToTry.filter(m => m !== initialModel)];
 
@@ -160,11 +160,18 @@ async function startServer() {
 
   // Shared Gemini API routes for client functionality
   app.post('/api/gemini/motivate', async (req, res) => {
-    const { clientName, weekNumber } = req.body;
+    const { clientName, weekNumber, clientType, completedCount, streak, lastNote, programGoal } = req.body;
     try {
+      const prompt = `You are Coach Nik, a personal fitness coach. Write a 2-sentence personalised post-workout message for your client ${clientName}.
+  Context: They just completed Week ${weekNumber} of their program. They have done ${completedCount} total sessions. 
+  Current streak: ${streak} weeks. Their goal: ${programGoal || 'general fitness'}.
+  ${clientType && clientType !== 'fitness' ? `Important: This client has a ${clientType.replace('_', ' ')} — focus on recovery, pain management, and movement quality, NOT performance or weight targets.` : ''}
+  ${lastNote ? `Their note from this session: "${lastNote}"` : ''}
+  Be warm, specific, and encouraging. Sound like a real coach who knows them personally, not a bot. Max 2 sentences.`;
+
       const response = await fetchWithRetry(() => ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: [{ role: 'user', parts: [{ text: `You are Nik, a high-energy fitness coach. Write a short, powerful motivational message for your client ${clientName} who just finished Week ${weekNumber} of their program. Keep it under 3 sentences. Be specific about their progress and encourage them for next week.` }] }]
+        model: "gemini-2.0-flash",
+        contents: [{ role: 'user', parts: [{ text: prompt }] }]
       }));
       res.json({ text: response.text || "Great job this week! Keep pushing!" });
     } catch (error: any) {
@@ -179,7 +186,7 @@ async function startServer() {
       // Direct, fast, and free heuristic generation without active search grounding tools (prevents 429 quota exhaustion)
       try {
         const fallbackResponse = await fetchWithRetry(() => ai.models.generateContent({
-          model: "gemini-3.5-flash",
+          model: "gemini-2.0-flash",
           contents: [{ role: 'user', parts: [{ text: `Generate 3 high-quality YouTube search or demonstration links for the exercise: "${exerciseName}".
           You must generate highly specific YouTube search query URLs or standard demonstration titles from elite fitness channels (like Athlean-X, Squat University, Jeff Nippard, Mountain Dog, or standard YouTube Search Query URLs) which are reliable query targets.
           
@@ -325,7 +332,7 @@ async function startServer() {
     try {
       const response = await fetchWithRetry(async () => {
         return await ai.models.generateContent({
-          model: "gemini-3.5-flash",
+          model: "gemini-2.0-flash",
           contents: [{
             role: 'user',
             parts: [
@@ -351,7 +358,7 @@ async function startServer() {
     try {
       const response = await fetchWithRetry(async () => {
         return await ai.models.generateContent({
-          model: "gemini-3.5-flash",
+          model: "gemini-2.0-flash",
           contents: [{ role: 'user', parts: [{ text: `You are an elite performance nutritionist. Analyze the following meal description: "${mealDescription}". 
           
           CRITICAL INSTRUCTION: Be extremely detailed. If a user enters a simple item like "Tea", "Coffee", "Pasta", or "Cereal", do NOT just analyze the dry ingredient. 
@@ -379,7 +386,7 @@ async function startServer() {
     const itemsDescription = items.map((i: any) => `${i.quantity} of ${i.name}`).join(", ");
     try {
       const response = await fetchWithRetry(() => ai.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: "gemini-2.0-flash",
         contents: [{ role: 'user', parts: [{ text: `Calculate the calories, protein, carbs, and fats for the following food items and their specific quantities: "${itemsDescription}".` }]}],
         config: { 
           responseMimeType: "application/json",
@@ -397,7 +404,7 @@ async function startServer() {
     const { summary, goals } = req.body;
     try {
       const response = await fetchWithRetry(() => ai.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: "gemini-2.0-flash",
         contents: [{ role: 'user', parts: [{ text: `You are Nik, a world-class performance nutritionist. Analyze today's logged meals for this client and provide personalized actionable advice.
         
         Client Goals: ${goals}
@@ -524,7 +531,7 @@ async function startServer() {
     try {
       // Direct, advanced professional workout parser with day analysis and elite styling rules
       const response = await fetchWithRetry(() => ai.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: "gemini-2.0-flash",
         contents: [{ role: 'user', parts: [{ text: `You are an elite, Olympic-level strength and conditioning coach specializing in athletic performance, biomechanical correction, and recovery. 
         Your task is to analyze the following workout content from an uploaded file/document named "${fileName}".
         
@@ -579,7 +586,7 @@ async function startServer() {
     const { exercisesSummary, sheetTitle, tabName } = req.body;
     try {
       const response = await fetchWithRetry(() => ai.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: "gemini-2.0-flash",
         contents: [{ role: 'user', parts: [{ text: `You are an elite coaching systems architect. Generate high-end Olympic metadata for a training program.
         Spreadsheet Source: "${sheetTitle}"
         Tab Name: "${tabName}"
@@ -604,7 +611,7 @@ async function startServer() {
     const { fileContent, fileName } = req.body;
     try {
       const response = await fetchWithRetry(() => ai.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: "gemini-2.0-flash",
         contents: [{ role: 'user', parts: [{ text: `Analyze the performance nutrition plan from "${fileName}" as a professional sports nutritionist. 
         
         EXTRACTION REQUIREMENTS:
@@ -670,13 +677,13 @@ async function startServer() {
         const newBadgesToInsert: any[] = [];
 
         // Check Badges:
-        // 1. Consistency King (Streak >= 7)
-        if (streak >= 7 && !existingBadgeIds.has('consistency_1')) {
+        // 1. Consistency King (4-Week Streak)
+        if (streak >= 4 && !existingBadgeIds.has('consistency_1')) {
           newBadgesToInsert.push({
             id: 'consistency_1',
-            name: '7-Day Streak',
+            name: '4-Week Streak',
             icon: 'Flame',
-            description: 'Maintain a 7-day activity streak',
+            description: 'Maintain a 4-week workout streak',
             unlockedAt: new Date().toISOString(),
             category: 'consistency'
           });
@@ -1028,6 +1035,59 @@ async function startServer() {
           createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
         console.log(`[Google Fit Steps] Persistent store: Created daily metrics document for ${targetDateStr} containing steps: ${totalSteps}`);
+      }
+
+      // SMART NOTIFICATION TRIGGER: Step count milestone check
+      try {
+        const userDocRef = db.collection('users').doc(uid);
+        const userDoc = await userDocRef.get();
+        if (userDoc.exists) {
+          const userData = userDoc.data() || {};
+          const stepGoal = userData.stepGoal || 8000;
+          const lastNotifiedDate = userData.lastStepGoalNotifiedDate || '';
+
+          if (totalSteps >= stepGoal && lastNotifiedDate !== targetDateStr) {
+            // Update last step goal notified date to prevent spam
+            await userDocRef.update({
+              lastStepGoalNotifiedDate: targetDateStr
+            });
+
+            console.log(`[Google Fit Steps] Step goal achieved! ${totalSteps}/${stepGoal}. Sending milestone push alert...`);
+
+            // Save in-app notification
+            await db.collection('notifications').add({
+              clientId: uid,
+              title: 'Step Goal Smashed! 👣🔥',
+              message: `Sensational work! You achieved ${totalSteps.toLocaleString()} steps today, crushing your target of ${stepGoal.toLocaleString()} steps! Keep up this elite momentum!`,
+              type: 'general',
+              isRead: false,
+              createdAt: admin.firestore.FieldValue.serverTimestamp()
+            });
+
+            // Trigger Real-Time FCM Push Notification
+            const fcmTokens = userData.fcmTokens || [];
+            if (fcmTokens.length > 0) {
+              const fcmMessage = {
+                notification: {
+                  title: 'Step Goal Smashed! 👣🔥',
+                  body: `Outstanding! You logged ${totalSteps.toLocaleString()} steps today, conquering your goal of ${stepGoal.toLocaleString()} steps! Keep moving!`
+                },
+                data: {
+                  type: 'fitness_milestone',
+                  tag: 'step_goal_congrats',
+                  steps: totalSteps.toString(),
+                  goal: stepGoal.toString()
+                },
+                tokens: fcmTokens
+              };
+              await admin.messaging().sendEachForMulticast(fcmMessage)
+                .then(resp => console.log('[Google Fit Steps] FCM milestone sent successfully:', resp.successCount))
+                .catch(err => console.error('[Google Fit Steps] FCM milestone send error:', err));
+            }
+          }
+        }
+      } catch (triggerError) {
+        console.error('[Google Fit Steps] Failed to evaluate steps smart notification trigger:', triggerError);
       }
 
       res.json({ steps: totalSteps, date: targetDateStr });
@@ -1398,7 +1458,7 @@ async function startServer() {
       Return ONLY the JSON.`;
 
       const result = await fetchWithRetry(() => ai.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: "gemini-2.0-flash",
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         config: {
           responseMimeType: "application/json",
@@ -1470,7 +1530,7 @@ async function startServer() {
       Return ONLY the JSON.`;
 
       const result = await fetchWithRetry(() => ai.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: "gemini-2.0-flash",
         contents: [
           {
             role: 'user',
@@ -1562,6 +1622,224 @@ async function startServer() {
     }
   });
 
+  // API to register FCM Push Tokens
+  app.post('/api/notifications/register', async (req, res) => {
+    const { userId, token } = req.body;
+    if (!userId || !token) {
+      return res.status(400).json({ error: 'Missing userId or token' });
+    }
+    try {
+      const db = getFirestore();
+      const userRef = db.collection('users').doc(userId);
+      const userDoc = await userRef.get();
+      if (!userDoc.exists) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      
+      await userRef.update({
+        fcmTokens: FieldValue.arrayUnion(token)
+      });
+      
+      res.json({ success: true, message: 'FCM Token registered successfully' });
+    } catch (err: any) {
+      console.error('Error registering FCM token:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // API to generate copywriting via Gemini for push notifications
+  app.post('/api/notifications/generate', async (req, res) => {
+    const { type, clientName, context } = req.body;
+    try {
+      let prompt = `You are Coach Nik, a high-energy, world-class athletic fitness coach. Generate a short, action-oriented, and punchy push notification message (strictly under 100 characters) for an athlete.`;
+      if (type === 'motivation') {
+        prompt += ` Theme: Pure explosive motivation. Athlete name: ${clientName || 'champ'}. ${context ? `Additional context: ${context}.` : ''} Make it direct, elite, and focus on physical dominance or discipline.`;
+      } else if (type === 'reminder') {
+        prompt += ` Theme: Workout or check-in reminder. Athlete name: ${clientName || 'athlete'}. ${context ? `Additional context: ${context}.` : ''} Urge them to log their active sets, steps, or water intake immediately with high energy.`;
+      } else if (type === 'adherence_alert') {
+        prompt += ` Theme: Compliant check. Athlete name: ${clientName || 'athlete'}. State firmly but supportively that consistency is drop-dead required for results.`;
+      } else {
+        prompt += ` Theme: General performance encouragement. Athlete name: ${clientName || 'athlete'}.`;
+      }
+
+      const response = await fetchWithRetry(() => ai.models.generateContent({
+        model: "gemini-2.0-flash",
+        contents: [{ role: 'user', parts: [{ text: prompt }] }]
+      }));
+
+      const text = (response.text || '').trim().replace(/"/g, '');
+      res.json({ text });
+    } catch (error: any) {
+      console.error('Error generating notification copywriting:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // API to run scheduled notification events (cron triggers)
+  app.post('/api/notifications/schedule', async (req, res) => {
+    const { type } = req.body;
+    const db = getFirestore();
+    try {
+      const clientsSnap = await db.collection('users').where('role', '==', 'client').get();
+      const clients = clientsSnap.docs.map(doc => ({ uid: doc.id, ...doc.data() }) as any);
+      let broadcastCount = 0;
+
+      if (type === 'motivational_quote') {
+        // Daily motivational quote broadcast (e.g., at 8AM)
+        const quoteRes = await fetchWithRetry(() => ai.models.generateContent({
+          model: "gemini-2.0-flash",
+          contents: [{ role: 'user', parts: [{ text: "Write a 1-sentence morning fitness motivational quote. Keep it under 80 characters. Maximize intensity." }] }]
+        }));
+        const quote = (quoteRes.text || "Win the morning, dominate the day! ⚡").trim().replace(/"/g, '');
+
+        for (const client of clients) {
+          const tokens = (client as any).fcmTokens || [];
+          if (tokens.length > 0) {
+            const fcmMessage = {
+              notification: {
+                title: 'Coach Nik: Morning Fire! ⚡',
+                body: quote
+              },
+              data: { type: 'motivation', tag: 'daily_motivation_broadcast' },
+              tokens
+            };
+            await admin.messaging().sendEachForMulticast(fcmMessage).catch(() => {});
+            broadcastCount++;
+          }
+        }
+        return res.json({ success: true, message: `Dispatched daily morning quote to ${broadcastCount} users`, text: quote });
+
+      } else if (type === 'workout_reminder') {
+        // Workout reminder (e.g., at 7AM, only to clients with a workout scheduled for today)
+        const todayStr = format(new Date(), 'yyyy-MM-dd');
+        const workoutsSnap = await db.collection('workouts')
+          .where('scheduledDate', '==', todayStr)
+          .get();
+        const activeClientIds = new Set(workoutsSnap.docs.map(doc => doc.data().clientId));
+
+        for (const client of clients) {
+          if (activeClientIds.has(client.uid)) {
+            // Check if they completed feedback
+            const feedbackSnap = await db.collection('feedback')
+              .where('clientId', '==', client.uid)
+              .where('completionStatus', '==', true)
+              .where('date', '==', todayStr)
+              .get();
+
+            if (feedbackSnap.empty) {
+              const tokens = (client as any).fcmTokens || [];
+              if (tokens.length > 0) {
+                const fcmMessage = {
+                  notification: {
+                    title: 'Routines Awaiting! 🏋️‍♂️💪',
+                    body: `Hey ${client.displayName || 'athlete'}! You have an elite routine scheduled today. Lock in and execute!`
+                  },
+                  data: { type: 'workout', tag: 'daily_workout_alert' },
+                  tokens
+                };
+                await admin.messaging().sendEachForMulticast(fcmMessage).catch(() => {});
+                broadcastCount++;
+              }
+            }
+          }
+        }
+        return res.json({ success: true, message: `Dispatched workout reminders to ${broadcastCount} athletes.` });
+
+      } else if (type === 'checkin_reminder') {
+        // Check-in reminder (e.g., at 9AM Monday, only to users who haven't submitted weekly checkin yet)
+        const threeDaysAgo = new Date();
+        threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+
+        const checkinsSnap = await db.collection('weeklyCheckIns')
+          .where('submittedAt', '>=', threeDaysAgo.toISOString())
+          .get();
+        const submittedClientIds = new Set(checkinsSnap.docs.map(doc => doc.data().clientId));
+
+        for (const client of clients) {
+          if (!submittedClientIds.has(client.uid)) {
+            const tokens = (client as any).fcmTokens || [];
+            if (tokens.length > 0) {
+              const fcmMessage = {
+                notification: {
+                  title: 'Weekly Review Pending! 📋📈',
+                  body: `Hey ${client.displayName || 'athlete'}! Your weekly review is pending. Provide metrics to optimize your compliance.`
+                },
+                data: { type: 'checkin', tag: 'checkin_warning' },
+                tokens
+              };
+              await admin.messaging().sendEachForMulticast(fcmMessage).catch(() => {});
+              broadcastCount++;
+            }
+          }
+        }
+        return res.json({ success: true, message: `Dispatched weekly check-in nudges to ${broadcastCount} users.` });
+
+      } else if (type === 'adherence_check') {
+        // ADHERENCE CHECK: "Coach alerts for missed workouts and declining adherence"
+        // Evaluates adherenceRate for all active athletes. If compliance is under 50%, alerts the coach!
+        const coachSnap = await db.collection('users').where('role', '==', 'admin').get();
+        const coaches = coachSnap.docs.map(doc => ({ uid: doc.id, ...doc.data() }));
+        const alertedAthletes: string[] = [];
+
+        for (const client of clients) {
+          const workoutsQuery = await db.collection('workouts')
+            .where('clientId', '==', client.uid)
+            .get();
+          const totalAssigned = workoutsQuery.size;
+
+          const feedbackQuery = await db.collection('feedback')
+            .where('clientId', '==', client.uid)
+            .where('completionStatus', '==', true)
+            .get();
+          const completedCount = feedbackQuery.size;
+
+          const adherenceRate = totalAssigned > 0 ? Math.round((completedCount / totalAssigned) * 100) : 100;
+
+          if (totalAssigned > 0 && adherenceRate < 50) {
+            alertedAthletes.push(`${client.displayName || 'Unnamed'} (${adherenceRate}%)`);
+
+            // Save alarm notification for coach (in-app stream)
+            for (const coach of coaches) {
+              await db.collection('notifications').add({
+                clientId: coach.uid,
+                title: `⚠️ COMPLIANCE RISK: ${client.displayName || 'Athlete'}`,
+                message: `Athlete ${client.displayName || 'athlete'} fell below 50% workout adherence (Current: ${adherenceRate}%). Urgent coach intervention suggested.`,
+                type: 'feedback',
+                relatedId: client.uid,
+                isRead: false,
+                createdAt: admin.firestore.FieldValue.serverTimestamp()
+              });
+
+              // Send Real-Time Push Notification directly to coach's phone/browser
+              const coachTokens = (coach as any).fcmTokens || [];
+              if (coachTokens.length > 0) {
+                const fcmMessage = {
+                  notification: {
+                    title: '⚠️ Declining Athlete Compliance!',
+                    body: `${client.displayName || 'Athlete'} consistency fell to ${adherenceRate}%. Immediate tactical intervention recommended!`
+                  },
+                  data: {
+                    type: 'adherence_alert',
+                    clientId: client.uid,
+                    tag: `compliance_${client.uid}`
+                  },
+                  tokens: coachTokens
+                };
+                await admin.messaging().sendEachForMulticast(fcmMessage).catch(() => {});
+              }
+            }
+          }
+        }
+        return res.json({ success: true, message: `Completed compliance evaluation. Flagged ${alertedAthletes.length} athletes: ${alertedAthletes.join(', ')}` });
+      }
+
+      res.status(400).json({ error: 'Invalid scheduled trigger event type' });
+    } catch (err: any) {
+      console.error('Error inside scheduled cron trigger endpoint:', err);
+      res.status(500).json({ error: 'Failed to execute scheduled events', details: err.message });
+    }
+  });
+
   // API to analyze nutrition plan from file
   // Moved to top for reliability
   
@@ -1599,7 +1877,7 @@ async function startServer() {
       Return valid JSON only.`;
 
       const result = await fetchWithRetry(() => ai.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: "gemini-2.0-flash",
         contents: [
           {
             role: 'user',

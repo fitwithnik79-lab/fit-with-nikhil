@@ -18,6 +18,7 @@ import LandingPage from './components/LandingPage';
 import MainWelcomePage from './components/MainWelcomePage';
 import ErrorBoundary from './components/ErrorBoundary';
 import { DynamicKineticLogo } from './components/DynamicKineticLogo';
+import { NotificationBanner } from './components/NotificationBanner';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -138,6 +139,59 @@ export default function App() {
     }
   }, [previewClientId]);
 
+  // Spatial bloom & scroll dynamics
+  const [scrollProgress, setScrollProgress] = useState(0);
+  const [bloomIntensity, setBloomIntensity] = useState(1);
+
+  useEffect(() => {
+    let lastActivity = Date.now();
+    let frameId: number;
+
+    const handleScroll = () => {
+      const totalScroll = document.documentElement.scrollHeight - window.innerHeight;
+      if (totalScroll > 0) {
+        setScrollProgress(window.scrollY / totalScroll);
+      }
+      lastActivity = Date.now();
+    };
+
+    const handleActivity = () => {
+      lastActivity = Date.now();
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    window.addEventListener('mousemove', handleActivity, { passive: true });
+    window.addEventListener('mousedown', handleActivity, { passive: true });
+    window.addEventListener('keydown', handleActivity, { passive: true });
+    window.addEventListener('touchstart', handleActivity, { passive: true });
+
+    const updateBloom = () => {
+      const now = Date.now();
+      const msSinceActivity = now - lastActivity;
+      
+      // Calculate dynamic decay/bloom scale
+      let target = 1.0;
+      if (msSinceActivity < 1800) {
+        const factor = (1800 - msSinceActivity) / 1800;
+        target = 1.0 + factor * 1.2; // Up to 2.2x ambient intensity on interaction
+      }
+      
+      setBloomIntensity((prev) => prev + (target - prev) * 0.05);
+      frameId = requestAnimationFrame(updateBloom);
+    };
+
+    frameId = requestAnimationFrame(updateBloom);
+
+    return () => {
+      window.removeEventListener('scroll', handleScroll);
+      window.removeEventListener('mousemove', handleActivity);
+      window.removeEventListener('mousedown', handleActivity);
+      window.removeEventListener('keydown', handleActivity);
+      window.removeEventListener('touchstart', handleActivity);
+      cancelAnimationFrame(frameId);
+    };
+  }, []);
+
   if (loading) {
     return (
       <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
@@ -156,29 +210,62 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white font-sans">
-      <header className="sticky top-0 z-50 bg-zinc-950/80 backdrop-blur-md border-b border-zinc-800">
-        <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
+    <div className="min-h-screen bg-zinc-950 text-white font-sans relative overflow-x-hidden pb-12">
+      {/* Ambient background spatial glow blobs */}
+      <div className="fixed -top-40 -left-40 w-96 h-96 bg-orange-500/15 rounded-full blur-[120px] pointer-events-none z-0" />
+      <div className="fixed top-1/4 -right-40 w-[500px] h-[500px] bg-orange-600/5 rounded-full blur-[150px] pointer-events-none z-0" />
+      <div className="fixed -bottom-40 left-1/4 w-[600px] h-[600px] bg-zinc-500/5 rounded-full blur-[180px] pointer-events-none z-0" />
+
+      {/* Dynamic Secondary Bloom Layer - Physically responds to scroll & user activity */}
+      <motion.div 
+        className="fixed inset-0 pointer-events-none z-0 overflow-hidden"
+        style={{
+          opacity: 0.4 * bloomIntensity,
+        }}
+      >
+        <motion.div 
+          className="absolute w-[600px] h-[600px] rounded-full bg-gradient-to-br from-orange-500/10 to-orange-600/0 blur-[130px]"
+          animate={{
+            x: -100 + scrollProgress * 150,
+            y: 100 - scrollProgress * 100,
+            scale: 0.9 + bloomIntensity * 0.15,
+          }}
+          transition={{ type: 'spring', damping: 25, stiffness: 60 }}
+        />
+        <motion.div 
+          className="absolute right-[-10%] top-[40%] w-[550px] h-[550px] rounded-full bg-gradient-to-bl from-orange-600/5 to-zinc-500/0 blur-[140px]"
+          animate={{
+            x: 50 - scrollProgress * 200,
+            y: -50 + scrollProgress * 150,
+            scale: 0.85 + bloomIntensity * 0.2,
+          }}
+          transition={{ type: 'spring', damping: 30, stiffness: 50 }}
+        />
+      </motion.div>
+
+      <header className="sticky top-4 z-50 px-4 max-w-7xl mx-auto mt-4">
+        <div className="bg-zinc-900/40 backdrop-blur-2xl border border-white/10 rounded-2xl md:rounded-full px-6 py-3 flex items-center justify-between shadow-[0_12px_40px_rgba(0,0,0,0.5)]">
           <div className="flex items-center gap-2">
             <DynamicKineticLogo size="sm" />
           </div>
           
           <div className="flex items-center gap-4">
             <div className="hidden sm:flex flex-col items-end">
-              <span className="text-sm font-medium">{profile.displayName}</span>
-              <span className="text-xs text-zinc-500 capitalize">{profile.role}</span>
+              <span className="text-sm font-semibold tracking-wide">{profile.displayName}</span>
+              <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest bg-zinc-950/60 border border-white/5 px-2 py-0.5 rounded-full">{profile.role}</span>
             </div>
             <button
               onClick={handleLogout}
-              className="p-2 hover:bg-zinc-800 rounded-lg transition-colors text-zinc-400 hover:text-white"
+              className="p-2 bg-white/5 hover:bg-white/10 border border-white/5 hover:border-white/10 rounded-xl transition-all text-zinc-400 hover:text-white cursor-pointer"
             >
-              <LogOut className="w-5 h-5" />
+              <LogOut className="w-4 h-4" />
             </button>
           </div>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 py-8">
+      <main className="max-w-7xl mx-auto px-4 py-8 relative z-10">
+        <NotificationBanner userId={user?.uid} />
         {previewClientId && previewProfile && (
           <div className="mb-6 flex items-center justify-between bg-orange-500/10 border border-orange-500/20 p-4 rounded-2xl">
             <div className="flex items-center gap-3">

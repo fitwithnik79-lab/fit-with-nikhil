@@ -20,13 +20,156 @@
 
 @layer utilities {
   .glass {
-    @apply bg-zinc-900/50 backdrop-blur-xl border border-white/5;
+    @apply bg-zinc-900/40 backdrop-blur-xl border border-white/10;
   }
   .glass-dark {
-    @apply bg-black/50 backdrop-blur-2xl border border-white/5;
+    @apply bg-black/60 backdrop-blur-2xl border border-white/5;
+  }
+  .spatial-glass {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.01) 100%);
+    backdrop-filter: blur(24px) saturate(140%);
+    -webkit-backdrop-filter: blur(24px) saturate(140%);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 
+      0 4px 30px rgba(0, 0, 0, 0.4),
+      inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  }
+  .spatial-card {
+    background: rgba(18, 18, 18, 0.4);
+    backdrop-filter: blur(32px) saturate(150%);
+    -webkit-backdrop-filter: blur(32px) saturate(150%);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 24px;
+    box-shadow: 
+      0 20px 50px rgba(0, 0, 0, 0.5),
+      inset 0 1px 1px rgba(255, 255, 255, 0.15),
+      inset 0 -1px 2px rgba(0, 0, 0, 0.2);
+    transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .spatial-card:hover {
+    border-color: rgba(255, 255, 255, 0.15);
+    box-shadow: 
+      0 30px 60px rgba(0, 0, 0, 0.6),
+      0 0 40px rgba(255, 77, 0, 0.1),
+      inset 0 1px 2px rgba(255, 255, 255, 0.2);
+    transform: translateY(-2px);
+  }
+  .spatial-btn-primary {
+    background: linear-gradient(135deg, #ff4d00 0%, #ff7300 100%);
+    box-shadow: 
+      0 8px 24px rgba(255, 77, 0, 0.3),
+      inset 0 1px 0 rgba(255, 255, 255, 0.2);
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .spatial-btn-primary:hover:not(:disabled) {
+    transform: scale(1.02) translateY(-1px);
+    box-shadow: 
+      0 12px 30px rgba(255, 77, 0, 0.45),
+      inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  }
+  .spatial-btn-glass {
+    background: rgba(255, 255, 255, 0.06);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 
+      0 4px 12px rgba(0, 0, 0, 0.2),
+      inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .spatial-btn-glass:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.2);
+    transform: translateY(-1px);
+    box-shadow: 
+      0 8px 20px rgba(0, 0, 0, 0.3),
+      inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  }
+  .spatial-glow-orange {
+    filter: drop-shadow(0 0 12px rgba(255, 77, 0, 0.4));
   }
   .bento-grid {
     @apply grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4;
+  }
+}
+
+/* Spatial UI Design System Overrides */
+.bg-zinc-900 {
+  background: rgba(18, 18, 18, 0.42) !important;
+  backdrop-filter: blur(28px) saturate(150%) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(150%) !important;
+  box-shadow: 
+    0 8px 32px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+}
+
+.bg-zinc-950 {
+  background: rgba(8, 8, 8, 0.55) !important;
+  backdrop-filter: blur(36px) saturate(160%) !important;
+  -webkit-backdrop-filter: blur(36px) saturate(160%) !important;
+  box-shadow: 
+    0 12px 40px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
+}
+
+/* Override tailwind opacity utilities on dark backgrounds */
+.bg-zinc-900\/50, .bg-zinc-900\/40, .bg-zinc-900\/80 {
+  background-color: rgba(18, 18, 18, 0.25) !important;
+  backdrop-filter: blur(20px) saturate(140%) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(140%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.05) !important;
+}
+
+.bg-zinc-950\/80, .bg-zinc-950\/90, .bg-zinc-950\/50 {
+  background-color: rgba(8, 8, 8, 0.45) !important;
+  backdrop-filter: blur(32px) saturate(150%) !important;
+  -webkit-backdrop-filter: blur(32px) saturate(150%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+}
+
+.bg-black {
+  background-color: #050505 !important;
+}
+
+.bg-black\/50, .bg-black\/40 {
+  background-color: rgba(5, 5, 5, 0.4) !important;
+  backdrop-filter: blur(24px) saturate(140%) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(140%) !important;
+}
+
+/* Softer, glowing spatial borders */
+.border-zinc-800 {
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+.border-white\/5, .border-white\/10 {
+  border-color: rgba(255, 255, 255, 0.07) !important;
+}
+
+/* Subtle hovering ambient shadows on all cards */
+.rounded-3xl, .rounded-\[32px\], .rounded-\[40px\] {
+  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.rounded-3xl:hover, .rounded-\[32px\]:hover, .rounded-\[40px\]:hover {
+  border-color: rgba(255, 77, 0, 0.2) !important;
+  box-shadow: 
+    0 24px 50px rgba(0, 0, 0, 0.6),
+    0 0 30px rgba(255, 77, 0, 0.05),
+    inset 0 1px 1px rgba(255, 255, 255, 0.12) !important;
+}
+
+/* Dynamic floating sidebar for spatial feel */
+@media (min-width: 768px) {
+  aside {
+    margin: 16px !important;
+    border-radius: 28px !important;
+    height: calc(100vh - 32px) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    background: rgba(10, 10, 10, 0.45) !important;
+    backdrop-filter: blur(32px) saturate(140%) !important;
+    -webkit-backdrop-filter: blur(32px) saturate(140%) !important;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6) !important;
   }
 }
 
