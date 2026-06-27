@@ -38,7 +38,7 @@ export async function requestNotificationPermission(userId: string) {
     
     if (permission === 'granted') {
       const token = await getToken(messaging, {
-        vapidKey: 'BM6a-y_oF9Y_X7pWz8_Vz-5-3-X-X_X_X_X_X_X_X_X_X' // I need a real VAPID key usually
+        vapidKey: (import.meta as any).env.VITE_FIREBASE_VAPID_KEY
       });
       
       if (token) {

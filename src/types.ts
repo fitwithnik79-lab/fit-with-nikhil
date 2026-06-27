@@ -10,6 +10,14 @@ export interface Badge {
   category: 'workout' | 'nutrition' | 'consistency' | 'milestone';
 }
 
+export interface NotificationPreferences {
+  workoutReminderEnabled: boolean;
+  workoutReminderTime: string; // "HH:MM" in 24hr format e.g. "18:00"
+  dailyQuoteEnabled: boolean;
+  missedWorkoutAlertEnabled: boolean;
+  timezone: string; // e.g. "Asia/Kolkata"
+}
+
 export interface UserProfile {
   uid: string;
   email: string;
@@ -40,6 +48,7 @@ export interface UserProfile {
     refresh_token: string;
     expiry_date: number;
   };
+  notificationPreferences?: NotificationPreferences;
 }
 
 export interface BodyMetrics {
