@@ -1068,6 +1068,7 @@ function CinemaVideoPlayer({ url, title, onClose }: { url: string, title?: strin
 interface ClientDashboardProps {
   user: User;
   profile: UserProfile;
+  onLogout?: () => void;
 }
 
 function ExerciseHistoryView({ clientUid, exerciseName }: { clientUid: string, exerciseName: string }) {
@@ -1321,7 +1322,7 @@ const bentoItemVariants = {
   }
 };
 
-export default function ClientDashboard({ user, profile }: ClientDashboardProps) {
+export default function ClientDashboard({ user, profile, onLogout }: ClientDashboardProps) {
   const isPreview = user.uid !== profile.uid;
   const clientId = profile.uid;
   
@@ -2315,14 +2316,14 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   };
 
   return (
-    <div className="min-h-screen bg-black text-white selection:bg-orange-500/30 font-sans -m-4 sm:-m-8">
+    <div className="min-h-screen bg-black text-white selection:bg-orange-500/30 font-sans">
       {/* Dynamic Background Elements */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none z-0">
         <div className="absolute -top-[10%] -left-[10%] w-[50%] h-[50%] bg-orange-500/[0.03] rounded-full blur-[120px] animate-pulse" />
         <div className="absolute bottom-[20%] right-[10%] w-[30%] h-[30%] bg-blue-500/[0.02] rounded-full blur-[100px] animate-pulse" style={{ animationDelay: '2s' }} />
       </div>
 
-      <div className="flex h-screen overflow-hidden relative z-10">
+      <div className="flex h-[100dvh] overflow-hidden relative z-10">
         {/* Desktop Sidebar */}
         <aside className="hidden md:flex w-72 flex-col bg-zinc-950/80 backdrop-blur-3xl border-r border-white/5 shadow-2xl shrink-0">
           <div className="p-8 flex flex-col h-full">
@@ -2362,7 +2363,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
               ))}
             </nav>
 
-            <div className="mt-8 pt-8 border-t border-white/5">
+            <div className="mt-8 pt-8 border-t border-white/5 space-y-3">
               <button 
                 onClick={() => setShowChat(true)}
                 className="w-full relative group"
@@ -2381,6 +2382,16 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                   </div>
                 </div>
               </button>
+
+              {onLogout && (
+                <button
+                  onClick={onLogout}
+                  className="w-full flex items-center gap-4 px-5 py-3.5 rounded-2xl text-sm font-bold text-zinc-500 hover:text-red-400 hover:bg-red-500/5 transition-all border border-transparent hover:border-red-500/10 cursor-pointer"
+                >
+                  <LogOut className="w-5 h-5" />
+                  <span>Log Out</span>
+                </button>
+              )}
             </div>
           </div>
         </aside>
@@ -4495,6 +4506,19 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
                    </div>
                  </button>
                  
+                 {onLogout && (
+                   <button
+                     onClick={() => {
+                       setIsMobileMenuOpen(false);
+                       onLogout();
+                     }}
+                     className="w-full flex items-center gap-4 px-5 py-3.5 rounded-2xl text-sm font-bold text-zinc-500 hover:text-red-400 hover:bg-red-500/5 transition-all border border-transparent hover:border-red-500/10 cursor-pointer"
+                   >
+                     <LogOut className="w-5 h-5" />
+                     <span>Log Out</span>
+                   </button>
+                 )}
+
                  <div className="flex items-center gap-4 p-4 bg-zinc-900/50 rounded-3xl border border-white/5">
                     <div className="w-10 h-10 rounded-full overflow-hidden border border-white/10">
                       <img 

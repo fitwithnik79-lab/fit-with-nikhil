@@ -209,6 +209,46 @@ export default function App() {
     return <MainWelcomePage handleLogin={handleLogin} signingIn={signingIn} />;
   }
 
+  // Bypasses the nested margins/headers for client view or client preview to ensure perfect full screen mobile rendering
+  const isClientViewActive = (profile.role === 'client' && profile.onboardingComplete) || (previewClientId && previewProfile);
+
+  if (isClientViewActive) {
+    const activeProfile = (previewClientId && previewProfile) ? previewProfile : profile;
+    return (
+      <div className="min-h-screen bg-black text-white relative">
+        <NotificationBanner userId={user?.uid} />
+        
+        {previewClientId && previewProfile && (
+          <div className="fixed bottom-6 left-6 z-[120] flex items-center gap-4 bg-orange-500 text-white border border-orange-400 p-4 rounded-2xl shadow-2xl animate-fadeIn">
+            <div className="flex items-center gap-3">
+              <div className="p-1.5 bg-white/20 rounded-lg">
+                <Shield className="w-4 h-4 text-white" />
+              </div>
+              <div>
+                <p className="text-xs font-black leading-none uppercase tracking-wider">Preview Mode</p>
+                <p className="text-[10px] text-orange-100 font-bold uppercase tracking-wider">{previewProfile.displayName}</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setPreviewClientId(null)}
+              className="px-3 py-1.5 bg-white text-orange-600 rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-orange-50 transition-all shadow-md cursor-pointer"
+            >
+              Exit
+            </button>
+          </div>
+        )}
+
+        <ErrorBoundary>
+          <ClientDashboard 
+            user={user} 
+            profile={activeProfile} 
+            onLogout={handleLogout} 
+          />
+        </ErrorBoundary>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-zinc-950 text-white font-sans relative overflow-x-hidden pb-12">
       {/* Ambient background spatial glow blobs */}
@@ -266,38 +306,15 @@ export default function App() {
 
       <main className="max-w-7xl mx-auto px-4 py-8 relative z-10">
         <NotificationBanner userId={user?.uid} />
-        {previewClientId && previewProfile && (
-          <div className="mb-6 flex items-center justify-between bg-orange-500/10 border border-orange-500/20 p-4 rounded-2xl">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-orange-500/20 rounded-lg">
-                <Shield className="w-5 h-5 text-orange-500" />
-              </div>
-              <div>
-                <p className="text-sm font-bold text-white leading-none">Admin Preview Mode</p>
-                <p className="text-xs text-orange-500/70 font-medium">Viewing dashboard as {previewProfile.displayName}</p>
-              </div>
-            </div>
-            <button
-              onClick={() => setPreviewClientId(null)}
-              className="px-4 py-2 bg-orange-500 text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-orange-600 transition-all shadow-lg shadow-orange-500/20"
-            >
-              Exit Preview
-            </button>
-          </div>
-        )}
         <ErrorBoundary>
-          {previewClientId && previewProfile ? (
-            <ClientDashboard user={user} profile={previewProfile} />
-          ) : profile.role === 'admin' ? (
+          {profile.role === 'admin' ? (
             <AdminDashboard user={user} profile={profile} onEnterPreview={(id) => setPreviewClientId(id)} />
-          ) : !profile.onboardingComplete ? (
+          ) : (
             <LandingPage 
               user={user} 
               profile={profile} 
               onComplete={() => setProfile({ ...profile, onboardingComplete: true })} 
             />
-          ) : (
-            <ClientDashboard user={user} profile={profile} />
           )}
         </ErrorBoundary>
       </main>
