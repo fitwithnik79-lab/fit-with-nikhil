@@ -8,7 +8,7 @@ import { UserProfile, Workout, Exercise, Feedback, WorkoutTemplate, BodyMetrics,
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { searchExerciseVideos, parseWorkoutFile, analyzeNutritionFile } from '../lib/gemini';
 import { getFileContentAsText } from '../lib/fileParser';
-import { triggerPushNotification, sendInAppNotification } from '../lib/notifications';
+import { triggerPushNotification, sendInAppNotification, showNativeNotification } from '../lib/notifications';
 import { SAMPLE_PROGRAMS, WEEKLY_PROGRAMS, WORKOUT_TEMPLATES } from '../constants/workoutTemplates';
 import { NUTRITION_TEMPLATES } from '../constants/nutritionTemplates';
 import { NutritionPlan, NutritionTemplate } from '../types';
@@ -418,12 +418,7 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
             if (!fb.isRead) {
               playNotificationSound();
               const client = clients.find(c => c.uid === fb.clientId);
-              if (typeof window !== 'undefined' && "Notification" in window && (window as any).Notification.permission === "granted") {
-                new (window as any).Notification(`New Fitness Feedback from ${client?.displayName || 'Client'}`, {
-                  body: fb.clientNote || 'Check out their latest workout results!',
-                  icon: client?.photoURL || '/favicon.ico'
-                });
-              }
+              showNativeNotification(`New Fitness Feedback from ${client?.displayName || 'Client'}`, fb.clientNote || 'Check out their latest workout results!');
             }
           }
         });
@@ -436,8 +431,15 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
   }, [clients]);
 
   useEffect(() => {
-    if (typeof window !== 'undefined' && "Notification" in window && (window as any).Notification.permission === "default") {
-      (window as any).Notification.requestPermission();
+    try {
+      if (typeof window !== 'undefined' && "Notification" in window && (window as any).Notification.permission === "default") {
+        const req = (window as any).Notification.requestPermission();
+        if (req && typeof req.catch === 'function') {
+          req.catch((e: any) => console.warn('[AdminDashboard] requestPermission failed silently:', e));
+        }
+      }
+    } catch (e) {
+      console.warn('[AdminDashboard] Failed to request notifications safely:', e);
     }
   }, []);
 
@@ -472,12 +474,7 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
               playNotificationSound();
 
               const client = clients.find(c => c.uid === msg.senderId);
-              if (typeof window !== 'undefined' && "Notification" in window && (window as any).Notification.permission === "granted") {
-                new (window as any).Notification(`New Message from ${client?.displayName || 'Client'}`, {
-                  body: msg.text,
-                  icon: client?.photoURL || '/favicon.ico'
-                });
-              }
+              showNativeNotification(`New Message from ${client?.displayName || 'Client'}`, msg.text);
             }
           }
         });
@@ -519,12 +516,6 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
       unsubLogs();
     };
   }, [selectedClient?.uid]);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined' && "Notification" in window && (window as any).Notification.permission === "default") {
-      (window as any).Notification.requestPermission();
-    }
-  }, []);
 
   const unreadMessagesCount = useMemo(() => {
     return messages.filter(m => !m.isRead).length;
@@ -7170,16 +7161,47 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
               date: scheduledDate,
               startTime: startTime,
               durationMinutes: durationMinutes,
-              notes: workoutNotes
+              notes: workoutNotes,
+              googleCalTokens: client?.googleCalTokens,
+              existingEventId: initialWorkout?.calEventId
             })
           });
           const syncData = await syncRes.json();
           if (syncData.status === 'not_connected') {
+            try {
+              const workoutRef = doc(db, 'workouts', workoutIdSaved);
+              await updateDoc(workoutRef, { calSyncStatus: 'not_connected' });
+            } catch (_) {}
             showToast('Workout saved. Note: client has not connected Google Calendar.', 'success');
-          } else if (syncRes.ok) {
+          } else if (syncRes.ok && syncData.status === 'synced') {
             console.log('[Google Cal] Synced successfully:', syncData);
+            try {
+              const workoutRef = doc(db, 'workouts', workoutIdSaved);
+              await updateDoc(workoutRef, {
+                calEventId: syncData.calEventId,
+                calSyncStatus: 'synced',
+                startTime: startTime,
+                durationMinutes: durationMinutes ? Number(durationMinutes) : 60
+              });
+              
+              if (syncData.refreshedTokens) {
+                const userRef = doc(db, 'users', client.uid);
+                await updateDoc(userRef, {
+                  googleCalTokens: syncData.refreshedTokens
+                });
+              }
+            } catch (dbErr) {
+              console.error('[Google Cal] Client side Firestore update failed:', dbErr);
+            }
           } else {
             console.error('[Google Cal] Failed calendar sync:', syncData);
+            try {
+              const workoutRef = doc(db, 'workouts', workoutIdSaved);
+              await updateDoc(workoutRef, {
+                calSyncStatus: 'error',
+                calSyncError: syncData.error || syncData.details || 'Sync failed'
+              });
+            } catch (_) {}
           }
         } catch (syncErr) {
           console.error('[Google Cal] Sync request caught exception:', syncErr);

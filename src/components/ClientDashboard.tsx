@@ -73,7 +73,7 @@ import {
   RefreshCw,
   Eye
 } from 'lucide-react';
-import { requestNotificationPermission, onForegroundMessage } from '../lib/notifications';
+import { requestNotificationPermission, onForegroundMessage, showNativeNotification } from '../lib/notifications';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, playNotificationSound, getAvatarUrl } from '../lib/utils';
 import Chat from './Chat';
@@ -1687,12 +1687,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
               // Always play sound and vibrate for incoming messages
               playNotificationSound();
 
-              if ("Notification" in window && Notification.permission === "granted") {
-                new Notification("New Message from Coach Nik", {
-                  body: msg.text,
-                  icon: '/favicon.ico'
-                });
-              }
+              showNativeNotification("New Message from Coach Nik", msg.text);
             }
           }
         });
@@ -1935,12 +1930,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
             });
 
             // Native Browser Notification
-            if (typeof window !== 'undefined' && "Notification" in window && (window as any).Notification.permission === "granted") {
-              new (window as any).Notification(`Coach Nik Reminder: ${reminder.title}`, {
-                body: reminder.description || 'Execution required. Keep the momentum high.',
-                icon: '/favicon.ico'
-              });
-            }
+            showNativeNotification(`Coach Nik Reminder: ${reminder.title}`, reminder.description || 'Execution required. Keep the momentum high.');
           }
 
           // Mark as notified for this minute to prevent multiple triggers
@@ -2074,8 +2064,15 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   }, [loading, allWorkouts, allFeedback, meals, clientId, isPreview]);
 
   useEffect(() => {
-    if (typeof window !== 'undefined' && "Notification" in window && (window as any).Notification.permission === "default") {
-      (window as any).Notification.requestPermission();
+    try {
+      if (typeof window !== 'undefined' && "Notification" in window && (window as any).Notification.permission === "default") {
+        const req = (window as any).Notification.requestPermission();
+        if (req && typeof req.catch === 'function') {
+          req.catch((e: any) => console.warn('[ClientDashboard] requestPermission failed silently:', e));
+        }
+      }
+    } catch (e) {
+      console.warn('[ClientDashboard] Failed to request notification permission safely:', e);
     }
   }, []);
 
