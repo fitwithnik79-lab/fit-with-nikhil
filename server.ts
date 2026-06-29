@@ -1599,23 +1599,32 @@ async function startServer() {
         tokens: tokens
       };
 
-      const response = await admin.messaging().sendEachForMulticast(message);
-      
-      // Cleanup invalid tokens
-      if (response.failureCount > 0) {
-        const failedTokens: string[] = [];
-        response.responses.forEach((resp, idx) => {
-          if (!resp.success) {
-            failedTokens.push(tokens[idx]);
-          }
-        });
+      try {
+        const response = await admin.messaging().sendEachForMulticast(message);
         
-        await getFirestore().collection('users').doc(userId).update({
-          fcmTokens: FieldValue.arrayRemove(...failedTokens)
+        // Cleanup invalid tokens
+        if (response.failureCount > 0) {
+          const failedTokens: string[] = [];
+          response.responses.forEach((resp, idx) => {
+            if (!resp.success) {
+              failedTokens.push(tokens[idx]);
+            }
+          });
+          
+          await getFirestore().collection('users').doc(userId).update({
+            fcmTokens: FieldValue.arrayRemove(...failedTokens)
+          });
+        }
+
+        res.json({ success: true, response });
+      } catch (fcmError: any) {
+        console.warn('FCM dispatch failed (likely permission/setup issue):', fcmError.message || fcmError);
+        res.json({ 
+          success: false, 
+          message: 'FCM delivery skipped: push notification API is not configured or permitted in this environment.',
+          error: fcmError.message || String(fcmError)
         });
       }
-
-      res.json({ success: true, response });
     } catch (error) {
       console.error('Error sending notification:', error);
       res.status(500).json({ error: 'Failed to send notification' });

@@ -28,14 +28,18 @@ export default async function handler(req: any, res: any) {
     
     const firstName = user.displayName?.split(' ')[0] || 'there';
     
-    await admin.messaging().sendEachForMulticast({
-      tokens,
-      notification: {
-        title: "Sunday check-in 📋",
-        body: `Hey ${firstName}, 2 minutes helps Nik tune next week's program just for you.`
-      },
-      data: { type: 'sunday_checkin', deepLink: '/checkin' }
-    });
+    try {
+      await admin.messaging().sendEachForMulticast({
+        tokens,
+        notification: {
+          title: "Sunday check-in 📋",
+          body: `Hey ${firstName}, 2 minutes helps Nik tune next week's program just for you.`
+        },
+        data: { type: 'sunday_checkin', deepLink: '/checkin' }
+      });
+    } catch (fcmError: any) {
+      console.warn(`FCM send failed for user ${userDoc.id} due to configuration/permissions:`, fcmError.message || fcmError);
+    }
   }
 
   res.json({ success: true });

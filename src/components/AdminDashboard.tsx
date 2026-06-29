@@ -418,8 +418,8 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
             if (!fb.isRead) {
               playNotificationSound();
               const client = clients.find(c => c.uid === fb.clientId);
-              if ("Notification" in window && Notification.permission === "granted") {
-                new Notification(`New Fitness Feedback from ${client?.displayName || 'Client'}`, {
+              if (typeof window !== 'undefined' && "Notification" in window && (window as any).Notification.permission === "granted") {
+                new (window as any).Notification(`New Fitness Feedback from ${client?.displayName || 'Client'}`, {
                   body: fb.clientNote || 'Check out their latest workout results!',
                   icon: client?.photoURL || '/favicon.ico'
                 });
@@ -436,8 +436,8 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
   }, [clients]);
 
   useEffect(() => {
-    if ("Notification" in window && Notification.permission === "default") {
-      Notification.requestPermission();
+    if (typeof window !== 'undefined' && "Notification" in window && (window as any).Notification.permission === "default") {
+      (window as any).Notification.requestPermission();
     }
   }, []);
 
@@ -472,8 +472,8 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
               playNotificationSound();
 
               const client = clients.find(c => c.uid === msg.senderId);
-              if ("Notification" in window && Notification.permission === "granted") {
-                new Notification(`New Message from ${client?.displayName || 'Client'}`, {
+              if (typeof window !== 'undefined' && "Notification" in window && (window as any).Notification.permission === "granted") {
+                new (window as any).Notification(`New Message from ${client?.displayName || 'Client'}`, {
                   body: msg.text,
                   icon: client?.photoURL || '/favicon.ico'
                 });
@@ -521,8 +521,8 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
   }, [selectedClient?.uid]);
 
   useEffect(() => {
-    if ("Notification" in window && Notification.permission === "default") {
-      Notification.requestPermission();
+    if (typeof window !== 'undefined' && "Notification" in window && (window as any).Notification.permission === "default") {
+      (window as any).Notification.requestPermission();
     }
   }, []);
 

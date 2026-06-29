@@ -83,51 +83,55 @@ export default async function handler(req: any, res: any) {
       
       const firstName = user.displayName?.split(' ')[0] || 'there';
       
-      const response = await admin.messaging().sendEachForMulticast({
-        tokens,
-        notification: {
-          title: `Good morning, ${firstName} 🌅`,
-          body: quote
-        },
-        data: {
-          type: 'daily_quote',
-          date: today
-        },
-        // Android specific: make it show even if app is in foreground
-        android: {
-          priority: 'high',
+      try {
+        const response = await admin.messaging().sendEachForMulticast({
+          tokens,
           notification: {
-            channelId: 'daily_motivation',
-            color: '#f97316', // orange
-          }
-        },
-        // Web push specific
-        webpush: {
-          notification: {
-            icon: '/logo.png',
-            badge: '/badge-72.png',
-            requireInteraction: false, // auto-dismiss after a few seconds
+            title: `Good morning, ${firstName} 🌅`,
+            body: quote
           },
-          fcmOptions: {
-            link: '/' // clicking opens the app
+          data: {
+            type: 'daily_quote',
+            date: today
+          },
+          // Android specific: make it show even if app is in foreground
+          android: {
+            priority: 'high',
+            notification: {
+              channelId: 'daily_motivation',
+              color: '#f97316', // orange
+            }
+          },
+          // Web push specific
+          webpush: {
+            notification: {
+              icon: '/logo.png',
+              badge: '/badge-72.png',
+              requireInteraction: false, // auto-dismiss after a few seconds
+            },
+            fcmOptions: {
+              link: '/' // clicking opens the app
+            }
+          }
+        });
+        
+        // Clean up invalid tokens
+        if (response.failureCount > 0) {
+          const failedTokens: string[] = [];
+          response.responses.forEach((resp, idx) => {
+            if (!resp.success) failedTokens.push(tokens[idx]);
+          });
+          if (failedTokens.length > 0) {
+            await adminDb.collection('users').doc(userDoc.id).update({
+              fcmTokens: admin.firestore.FieldValue.arrayRemove(...failedTokens)
+            });
           }
         }
-      });
-      
-      // Clean up invalid tokens
-      if (response.failureCount > 0) {
-        const failedTokens: string[] = [];
-        response.responses.forEach((resp, idx) => {
-          if (!resp.success) failedTokens.push(tokens[idx]);
-        });
-        if (failedTokens.length > 0) {
-          await adminDb.collection('users').doc(userDoc.id).update({
-            fcmTokens: admin.firestore.FieldValue.arrayRemove(...failedTokens)
-          });
-        }
+        
+        sent++;
+      } catch (fcmError: any) {
+        console.warn(`FCM send failed for user ${userDoc.id} due to configuration/permissions:`, fcmError.message || fcmError);
       }
-      
-      sent++;
     }
 
     res.json({ success: true, sent, quotesGenerated: Object.keys(quotes).length });

@@ -12,7 +12,7 @@ export interface UseNotificationsResult {
 
 export function useNotifications(userId: string | undefined): UseNotificationsResult {
   const [permission, setPermission] = useState<NotificationPermission>(
-    typeof window !== 'undefined' ? Notification.permission : 'default'
+    (typeof window !== 'undefined' && 'Notification' in window) ? (window as any).Notification.permission : 'default'
   );
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
@@ -38,7 +38,7 @@ export function useNotifications(userId: string | undefined): UseNotificationsRe
       });
 
     // If permission is already granted, fetch token silently
-    if (Notification.permission === 'granted') {
+    if (typeof window !== 'undefined' && 'Notification' in window && (window as any).Notification.permission === 'granted') {
       fetchTokenSilently(userId);
     }
 
@@ -58,8 +58,8 @@ export function useNotifications(userId: string | undefined): UseNotificationsRe
         window.dispatchEvent(event);
 
         // Also trigger native browser notification if allowed and tab is out of focus
-        if (document.hidden && Notification.permission === 'granted') {
-          new Notification(payload.notification?.title || 'FWN Coach Alert', {
+        if (document.hidden && typeof window !== 'undefined' && 'Notification' in window && (window as any).Notification.permission === 'granted') {
+          new (window as any).Notification(payload.notification?.title || 'FWN Coach Alert', {
             body: payload.notification?.body,
             icon: '/logo.png'
           });
@@ -96,8 +96,13 @@ export function useNotifications(userId: string | undefined): UseNotificationsRe
     if (typeof window === 'undefined') return null;
     setLoading(true);
     setError(null);
+    if (!('Notification' in window)) {
+      setError('Push notifications are not supported on this browser or device.');
+      setLoading(false);
+      return null;
+    }
     try {
-      const result = await Notification.requestPermission();
+      const result = await (window as any).Notification.requestPermission();
       setPermission(result);
       if (result === 'granted' && userId) {
         const messaging = getMessaging(app);

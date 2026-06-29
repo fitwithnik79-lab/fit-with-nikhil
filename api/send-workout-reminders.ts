@@ -51,16 +51,20 @@ export default async function handler(req: any, res: any) {
     const tokens = user.fcmTokens || [];
     if (tokens.length === 0) continue;
     
-    await admin.messaging().sendEachForMulticast({
-      tokens,
-      notification: {
-        title: "Time to train! 💪",
-        body: `Your Week ${workout.weekNumber} Day ${workout.dayNumber} session is ready — Coach Nik built this one for you.`
-      },
-      data: { type: 'workout_reminder', workoutId: workoutSnap.docs[0].id }
-    });
-    
-    results.push({ userId: userDoc.id, sent: true });
+    try {
+      await admin.messaging().sendEachForMulticast({
+        tokens,
+        notification: {
+          title: "Time to train! 💪",
+          body: `Your Week ${workout.weekNumber} Day ${workout.dayNumber} session is ready — Coach Nik built this one for you.`
+        },
+        data: { type: 'workout_reminder', workoutId: workoutSnap.docs[0].id }
+      });
+      results.push({ userId: userDoc.id, sent: true });
+    } catch (fcmError: any) {
+      console.warn(`FCM send failed for user ${userDoc.id} due to configuration/permissions:`, fcmError.message || fcmError);
+      results.push({ userId: userDoc.id, sent: false, error: fcmError.message || String(fcmError) });
+    }
   }
 
   res.json({ success: true, sent: results.length });

@@ -44,21 +44,25 @@ export default async function handler(req: any, res: any) {
     
     const firstName = user.displayName?.split(' ')[0] || 'there';
     
-    await admin.messaging().sendEachForMulticast({
-      tokens,
-      notification: {
-        title: `Hey ${firstName} 👋`,
-        body: "Your program is waiting — even 20 minutes today keeps the momentum alive 🔥"
-      },
-      data: { type: 'missed_workout_nudge' }
-    });
-    
-    // Log that we sent this nudge (prevent spam)
-    await adminDb.collection('notificationLogs').add({
-      userId: userDoc.id,
-      type: 'missed_workout_nudge',
-      sentAt: new Date().toISOString()
-    });
+    try {
+      await admin.messaging().sendEachForMulticast({
+        tokens,
+        notification: {
+          title: `Hey ${firstName} 👋`,
+          body: "Your program is waiting — even 20 minutes today keeps the momentum alive 🔥"
+        },
+        data: { type: 'missed_workout_nudge' }
+      });
+      
+      // Log that we sent this nudge (prevent spam)
+      await adminDb.collection('notificationLogs').add({
+        userId: userDoc.id,
+        type: 'missed_workout_nudge',
+        sentAt: new Date().toISOString()
+      });
+    } catch (fcmError: any) {
+      console.warn(`FCM send failed for user ${userDoc.id} due to configuration/permissions:`, fcmError.message || fcmError);
+    }
   }
 
   res.json({ success: true });
