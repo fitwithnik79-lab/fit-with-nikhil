@@ -73,7 +73,7 @@ import {
   RefreshCw,
   Eye
 } from 'lucide-react';
-import { requestNotificationPermission, onForegroundMessage, showNativeNotification } from '../lib/notifications';
+import { requestNotificationPermission, onForegroundMessage } from '../lib/notifications';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, playNotificationSound, getAvatarUrl } from '../lib/utils';
 import Chat from './Chat';
@@ -1687,7 +1687,12 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
               // Always play sound and vibrate for incoming messages
               playNotificationSound();
 
-              showNativeNotification("New Message from Coach Nik", msg.text);
+              if ("Notification" in window && Notification.permission === "granted") {
+                new Notification("New Message from Coach Nik", {
+                  body: msg.text,
+                  icon: '/favicon.ico'
+                });
+              }
             }
           }
         });
@@ -1930,7 +1935,12 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
             });
 
             // Native Browser Notification
-            showNativeNotification(`Coach Nik Reminder: ${reminder.title}`, reminder.description || 'Execution required. Keep the momentum high.');
+            if ("Notification" in window && Notification.permission === "granted") {
+              new Notification(`Coach Nik Reminder: ${reminder.title}`, {
+                body: reminder.description || 'Execution required. Keep the momentum high.',
+                icon: '/favicon.ico'
+              });
+            }
           }
 
           // Mark as notified for this minute to prevent multiple triggers
@@ -2020,7 +2030,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
       const records = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as PersonalRecord);
       setPersonalRecords(records);
     }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'personalRecords');
+      console.error("Failed to load personal records:", error);
     });
 
     return () => unsubscribe();
@@ -2064,15 +2074,8 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
   }, [loading, allWorkouts, allFeedback, meals, clientId, isPreview]);
 
   useEffect(() => {
-    try {
-      if (typeof window !== 'undefined' && "Notification" in window && (window as any).Notification.permission === "default") {
-        const req = (window as any).Notification.requestPermission();
-        if (req && typeof req.catch === 'function') {
-          req.catch((e: any) => console.warn('[ClientDashboard] requestPermission failed silently:', e));
-        }
-      }
-    } catch (e) {
-      console.warn('[ClientDashboard] Failed to request notification permission safely:', e);
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
     }
   }, []);
 
@@ -2088,15 +2091,7 @@ export default function ClientDashboard({ user, profile }: ClientDashboardProps)
     setSubmitting(true);
     setSubmittingError(null);
     try {
-      const motivationalMessage = await generateMotivationalMessage(
-        profile.displayName || 'Champ',
-        workout.weekNumber,
-        profile.clientType,
-        allFeedback.filter(f => f.completionStatus).length,
-        calculateWorkoutStreak(allFeedback),
-        clientNote,
-        profile.programGoals
-      );
+      const motivationalMessage = await generateMotivationalMessage(profile.displayName || 'Champ', workout.weekNumber);
       
       // Update the workout document with the client's actual performance
       if (workout.id && exerciseFeedback) {

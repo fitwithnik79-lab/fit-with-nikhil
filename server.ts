@@ -160,18 +160,11 @@ async function startServer() {
 
   // Shared Gemini API routes for client functionality
   app.post('/api/gemini/motivate', async (req, res) => {
-    const { clientName, weekNumber, clientType, completedCount, streak, lastNote, programGoal } = req.body;
+    const { clientName, weekNumber } = req.body;
     try {
-      const prompt = `You are Coach Nik, a personal fitness coach. Write a 2-sentence personalised post-workout message for your client ${clientName}.
-  Context: They just completed Week ${weekNumber} of their program. They have done ${completedCount} total sessions. 
-  Current streak: ${streak} weeks. Their goal: ${programGoal || 'general fitness'}.
-  ${clientType && clientType !== 'fitness' ? `Important: This client has a ${clientType.replace('_', ' ')} — focus on recovery, pain management, and movement quality, NOT performance or weight targets.` : ''}
-  ${lastNote ? `Their note from this session: "${lastNote}"` : ''}
-  Be warm, specific, and encouraging. Sound like a real coach who knows them personally, not a bot. Max 2 sentences.`;
-
       const response = await fetchWithRetry(() => ai.models.generateContent({
         model: "gemini-2.0-flash",
-        contents: [{ role: 'user', parts: [{ text: prompt }] }]
+        contents: [{ role: 'user', parts: [{ text: `You are Nik, a high-energy fitness coach. Write a short, powerful motivational message for your client ${clientName} who just finished Week ${weekNumber} of their program. Keep it under 3 sentences. Be specific about their progress and encourage them for next week.` }] }]
       }));
       res.json({ text: response.text || "Great job this week! Keep pushing!" });
     } catch (error: any) {
@@ -1241,7 +1234,7 @@ async function startServer() {
   });
 
   app.post('/api/create-cal-event', express.json(), async (req, res) => {
-    const { clientUid, workoutId, workoutName, date, startTime, durationMinutes, notes, googleCalTokens, existingEventId: passedEventId } = req.body;
+    const { clientUid, workoutId, workoutName, date, startTime, durationMinutes, notes } = req.body;
 
     if (!clientUid || !workoutName || !date) {
       return res.status(400).json({ error: 'Missing required parameters: clientUid, workoutName, or date.' });
@@ -1250,26 +1243,20 @@ async function startServer() {
     const db = getFirestore();
 
     try {
-      // 1. Determine Google Calendar tokens
-      let tokens = googleCalTokens;
-      if (!tokens || !tokens.access_token) {
-        try {
-          const userDoc = await db.collection('users').doc(clientUid).get();
-          if (userDoc.exists) {
-            tokens = userDoc.data()?.googleCalTokens;
-          }
-        } catch (dbErr) {
-          console.warn('[Google Cal] Firestore fallback token read failed:', dbErr);
-        }
+      // 1. Read user's calendar tokens from Firestore
+      const userDoc = await db.collection('users').doc(clientUid).get();
+      if (!userDoc.exists) {
+        return res.status(404).json({ error: 'Client user does not exist.' });
       }
+
+      const userData = userDoc.data();
+      const tokens = userData?.googleCalTokens;
 
       if (!tokens || !tokens.access_token) {
         if (workoutId) {
-          try {
-            await db.collection('workouts').doc(workoutId).update({
-              calSyncStatus: 'not_connected'
-            });
-          } catch (_) {}
+          await db.collection('workouts').doc(workoutId).update({
+            calSyncStatus: 'not_connected'
+          }).catch(() => {});
         }
         return res.json({ status: 'not_connected' });
       }
@@ -1291,7 +1278,6 @@ async function startServer() {
 
       // 3. Auto token refresh
       const isExpired = !tokens.expiry_date || (Date.now() + 60 * 1000 >= tokens.expiry_date);
-      let refreshedTokens = null;
       if (isExpired && tokens.refresh_token) {
         console.log(`[Google Cal] Token expired for ${clientUid}. Refreshing...`);
         try {
@@ -1301,30 +1287,23 @@ async function startServer() {
           if (credentials.refresh_token) {
             tokens.refresh_token = credentials.refresh_token;
           }
-          refreshedTokens = {
-            access_token: tokens.access_token,
-            refresh_token: tokens.refresh_token,
-            expiry_date: tokens.expiry_date
-          };
 
-          // Save refreshed tokens fallback
-          try {
-            await db.collection('users').doc(clientUid).update({
-              googleCalTokens: refreshedTokens
-            });
-          } catch (dbErr) {
-            console.warn('[Google Cal] Firestore fallback token save skipped:', dbErr);
-          }
+          // Save refreshed tokens
+          await db.collection('users').doc(clientUid).update({
+            googleCalTokens: {
+              access_token: tokens.access_token,
+              refresh_token: tokens.refresh_token,
+              expiry_date: tokens.expiry_date
+            }
+          });
           oauth2Client.setCredentials(tokens);
         } catch (refreshErr: any) {
           console.error(`[Google Cal] Failed to refresh tokens: ${refreshErr.message}`);
           if (workoutId) {
-            try {
-              await db.collection('workouts').doc(workoutId).update({
-                calSyncStatus: 'error',
-                calSyncError: refreshErr.message
-              });
-            } catch (_) {}
+            await db.collection('workouts').doc(workoutId).update({
+              calSyncStatus: 'error',
+              calSyncError: refreshErr.message
+            }).catch(() => {});
           }
           return res.status(401).json({ error: 'Token refresh failed', details: refreshErr.message });
         }
@@ -1336,22 +1315,19 @@ async function startServer() {
       
       const startDateTimeStr = `${date}T${timeStr}:00`;
       const startDateObj = new Date(startDateTimeStr);
+      // If startDateTime is invalid, fallback to current day
       const finalStartDate = isNaN(startDateObj.getTime()) ? new Date() : startDateObj;
       const finalEndDate = new Date(finalStartDate.getTime() + duration * 60 * 1000);
 
       const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
-      // Check if we already have a calEventId
+      // Check if we already have a calEventId, in which case we might update or create new
       let calEventIdStr = '';
-      let existingEventId = passedEventId || '';
-      if (!existingEventId && workoutId) {
-        try {
-          const wDoc = await db.collection('workouts').doc(workoutId).get();
-          if (wDoc.exists) {
-            existingEventId = wDoc.data()?.calEventId || '';
-          }
-        } catch (dbErr) {
-          console.warn('[Google Cal] Firestore fallback workout read failed:', dbErr);
+      let existingEventId = '';
+      if (workoutId) {
+        const wDoc = await db.collection('workouts').doc(workoutId).get();
+        if (wDoc.exists) {
+          existingEventId = wDoc.data()?.calEventId || '';
         }
       }
 
@@ -1399,22 +1375,18 @@ async function startServer() {
         calEventIdStr = createRes.data.id || '';
       }
 
-      // 5. Save back to Firestore fallback
+      // 5. Save back to Firestore
       if (workoutId && calEventIdStr) {
-        try {
-          await db.collection('workouts').doc(workoutId).update({
-            calEventId: calEventIdStr,
-            calSyncStatus: 'synced',
-            startTime: timeStr,
-            durationMinutes: duration
-          });
-          console.log(`[Google Cal] Saved successfully: workout ${workoutId} now references event ID ${calEventIdStr}`);
-        } catch (dbErr) {
-          console.warn('[Google Cal] Firestore fallback workout update skipped:', dbErr);
-        }
+        await db.collection('workouts').doc(workoutId).update({
+          calEventId: calEventIdStr,
+          calSyncStatus: 'synced',
+          startTime: timeStr,
+          durationMinutes: duration
+        });
+        console.log(`[Google Cal] Saved successfully: workout ${workoutId} now references event ID ${calEventIdStr}`);
       }
 
-      res.json({ status: 'synced', calEventId: calEventIdStr, refreshedTokens });
+      res.json({ status: 'synced', calEventId: calEventIdStr });
     } catch (error: any) {
       console.error('Error inside create-cal-event endpoint:', error);
       if (workoutId) {
@@ -1596,25 +1568,16 @@ async function startServer() {
 
   // API to send push notification
   app.post('/api/notifications/send', async (req, res) => {
-    const { userId, title, body, data, fcmTokens } = req.body;
+    const { userId, title, body, data } = req.body;
     if (!userId || !title || !body) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
     try {
-      let tokens = fcmTokens;
-      
-      // If tokens are not provided, try reading from Firestore as fallback
-      if (!tokens || !Array.isArray(tokens)) {
-        try {
-          const userDoc = await getFirestore().collection('users').doc(userId).get();
-          const userData = userDoc.data();
-          tokens = userData?.fcmTokens || [];
-        } catch (dbErr) {
-          console.warn('[Notifications] Firestore fallback read failed, using empty tokens:', dbErr);
-          tokens = [];
-        }
-      }
+      // Get user tokens from Firestore
+      const userDoc = await getFirestore().collection('users').doc(userId).get();
+      const userData = userDoc.data();
+      const tokens = userData?.fcmTokens || [];
 
       if (tokens.length === 0) {
         return res.json({ success: true, message: 'No tokens found for user' });
@@ -1629,36 +1592,23 @@ async function startServer() {
         tokens: tokens
       };
 
-      try {
-        const response = await admin.messaging().sendEachForMulticast(message);
-        
-        // Cleanup invalid tokens
+      const response = await admin.messaging().sendEachForMulticast(message);
+      
+      // Cleanup invalid tokens
+      if (response.failureCount > 0) {
         const failedTokens: string[] = [];
-        if (response.failureCount > 0) {
-          response.responses.forEach((resp, idx) => {
-            if (!resp.success) {
-              failedTokens.push(tokens[idx]);
-            }
-          });
-          
-          try {
-            await getFirestore().collection('users').doc(userId).update({
-              fcmTokens: FieldValue.arrayRemove(...failedTokens)
-            });
-          } catch (dbErr) {
-            console.warn('[Notifications] Admin token cleanup skipped due to permission constraints:', dbErr);
+        response.responses.forEach((resp, idx) => {
+          if (!resp.success) {
+            failedTokens.push(tokens[idx]);
           }
-        }
-
-        res.json({ success: true, response, failedTokens });
-      } catch (fcmError: any) {
-        console.warn('FCM dispatch failed (likely permission/setup issue):', fcmError.message || fcmError);
-        res.json({ 
-          success: false, 
-          message: 'FCM delivery skipped: push notification API is not configured or permitted in this environment.',
-          error: fcmError.message || String(fcmError)
+        });
+        
+        await getFirestore().collection('users').doc(userId).update({
+          fcmTokens: FieldValue.arrayRemove(...failedTokens)
         });
       }
+
+      res.json({ success: true, response });
     } catch (error) {
       console.error('Error sending notification:', error);
       res.status(500).json({ error: 'Failed to send notification' });

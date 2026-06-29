@@ -1,27 +1,14 @@
-import admin from 'firebase-admin';
+import * as XLSX from 'xlsx';
+import fs from 'fs';
 
-async function testCustomToken() {
-  try {
-    if (admin.apps.length === 0) {
-      admin.initializeApp({
-        projectId: 'gen-lang-client-0278884559'
-      });
-    }
-
-    console.log("Generating custom token for a dummy user...");
-    const token = await admin.auth().createCustomToken('dummy-user-uid');
-    console.log("Success! Generated custom token length:", token.length);
-    console.log("Token starts with:", token.substring(0, 30));
-  } catch (err: any) {
-    console.error("Custom token generation failed:", err);
-  }
+function readXlsx() {
+  const buf = fs.readFileSync('test.xlsx');
+  const workbook = XLSX.read(buf);
+  console.log("Sheet names:", workbook.SheetNames);
+  const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
+  console.log("Rows:");
+  console.log(JSON.stringify(rows, null, 2));
 }
 
-testCustomToken();
-
-
-
-
-
-
-
+readXlsx();

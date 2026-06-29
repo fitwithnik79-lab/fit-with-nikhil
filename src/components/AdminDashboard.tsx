@@ -8,7 +8,7 @@ import { UserProfile, Workout, Exercise, Feedback, WorkoutTemplate, BodyMetrics,
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { searchExerciseVideos, parseWorkoutFile, analyzeNutritionFile } from '../lib/gemini';
 import { getFileContentAsText } from '../lib/fileParser';
-import { triggerPushNotification, sendInAppNotification, showNativeNotification } from '../lib/notifications';
+import { triggerPushNotification, sendInAppNotification } from '../lib/notifications';
 import { SAMPLE_PROGRAMS, WEEKLY_PROGRAMS, WORKOUT_TEMPLATES } from '../constants/workoutTemplates';
 import { NUTRITION_TEMPLATES } from '../constants/nutritionTemplates';
 import { NutritionPlan, NutritionTemplate } from '../types';
@@ -336,14 +336,6 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
     });
   }, [activeClients, allWorkouts, feedbacks, allGoals]);
 
-  const getHabitCompliance = (clientUid: string): number => {
-    const thisWeekStart = format(startOfWeek(new Date(), {weekStartsOn: 1}), 'yyyy-MM-dd');
-    const clientLogs = allHabitLogs.filter(l => l.clientId === clientUid && l.date >= thisWeekStart);
-    const completed = clientLogs.filter(l => l.completed).length;
-    const total = clientLogs.length;
-    return total === 0 ? -1 : Math.round((completed / total) * 100);
-  };
-
   const filteredClientsList = useMemo(() => {
     return clients.filter((client) => {
       const queryStr = clientSearch.toLowerCase().trim();
@@ -418,7 +410,12 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
             if (!fb.isRead) {
               playNotificationSound();
               const client = clients.find(c => c.uid === fb.clientId);
-              showNativeNotification(`New Fitness Feedback from ${client?.displayName || 'Client'}`, fb.clientNote || 'Check out their latest workout results!');
+              if ("Notification" in window && Notification.permission === "granted") {
+                new Notification(`New Fitness Feedback from ${client?.displayName || 'Client'}`, {
+                  body: fb.clientNote || 'Check out their latest workout results!',
+                  icon: client?.photoURL || '/favicon.ico'
+                });
+              }
             }
           }
         });
@@ -431,15 +428,8 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
   }, [clients]);
 
   useEffect(() => {
-    try {
-      if (typeof window !== 'undefined' && "Notification" in window && (window as any).Notification.permission === "default") {
-        const req = (window as any).Notification.requestPermission();
-        if (req && typeof req.catch === 'function') {
-          req.catch((e: any) => console.warn('[AdminDashboard] requestPermission failed silently:', e));
-        }
-      }
-    } catch (e) {
-      console.warn('[AdminDashboard] Failed to request notifications safely:', e);
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
     }
   }, []);
 
@@ -474,7 +464,12 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
               playNotificationSound();
 
               const client = clients.find(c => c.uid === msg.senderId);
-              showNativeNotification(`New Message from ${client?.displayName || 'Client'}`, msg.text);
+              if ("Notification" in window && Notification.permission === "granted") {
+                new Notification(`New Message from ${client?.displayName || 'Client'}`, {
+                  body: msg.text,
+                  icon: client?.photoURL || '/favicon.ico'
+                });
+              }
             }
           }
         });
@@ -516,6 +511,12 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
       unsubLogs();
     };
   }, [selectedClient?.uid]);
+
+  useEffect(() => {
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }, []);
 
   const unreadMessagesCount = useMemo(() => {
     return messages.filter(m => !m.isRead).length;
@@ -1249,37 +1250,17 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
                             {!isActive && <span className="ml-1.5 text-[9px] uppercase tracking-normal bg-zinc-800 text-zinc-500 px-1 py-0.2 rounded font-black pr-1">Inactive</span>}
                           </div>
                           <div className="text-xs opacity-60 truncate max-w-[120px]">{client.email}</div>
-                          <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
-                            {client.clientType && (
-                              <div className={cn(
-                                "inline-block text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded border",
-                                client.clientType === 'fitness' && "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
-                                client.clientType === 'knee_injury' && "bg-sky-500/10 text-sky-400 border-sky-500/20",
-                                client.clientType === 'back_injury' && "bg-rose-500/10 text-rose-400 border-rose-500/20",
-                                client.clientType === 'shoulder_injury' && "bg-purple-500/10 text-purple-400 border-purple-500/20"
-                              )}>
-                                {client.clientType.replace('_', ' ')}
-                              </div>
-                            )}
-
-                            {(() => {
-                              const compliance = getHabitCompliance(client.uid);
-                              return compliance === -1 ? (
-                                <span className="inline-block text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border bg-zinc-950/40 text-zinc-600 border-zinc-800/50">
-                                  No habit data
-                                </span>
-                              ) : (
-                                <span className={cn(
-                                  "inline-block text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border",
-                                  compliance >= 70 ? "bg-green-500/10 text-green-500 border-green-500/20" : 
-                                  compliance >= 40 ? "bg-amber-500/10 text-amber-500 border-amber-500/20" : 
-                                  "bg-red-500/10 text-red-500 border-red-500/20"
-                                )}>
-                                  Habits: {compliance}% this week
-                                </span>
-                              );
-                            })()}
-                          </div>
+                          {client.clientType && (
+                            <div className={cn(
+                              "inline-block text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded border mt-1",
+                              client.clientType === 'fitness' && "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+                              client.clientType === 'knee_injury' && "bg-sky-500/10 text-sky-400 border-sky-500/20",
+                              client.clientType === 'back_injury' && "bg-rose-500/10 text-rose-400 border-rose-500/20",
+                              client.clientType === 'shoulder_injury' && "bg-purple-500/10 text-purple-400 border-purple-500/20"
+                            )}>
+                              {client.clientType.replace('_', ' ')}
+                            </div>
+                          )}
                         </div>
                       </div>
                       <ChevronRight className="w-4 h-4 opacity-40" />
@@ -7140,15 +7121,6 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
         );
       }
 
-      const selectedClient = client;
-      const weekNumber = week;
-      const dayNumber = day;
-      await triggerPushNotification(
-        selectedClient.uid,
-        "New workout ready! 💪",
-        `Coach Nik just added your Week ${weekNumber} Day ${dayNumber} session — let's get it!`
-      );
-
       if (syncToCalendar && scheduledDate && workoutIdSaved) {
         try {
           const syncRes = await fetch('/api/create-cal-event', {
@@ -7161,47 +7133,16 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
               date: scheduledDate,
               startTime: startTime,
               durationMinutes: durationMinutes,
-              notes: workoutNotes,
-              googleCalTokens: client?.googleCalTokens,
-              existingEventId: initialWorkout?.calEventId
+              notes: workoutNotes
             })
           });
           const syncData = await syncRes.json();
           if (syncData.status === 'not_connected') {
-            try {
-              const workoutRef = doc(db, 'workouts', workoutIdSaved);
-              await updateDoc(workoutRef, { calSyncStatus: 'not_connected' });
-            } catch (_) {}
             showToast('Workout saved. Note: client has not connected Google Calendar.', 'success');
-          } else if (syncRes.ok && syncData.status === 'synced') {
+          } else if (syncRes.ok) {
             console.log('[Google Cal] Synced successfully:', syncData);
-            try {
-              const workoutRef = doc(db, 'workouts', workoutIdSaved);
-              await updateDoc(workoutRef, {
-                calEventId: syncData.calEventId,
-                calSyncStatus: 'synced',
-                startTime: startTime,
-                durationMinutes: durationMinutes ? Number(durationMinutes) : 60
-              });
-              
-              if (syncData.refreshedTokens) {
-                const userRef = doc(db, 'users', client.uid);
-                await updateDoc(userRef, {
-                  googleCalTokens: syncData.refreshedTokens
-                });
-              }
-            } catch (dbErr) {
-              console.error('[Google Cal] Client side Firestore update failed:', dbErr);
-            }
           } else {
             console.error('[Google Cal] Failed calendar sync:', syncData);
-            try {
-              const workoutRef = doc(db, 'workouts', workoutIdSaved);
-              await updateDoc(workoutRef, {
-                calSyncStatus: 'error',
-                calSyncError: syncData.error || syncData.details || 'Sync failed'
-              });
-            } catch (_) {}
           }
         } catch (syncErr) {
           console.error('[Google Cal] Sync request caught exception:', syncErr);
