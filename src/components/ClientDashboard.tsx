@@ -1936,8 +1936,8 @@ export default function ClientDashboard({ user, profile, onLogout }: ClientDashb
             });
 
             // Native Browser Notification
-            if ("Notification" in window && Notification.permission === "granted") {
-              new Notification(`Coach Nik Reminder: ${reminder.title}`, {
+            if (typeof window !== 'undefined' && "Notification" in window && window.Notification.permission === "granted") {
+              new window.Notification(`Coach Nik Reminder: ${reminder.title}`, {
                 body: reminder.description || 'Execution required. Keep the momentum high.',
                 icon: '/favicon.ico'
               });
@@ -2075,8 +2075,8 @@ export default function ClientDashboard({ user, profile, onLogout }: ClientDashb
   }, [loading, allWorkouts, allFeedback, meals, clientId, isPreview]);
 
   useEffect(() => {
-    if ("Notification" in window && Notification.permission === "default") {
-      Notification.requestPermission();
+    if (typeof window !== 'undefined' && "Notification" in window && window.Notification.permission === "default") {
+      window.Notification.requestPermission();
     }
   }, []);
 

@@ -12,7 +12,7 @@ export interface UseNotificationsResult {
 
 export function useNotifications(userId: string | undefined): UseNotificationsResult {
   const [permission, setPermission] = useState<NotificationPermission>(
-    typeof window !== 'undefined' ? Notification.permission : 'default'
+    (typeof window !== 'undefined' && 'Notification' in window) ? window.Notification.permission : 'default'
   );
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
@@ -38,7 +38,7 @@ export function useNotifications(userId: string | undefined): UseNotificationsRe
       });
 
     // If permission is already granted, fetch token silently
-    if (Notification.permission === 'granted') {
+    if (typeof window !== 'undefined' && 'Notification' in window && window.Notification.permission === 'granted') {
       fetchTokenSilently(userId);
     }
 
@@ -58,8 +58,8 @@ export function useNotifications(userId: string | undefined): UseNotificationsRe
         window.dispatchEvent(event);
 
         // Also trigger native browser notification if allowed and tab is out of focus
-        if (document.hidden && Notification.permission === 'granted') {
-          new Notification(payload.notification?.title || 'FWN Coach Alert', {
+        if (document.hidden && typeof window !== 'undefined' && 'Notification' in window && window.Notification.permission === 'granted') {
+          new window.Notification(payload.notification?.title || 'FWN Coach Alert', {
             body: payload.notification?.body,
             icon: '/logo.png'
           });
@@ -97,26 +97,30 @@ export function useNotifications(userId: string | undefined): UseNotificationsRe
     setLoading(true);
     setError(null);
     try {
-      const result = await Notification.requestPermission();
-      setPermission(result);
-      if (result === 'granted' && userId) {
-        const messaging = getMessaging(app);
-        const activeToken = await getToken(messaging, {
-          vapidKey: 'BM6a-y_oF9Y_X7pWz8_Vz-5-3-X-X_X_X_X_X_X_X_X_X'
-        });
-        if (activeToken) {
-          setToken(activeToken);
-          // Sync with server
-          await fetch('/api/notifications/register', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId, token: activeToken })
+      if (typeof window !== 'undefined' && 'Notification' in window) {
+        const result = await window.Notification.requestPermission();
+        setPermission(result);
+        if (result === 'granted' && userId) {
+          const messaging = getMessaging(app);
+          const activeToken = await getToken(messaging, {
+            vapidKey: 'BM6a-y_oF9Y_X7pWz8_Vz-5-3-X-X_X_X_X_X_X_X_X_X'
           });
-          setLoading(false);
-          return activeToken;
+          if (activeToken) {
+            setToken(activeToken);
+            // Sync with server
+            await fetch('/api/notifications/register', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ userId, token: activeToken })
+            });
+            setLoading(false);
+            return activeToken;
+          }
+        } else if (result === 'denied') {
+          setError('Notification permission denied by user.');
         }
-      } else if (result === 'denied') {
-        setError('Notification permission denied by user.');
+      } else {
+        setError('Push notifications are not supported on this browser/device.');
       }
     } catch (err: any) {
       console.error('[useNotifications] Error requesting permission:', err);
