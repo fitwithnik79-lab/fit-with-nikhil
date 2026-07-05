@@ -3106,18 +3106,27 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
                       <Copy className="w-5 h-5" />
                     </button>
                     {profile?.role === 'admin' && (
-                      <button 
-                        onClick={() => handleExportToGoogleDoc(program, 'program')}
-                        disabled={exportingId !== null}
-                        className="p-4 bg-zinc-800 text-zinc-400 hover:text-blue-400 rounded-2xl transition-all flex items-center justify-center"
-                        title="Export to Google Doc"
-                      >
-                        {exportingId === (program.id || program.name) ? (
-                          <Loader2 className="w-5 h-5 animate-spin text-orange-500" />
-                        ) : (
-                          <FileText className="w-5 h-5" />
-                        )}
-                      </button>
+                      <>
+                        <button 
+                          onClick={() => downloadAsWordDoc(program, 'program')}
+                          className="p-4 bg-zinc-800 text-zinc-400 hover:text-orange-500 rounded-2xl transition-all flex items-center justify-center"
+                          title="Download as Microsoft Word"
+                        >
+                          <Download className="w-5 h-5" />
+                        </button>
+                        <button 
+                          onClick={() => handleExportToGoogleDoc(program, 'program')}
+                          disabled={exportingId !== null}
+                          className="p-4 bg-zinc-800 text-zinc-400 hover:text-blue-400 rounded-2xl transition-all flex items-center justify-center"
+                          title="Export to Google Doc"
+                        >
+                          {exportingId === (program.id || program.name) ? (
+                            <Loader2 className="w-5 h-5 animate-spin text-orange-500" />
+                          ) : (
+                            <FileText className="w-5 h-5" />
+                          )}
+                        </button>
+                      </>
                     )}
                     {program.id && !WEEKLY_PROGRAMS.some(wp => wp.id === program.id) && (
                       <button 
@@ -3217,18 +3226,27 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
                         <Copy className="w-4 h-4" />
                       </button>
                       {profile?.role === 'admin' && (
-                        <button 
-                          onClick={() => handleExportToGoogleDoc(template, 'workout')}
-                          disabled={exportingId !== null}
-                          className="p-3 bg-zinc-950 text-zinc-500 hover:text-blue-400 rounded-xl transition-all flex items-center justify-center"
-                          title="Export to Google Doc"
-                        >
-                          {exportingId === (template.id || template.name) ? (
-                            <Loader2 className="w-4 h-4 animate-spin text-orange-500" />
-                          ) : (
-                            <FileText className="w-4 h-4" />
-                          )}
-                        </button>
+                        <>
+                          <button 
+                            onClick={() => downloadAsWordDoc(template, 'workout')}
+                            className="p-3 bg-zinc-950 text-zinc-500 hover:text-orange-500 rounded-xl transition-all flex items-center justify-center"
+                            title="Download as Microsoft Word"
+                          >
+                            <Download className="w-4 h-4" />
+                          </button>
+                          <button 
+                            onClick={() => handleExportToGoogleDoc(template, 'workout')}
+                            disabled={exportingId !== null}
+                            className="p-3 bg-zinc-950 text-zinc-500 hover:text-blue-400 rounded-xl transition-all flex items-center justify-center"
+                            title="Export to Google Doc"
+                          >
+                            {exportingId === (template.id || template.name) ? (
+                              <Loader2 className="w-4 h-4 animate-spin text-orange-500" />
+                            ) : (
+                              <FileText className="w-4 h-4" />
+                            )}
+                          </button>
+                        </>
                       )}
                     </div>
                   </div>
@@ -3357,18 +3375,27 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
                       <Edit2 className="w-4 h-4" />
                     </button>
                     {profile?.role === 'admin' && (
-                      <button 
-                        onClick={() => handleExportToGoogleDoc(plan, 'nutrition')}
-                        disabled={exportingId !== null}
-                        className="p-3 bg-zinc-950 border border-white/5 text-zinc-500 hover:text-blue-400 transition-all rounded-xl flex items-center justify-center"
-                        title="Export to Google Doc"
-                      >
-                        {exportingId === (plan.id || plan.name) ? (
-                          <Loader2 className="w-4 h-4 animate-spin text-orange-500" />
-                        ) : (
-                          <FileText className="w-4 h-4" />
-                        )}
-                      </button>
+                      <>
+                        <button 
+                          onClick={() => downloadAsWordDoc(plan, 'nutrition')}
+                          className="p-3 bg-zinc-950 border border-white/5 text-zinc-500 hover:text-orange-500 transition-all rounded-xl flex items-center justify-center"
+                          title="Download as Microsoft Word"
+                        >
+                          <Download className="w-4 h-4" />
+                        </button>
+                        <button 
+                          onClick={() => handleExportToGoogleDoc(plan, 'nutrition')}
+                          disabled={exportingId !== null}
+                          className="p-3 bg-zinc-950 border border-white/5 text-zinc-500 hover:text-blue-400 transition-all rounded-xl flex items-center justify-center"
+                          title="Export to Google Doc"
+                        >
+                          {exportingId === (plan.id || plan.name) ? (
+                            <Loader2 className="w-4 h-4 animate-spin text-orange-500" />
+                          ) : (
+                            <FileText className="w-4 h-4" />
+                          )}
+                        </button>
+                      </>
                     )}
                     {plan.id && !NUTRITION_TEMPLATES.some(nt => nt.id === plan.id) && (
                       <button 
@@ -3901,7 +3928,7 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
                                     <input 
                                       className="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-8 pr-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-orange-500"
                                       value={ex.youtubeLink}
-                                      placeholder="https://youtube.com/watch?v=..."
+                                      placeholder="YouTube video or Shorts URL..."
                                       onChange={(e) => updateDraftExercise(activeEditingDay, exIdx, 'youtubeLink', e.target.value)}
                                     />
                                   </div>
@@ -5675,9 +5702,29 @@ function ClientHistory({ client }: { client: UserProfile }) {
 }
 
 function getYouTubeId(url: string) {
+  if (!url) return null;
+  
+  // 1. Check for Shorts first: e.g. youtube.com/shorts/abc123xyz78
+  const shortsReg = /\/shorts\/([^#\&\?\/]+)/;
+  const shortsMatch = url.match(shortsReg);
+  if (shortsMatch && shortsMatch[1].trim().length === 11) {
+    return shortsMatch[1].trim();
+  }
+  
+  // 2. Standard watch URL or youtu.be, embed, etc.
   const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
   const match = url.match(regExp);
-  return (match && match[2].length === 11) ? match[2] : null;
+  if (match && match[2].trim().length === 11) {
+    return match[2].trim();
+  }
+
+  // 3. Fallback check for any 11-character string that might be just the ID itself
+  const cleanUrl = url.trim();
+  if (cleanUrl.length === 11 && !cleanUrl.includes('/') && !cleanUrl.includes('?')) {
+    return cleanUrl;
+  }
+  
+  return null;
 }
 
 function MacroCalculatorTool({ onApply, currentWeight, currentHeight, currentGender }: { onApply: (macros: { calories: number, protein: number, carbs: number, fats: number }) => void, currentWeight?: string, currentHeight?: string, currentGender?: string }) {
@@ -6798,6 +6845,118 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
   const [selectedProgramWeekIdx, setSelectedProgramWeekIdx] = useState<number>(0);
   const [selectedProgramDayIdx, setSelectedProgramDayIdx] = useState<number>(0);
 
+  const downloadActiveAsWordDoc = () => {
+    const protocolName = `${client?.displayName || 'Athlete'} — Week ${week} Day ${day} Workout`;
+    const sections = [
+      {
+        name: "Instructions & Notes",
+        exercises: workoutNotes ? [workoutNotes] : ["No general instructions provided."]
+      },
+      {
+        name: "Exercises",
+        exercises: exercises.filter(e => e.name.trim() !== '').map((e: any) => 
+          `${e.name} — ${e.sets} sets x ${e.reps} reps (Rest: ${e.rest || '60s'})${e.weight ? `, Weight: ${e.weight}` : ''}${e.coachNote ? ` | Note: ${e.coachNote}` : ''}`
+        )
+      }
+    ];
+
+    const dateStr = format(new Date(), 'MMMM d, yyyy');
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>${protocolName}</title>
+        <style>
+          body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #1a1a1a;
+            margin: 40px;
+          }
+          .header-box {
+            border-bottom: 3px solid #ea580c;
+            padding-bottom: 12px;
+            margin-bottom: 30px;
+          }
+          h1 {
+            font-size: 26pt;
+            color: #ea580c; /* Brand orange color */
+            margin: 0 0 6px 0;
+            font-weight: bold;
+          }
+          .subtitle {
+            font-size: 11pt;
+            color: #71717a;
+            margin: 0;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+          }
+          h2 {
+            font-size: 16pt;
+            color: #27272a;
+            margin-top: 35px;
+            margin-bottom: 15px;
+            border-left: 5px solid #ea580c;
+            padding-left: 12px;
+            font-weight: bold;
+          }
+          ul {
+            margin-top: 5px;
+            margin-bottom: 25px;
+            padding-left: 24px;
+          }
+          li {
+            margin-bottom: 10px;
+            font-size: 11pt;
+            color: #3f3f46;
+          }
+          .footer {
+            margin-top: 60px;
+            border-top: 1px solid #e4e4e7;
+            padding-top: 20px;
+            font-size: 9pt;
+            font-style: italic;
+            color: #71717a;
+            text-align: center;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="header-box">
+          <h1>${protocolName}</h1>
+          <p class="subtitle">Fit with Nik — Private Client Protocol</p>
+        </div>
+        
+        ${sections.map(section => `
+          <h2>${section.name}</h2>
+          <ul>
+            ${(section.exercises || []).map((exercise: string) => `
+              <li>${exercise}</li>
+            `).join('')}
+          </ul>
+        `).join('')}
+        
+        <div class="footer">
+          Generated via Coach Admin Dashboard on ${dateStr}
+        </div>
+      </body>
+      </html>
+    `;
+
+    const blob = new Blob(['\ufeff' + htmlContent], { type: 'application/msword' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    const safeFilename = protocolName.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    link.download = `${safeFilename}_protocol.doc`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showToast('Active Workout Protocol downloaded as Microsoft Word document ✓', 'success');
+  };
+
   // Google Sheets import flow states
   const [activeVaultTab, setActiveVaultTab] = useState<'vault' | 'archive' | 'sheets'>('vault');
   const [googleSheetUrl, setGoogleSheetUrl] = useState('');
@@ -7451,6 +7610,15 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
             <span className="hidden sm:inline text-[9px] font-black uppercase tracking-widest text-zinc-300">Save Template</span>
           </button>
 
+          <button 
+            onClick={downloadActiveAsWordDoc}
+            className="p-3 bg-zinc-950 border border-white/5 rounded-2xl hover:text-orange-500 hover:border-orange-500/30 transition-all shrink-0 flex items-center gap-2 px-4"
+            title="Download active protocol as Microsoft Word document"
+          >
+            <Download className="w-4 h-4 text-orange-500" />
+            <span className="hidden sm:inline text-[9px] font-black uppercase tracking-widest text-zinc-300">Download DOC</span>
+          </button>
+
           {initialWorkout && (
             <button 
               onClick={() => setShowDuplicateModal(true)}
@@ -7644,7 +7812,7 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
                                 <input
                                   value={ex.youtubeLink}
                                   onChange={(e) => updateExercise(idx, 'youtubeLink', e.target.value)}
-                                  placeholder="Demo URL..."
+                                  placeholder="Demo URL (YouTube, Vimeo, Shorts...)"
                                   className="flex-1 bg-zinc-950 border border-white/5 rounded-xl px-4 py-3 text-[10px] font-mono text-zinc-400 outline-none focus:border-orange-500/30 transition-all"
                                 />
                                 <button

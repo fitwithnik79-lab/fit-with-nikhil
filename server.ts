@@ -41,10 +41,10 @@ function sanitizeLogText(text: string): string {
 
 // Resilient fallback interceptor to prevent 503 (High Demand) and 404 (Unsupported) errors
 const originalGenerateContent = ai.models.generateContent.bind(ai.models);
-let preferredModel = "gemini-2.0-flash";
+let preferredModel = "gemini-3.5-flash";
 
 ai.models.generateContent = async function (params: any): Promise<any> {
-  const modelsToTry = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-flash-8b"];
+  const modelsToTry = ["gemini-3.5-flash"];
   const initialModel = params.model || preferredModel;
   const modelQueue = [initialModel, ...modelsToTry.filter(m => m !== initialModel)];
 
@@ -163,7 +163,7 @@ async function startServer() {
     const { clientName, weekNumber } = req.body;
     try {
       const response = await fetchWithRetry(() => ai.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: "gemini-3.5-flash",
         contents: [{ role: 'user', parts: [{ text: `You are Nik, a high-energy fitness coach. Write a short, powerful motivational message for your client ${clientName} who just finished Week ${weekNumber} of their program. Keep it under 3 sentences. Be specific about their progress and encourage them for next week.` }] }]
       }));
       res.json({ text: response.text || "Great job this week! Keep pushing!" });
@@ -179,7 +179,7 @@ async function startServer() {
       // Direct, fast, and free heuristic generation without active search grounding tools (prevents 429 quota exhaustion)
       try {
         const fallbackResponse = await fetchWithRetry(() => ai.models.generateContent({
-          model: "gemini-2.0-flash",
+          model: "gemini-3.5-flash",
           contents: [{ role: 'user', parts: [{ text: `Generate 3 high-quality YouTube search or demonstration links for the exercise: "${exerciseName}".
           You must generate highly specific YouTube search query URLs or standard demonstration titles from elite fitness channels (like Athlean-X, Squat University, Jeff Nippard, Mountain Dog, or standard YouTube Search Query URLs) which are reliable query targets.
           
@@ -325,7 +325,7 @@ async function startServer() {
     try {
       const response = await fetchWithRetry(async () => {
         return await ai.models.generateContent({
-          model: "gemini-2.0-flash",
+          model: "gemini-3.5-flash",
           contents: [{
             role: 'user',
             parts: [
@@ -351,7 +351,7 @@ async function startServer() {
     try {
       const response = await fetchWithRetry(async () => {
         return await ai.models.generateContent({
-          model: "gemini-2.0-flash",
+          model: "gemini-3.5-flash",
           contents: [{ role: 'user', parts: [{ text: `You are an elite performance nutritionist. Analyze the following meal description: "${mealDescription}". 
           
           CRITICAL INSTRUCTION: Be extremely detailed. If a user enters a simple item like "Tea", "Coffee", "Pasta", or "Cereal", do NOT just analyze the dry ingredient. 
@@ -379,7 +379,7 @@ async function startServer() {
     const itemsDescription = items.map((i: any) => `${i.quantity} of ${i.name}`).join(", ");
     try {
       const response = await fetchWithRetry(() => ai.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: "gemini-3.5-flash",
         contents: [{ role: 'user', parts: [{ text: `Calculate the calories, protein, carbs, and fats for the following food items and their specific quantities: "${itemsDescription}".` }]}],
         config: { 
           responseMimeType: "application/json",
@@ -397,7 +397,7 @@ async function startServer() {
     const { summary, goals } = req.body;
     try {
       const response = await fetchWithRetry(() => ai.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: "gemini-3.5-flash",
         contents: [{ role: 'user', parts: [{ text: `You are Nik, a world-class performance nutritionist. Analyze today's logged meals for this client and provide personalized actionable advice.
         
         Client Goals: ${goals}
@@ -524,7 +524,7 @@ async function startServer() {
     try {
       // Direct, advanced professional workout parser with day analysis and elite styling rules
       const response = await fetchWithRetry(() => ai.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: "gemini-3.5-flash",
         contents: [{ role: 'user', parts: [{ text: `You are an elite, Olympic-level strength and conditioning coach specializing in athletic performance, biomechanical correction, and recovery. 
         Your task is to analyze the following workout content from an uploaded file/document named "${fileName}".
         
@@ -579,7 +579,7 @@ async function startServer() {
     const { exercisesSummary, sheetTitle, tabName } = req.body;
     try {
       const response = await fetchWithRetry(() => ai.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: "gemini-3.5-flash",
         contents: [{ role: 'user', parts: [{ text: `You are an elite coaching systems architect. Generate high-end Olympic metadata for a training program.
         Spreadsheet Source: "${sheetTitle}"
         Tab Name: "${tabName}"
@@ -604,7 +604,7 @@ async function startServer() {
     const { fileContent, fileName } = req.body;
     try {
       const response = await fetchWithRetry(() => ai.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: "gemini-3.5-flash",
         contents: [{ role: 'user', parts: [{ text: `Analyze the performance nutrition plan from "${fileName}" as a professional sports nutritionist. 
         
         EXTRACTION REQUIREMENTS:
@@ -1451,7 +1451,7 @@ async function startServer() {
       Return ONLY the JSON.`;
 
       const result = await fetchWithRetry(() => ai.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: "gemini-3.5-flash",
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         config: {
           responseMimeType: "application/json",
@@ -1523,7 +1523,7 @@ async function startServer() {
       Return ONLY the JSON.`;
 
       const result = await fetchWithRetry(() => ai.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: "gemini-3.5-flash",
         contents: [
           {
             role: 'user',
@@ -1656,7 +1656,7 @@ async function startServer() {
       }
 
       const response = await fetchWithRetry(() => ai.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: "gemini-3.5-flash",
         contents: [{ role: 'user', parts: [{ text: prompt }] }]
       }));
 
@@ -1680,7 +1680,7 @@ async function startServer() {
       if (type === 'motivational_quote') {
         // Daily motivational quote broadcast (e.g., at 8AM)
         const quoteRes = await fetchWithRetry(() => ai.models.generateContent({
-          model: "gemini-2.0-flash",
+          model: "gemini-3.5-flash",
           contents: [{ role: 'user', parts: [{ text: "Write a 1-sentence morning fitness motivational quote. Keep it under 80 characters. Maximize intensity." }] }]
         }));
         const quote = (quoteRes.text || "Win the morning, dominate the day! ⚡").trim().replace(/"/g, '');
@@ -1870,7 +1870,7 @@ async function startServer() {
       Return valid JSON only.`;
 
       const result = await fetchWithRetry(() => ai.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: "gemini-3.5-flash",
         contents: [
           {
             role: 'user',

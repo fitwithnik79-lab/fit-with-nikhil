@@ -4,7 +4,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, User } from 'firebase/auth';
+import { onAuthStateChanged, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, signOut, User } from 'firebase/auth';
 import { doc, getDoc, getDocFromCache, setDoc, updateDoc, collection, query, where, onSnapshot, orderBy, limit, addDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from './lib/firebase';
 import { UserProfile, UserRole } from './types';
@@ -29,6 +29,17 @@ export default function App() {
   const [previewProfile, setPreviewProfile] = useState<UserProfile | null>(null);
 
   useEffect(() => {
+    // Check for redirect result on load
+    getRedirectResult(auth)
+      .then((result) => {
+        if (result?.user) {
+          console.log("Logged in via redirect successfully:", result.user.email);
+        }
+      })
+      .catch((error) => {
+        console.error("Redirect login error:", error);
+      });
+
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         setUser(user);
@@ -105,10 +116,32 @@ export default function App() {
   const handleLogin = async () => {
     setSigningIn(true);
     const provider = new GoogleAuthProvider();
+    
+    // Check if the user is on a mobile device or tablet to prefer redirect over popup
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    
+    if (isMobile) {
+      try {
+        await signInWithRedirect(auth, provider);
+      } catch (error) {
+        console.error('Mobile redirect login error:', error);
+        setSigningIn(false);
+      }
+      return;
+    }
+
     try {
       await signInWithPopup(auth, provider);
-    } catch (error) {
-      console.error('Login error:', error);
+    } catch (error: any) {
+      console.warn('Popup login blocked or failed. Attempting fallback redirect...', error);
+      // Fallback to redirect on popup failure (e.g. popup blocker active)
+      if (error.code === 'auth/popup-blocked' || error.code === 'auth/popup-closed-by-user' || error.code === 'auth/cancelled-popup-request') {
+        try {
+          await signInWithRedirect(auth, provider);
+        } catch (redirectError) {
+          console.error('Fallback redirect login error:', redirectError);
+        }
+      }
     } finally {
       setSigningIn(false);
     }

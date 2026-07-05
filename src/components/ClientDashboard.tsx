@@ -935,9 +935,29 @@ const QuickLog = ({ todayMetrics, onLog }: {
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, BarChart, Bar, Cell } from 'recharts';
 
 function getYouTubeId(url: string) {
+  if (!url) return null;
+  
+  // 1. Check for Shorts first: e.g. youtube.com/shorts/abc123xyz78
+  const shortsReg = /\/shorts\/([^#\&\?\/]+)/;
+  const shortsMatch = url.match(shortsReg);
+  if (shortsMatch && shortsMatch[1].trim().length === 11) {
+    return shortsMatch[1].trim();
+  }
+  
+  // 2. Standard watch URL or youtu.be, embed, etc.
   const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
   const match = url.match(regExp);
-  return (match && match[2].length === 11) ? match[2] : null;
+  if (match && match[2].trim().length === 11) {
+    return match[2].trim();
+  }
+
+  // 3. Fallback check for any 11-character string that might be just the ID itself
+  const cleanUrl = url.trim();
+  if (cleanUrl.length === 11 && !cleanUrl.includes('/') && !cleanUrl.includes('?')) {
+    return cleanUrl;
+  }
+  
+  return null;
 }
 
 function resolveVideoUrl(url: string) {
@@ -4137,7 +4157,7 @@ export default function ClientDashboard({ user, profile, onLogout }: ClientDashb
                                     setEditableExercises(updated);
                                   }}
                                   className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3 text-sm text-zinc-400 focus:border-orange-500/40 outline-none transition-all placeholder:text-zinc-800 font-mono text-xs"
-                                  placeholder="https://www.youtube.com/watch?v=..."
+                                  placeholder="YouTube video or Shorts URL..."
                                 />
                               </div>
                             </div>
