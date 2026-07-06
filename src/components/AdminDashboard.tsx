@@ -2088,6 +2088,18 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
   const [editingTemplateCategory, setEditingTemplateCategory] = useState('');
   const [editingTemplateDescription, setEditingTemplateDescription] = useState('');
   const [savingTemplate, setSavingTemplate] = useState(false);
+
+  // Video Search Modal States for TemplatesView
+  const [videoSearchConfig, setVideoSearchConfig] = useState<{
+    isOpen: boolean;
+    exerciseName: string;
+    currentUrl: string;
+    onSelect: (url: string) => void;
+  } | null>(null);
+  const [modalSearchQuery, setModalSearchQuery] = useState('');
+  const [modalSearchResults, setModalSearchResults] = useState<{title: string, url: string, channel?: string}[]>([]);
+  const [isModalSearching, setIsModalSearching] = useState(false);
+  const [previewingId, setPreviewingId] = useState<string | null>(null);
   
   const [exportingId, setExportingId] = useState<string | null>(null);
   const [isAuthorizingGDoc, setIsAuthorizingGDoc] = useState(false);
@@ -2544,6 +2556,36 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
       newDraft[dayIdx] = newDraft[dayIdx].filter((_, i) => i !== exIdx);
       return newDraft;
     });
+  };
+
+  const openVideoSearchModal = (config: { exerciseName: string; currentUrl: string; onSelect: (url: string) => void }) => {
+    setVideoSearchConfig({
+      isOpen: true,
+      ...config
+    });
+    setModalSearchQuery(config.exerciseName);
+    setModalSearchResults([]);
+    setIsModalSearching(false);
+    setPreviewingId(null);
+    
+    if (config.exerciseName.trim()) {
+      handleModalSearch(config.exerciseName);
+    }
+  };
+
+  const handleModalSearch = async (queryText: string) => {
+    if (!queryText.trim()) return;
+    setIsModalSearching(true);
+    setModalSearchResults([]);
+    setPreviewingId(null);
+    try {
+      const results = await searchExerciseVideos(queryText);
+      setModalSearchResults(results || []);
+    } catch (error) {
+      console.error("Error in modal video search:", error);
+    } finally {
+      setIsModalSearching(false);
+    }
   };
 
   const handleAssignSingle = async () => {
@@ -3932,6 +3974,18 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
                                       onChange={(e) => updateDraftExercise(activeEditingDay, exIdx, 'youtubeLink', e.target.value)}
                                     />
                                   </div>
+                                  <button
+                                    onClick={() => openVideoSearchModal({
+                                      exerciseName: ex.name,
+                                      currentUrl: ex.youtubeLink || '',
+                                      onSelect: (url) => updateDraftExercise(activeEditingDay, exIdx, 'youtubeLink', url)
+                                    })}
+                                    type="button"
+                                    className="p-1.5 bg-zinc-950 border border-zinc-800 rounded-lg hover:text-orange-500 hover:border-orange-500/30 transition-all text-xs flex items-center justify-center text-zinc-400 shrink-0"
+                                    title="Search relevant exercise videos on YouTube"
+                                  >
+                                    <Search className="w-3.5 h-3.5" />
+                                  </button>
                                 </div>
                               </div>
                               
@@ -4473,6 +4527,216 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
                   >
                     Cancel Action
                   </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {videoSearchConfig && videoSearchConfig.isOpen && (
+          <div className="fixed inset-0 z-[130] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setVideoSearchConfig(null)}
+              className="absolute inset-0 bg-black/95 backdrop-blur-xl"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-3xl bg-zinc-900 border border-white/10 rounded-[40px] shadow-2xl overflow-hidden flex flex-col max-h-[85vh] z-[131]"
+            >
+              {/* Header */}
+              <div className="p-6 md:p-8 border-b border-white/5 bg-zinc-950/40 flex items-center justify-between">
+                <div>
+                  <h3 className="font-black text-xl md:text-2xl uppercase italic tracking-tighter text-white flex items-center gap-2">
+                    <Youtube className="w-6 h-6 text-red-500 shrink-0" />
+                    DEMO VIDEO SEARCH <span className="text-zinc-500">ENGINE</span>
+                  </h3>
+                  <p className="text-orange-500 text-[10px] font-black uppercase tracking-[0.2em] mt-1">
+                    Powered by Gemini Search Grounding
+                  </p>
+                </div>
+                <button 
+                  onClick={() => setVideoSearchConfig(null)} 
+                  className="p-2.5 bg-zinc-950 rounded-2xl text-zinc-500 hover:text-white border border-white/5 transition-all"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-6 md:p-8 space-y-6 overflow-y-auto custom-scrollbar flex-1">
+                {/* Search query input */}
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500">
+                    Search Phrase
+                  </label>
+                  <div className="flex gap-3">
+                    <input
+                      type="text"
+                      value={modalSearchQuery}
+                      onChange={(e) => setModalSearchQuery(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleModalSearch(modalSearchQuery)}
+                      placeholder="e.g. Barbell Squat Form"
+                      className="flex-1 bg-zinc-950 border border-white/10 rounded-2xl px-5 py-4 text-sm text-white font-bold outline-none focus:border-orange-500/40 transition-all placeholder:text-zinc-700"
+                    />
+                    <button
+                      onClick={() => handleModalSearch(modalSearchQuery)}
+                      disabled={isModalSearching}
+                      className="px-6 py-4 bg-orange-500 hover:bg-orange-600 text-white font-black uppercase text-xs tracking-widest rounded-2xl transition-all shadow-lg shadow-orange-500/10 flex items-center justify-center gap-2 disabled:opacity-40"
+                    >
+                      {isModalSearching ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Search className="w-4 h-4" />
+                      )}
+                      <span>Search</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Search Results list */}
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-[10px] font-black uppercase tracking-widest text-zinc-500">
+                      Suggested Video Results
+                    </h4>
+                    {modalSearchResults.length > 0 && (
+                      <span className="text-[9px] text-zinc-500 bg-zinc-950 px-2.5 py-1 rounded-full border border-white/5 font-mono">
+                        {modalSearchResults.length} Options Found
+                      </span>
+                    )}
+                  </div>
+
+                  {isModalSearching ? (
+                    <div className="py-12 flex flex-col items-center justify-center space-y-4 border border-white/5 border-dashed rounded-3xl bg-zinc-950/30">
+                      <div className="w-10 h-10 border-4 border-orange-500/20 border-t-orange-500 rounded-full animate-spin" />
+                      <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500 animate-pulse">
+                        Scanning Web Index for High Quality Form Guides...
+                      </p>
+                    </div>
+                  ) : modalSearchResults.length > 0 ? (
+                    <div className="space-y-3.5 max-h-[350px] overflow-y-auto pr-1">
+                      {modalSearchResults.map((video, vIdx) => {
+                        const videoId = getYouTubeId(video.url);
+                        const isShorts = video.url.includes('/shorts/');
+                        const isCurrentlyPreviewing = previewingId === videoId;
+                        
+                        return (
+                          <div 
+                            key={vIdx}
+                            className="bg-zinc-950/80 border border-white/5 rounded-3xl p-4 flex flex-col md:flex-row gap-4 hover:border-orange-500/20 transition-all items-center"
+                          >
+                            {/* Left: Thumbnail / Embed */}
+                            {videoId ? (
+                              <div className="relative w-full md:w-44 aspect-video rounded-2xl overflow-hidden bg-zinc-900 border border-white/5 shrink-0">
+                                {isCurrentlyPreviewing ? (
+                                  <iframe
+                                    src={`https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&rel=0`}
+                                    className="w-full h-full"
+                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                    allowFullScreen
+                                  />
+                                ) : (
+                                  <div className="relative w-full h-full group/preview cursor-pointer" onClick={() => setPreviewingId(videoId)}>
+                                    <img 
+                                      src={`https://img.youtube.com/vi/${videoId}/mqdefault.jpg`} 
+                                      alt="Thumbnail" 
+                                      className="w-full h-full object-cover opacity-60 group-hover/preview:opacity-85 transition-opacity"
+                                      referrerPolicy="no-referrer"
+                                    />
+                                    <div className="absolute inset-0 flex items-center justify-center bg-black/20">
+                                      <div className="p-2.5 bg-black/60 backdrop-blur-md rounded-full border border-white/10 group-hover/preview:scale-110 transition-transform">
+                                        <Play className="w-4 h-4 text-orange-500 fill-current" />
+                                      </div>
+                                    </div>
+                                    {isShorts && (
+                                      <div className="absolute bottom-2 right-2 bg-red-600 text-[8px] font-black uppercase px-1.5 py-0.5 rounded text-white tracking-widest">
+                                        Shorts
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="w-full md:w-44 aspect-video rounded-2xl bg-zinc-900 border border-white/5 flex items-center justify-center text-zinc-700 font-mono text-[9px] uppercase shrink-0">
+                                Link Preview N/A
+                              </div>
+                            )}
+
+                            {/* Middle: Details */}
+                            <div className="flex-1 min-w-0 text-center md:text-left space-y-1">
+                              <span className="text-[9px] font-black uppercase px-2 py-0.5 bg-white/5 rounded border border-white/5 text-zinc-400">
+                                {video.channel || 'Verified Source'}
+                              </span>
+                              <h5 className="font-bold text-white text-sm tracking-tight leading-tight line-clamp-2 uppercase mt-1">
+                                {video.title}
+                              </h5>
+                              <p className="text-[10px] text-zinc-500 font-mono truncate">
+                                {video.url}
+                              </p>
+                            </div>
+
+                            {/* Right: Select Action */}
+                            <div className="shrink-0 flex flex-row md:flex-col gap-2">
+                              <button
+                                onClick={() => {
+                                  videoSearchConfig.onSelect(video.url);
+                                  setVideoSearchConfig(null);
+                                  showToast('Exercise Video Configured!');
+                                }}
+                                className="px-4 py-2.5 bg-orange-500/10 hover:bg-orange-500 border border-orange-500/20 text-orange-500 hover:text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all"
+                              >
+                                Select Video
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="py-12 border border-dashed border-white/5 rounded-3xl text-center space-y-2 bg-zinc-950/10">
+                      <p className="text-xs font-black uppercase tracking-tight text-zinc-500">
+                        No active results loaded
+                      </p>
+                      <p className="text-[10px] text-zinc-600 font-medium max-w-sm mx-auto">
+                        Type the exercise above and hit search to query high quality form guides from fitness authorities.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Manual paste field option as requested */}
+                <div className="pt-4 border-t border-white/5 space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500">
+                    Or Manually Paste a Link
+                  </label>
+                  <div className="flex gap-3">
+                    <input
+                      type="text"
+                      defaultValue={videoSearchConfig.currentUrl}
+                      id="manualVideoUrlInputTemplates"
+                      placeholder="Paste YouTube, YouTube Shorts, or Vimeo URL..."
+                      className="flex-1 bg-zinc-950 border border-white/10 rounded-2xl px-5 py-4 text-xs text-white font-mono outline-none focus:border-orange-500/40 transition-all placeholder:text-zinc-700"
+                    />
+                    <button
+                      onClick={() => {
+                        const inputEl = document.getElementById('manualVideoUrlInputTemplates') as HTMLInputElement;
+                        if (inputEl) {
+                          videoSearchConfig.onSelect(inputEl.value.trim());
+                          setVideoSearchConfig(null);
+                          showToast('Custom Link Applied!');
+                        }
+                      }}
+                      className="px-6 py-4 bg-zinc-950 hover:bg-white hover:text-zinc-950 text-white font-black uppercase text-xs tracking-widest rounded-2xl border border-white/5 transition-all flex items-center justify-center"
+                    >
+                      Apply Link
+                    </button>
+                  </div>
                 </div>
               </div>
             </motion.div>
@@ -6843,6 +7107,18 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
   const [vaultExerciseTab, setVaultExerciseTab] = useState<'custom' | 'curated' | 'programs'>('custom');
   const [selectedVaultProtocolId, setSelectedVaultProtocolId] = useState<string>('');
   const [selectedProgramWeekIdx, setSelectedProgramWeekIdx] = useState<number>(0);
+
+  // New interactive Video Search Modal states
+  const [videoSearchConfig, setVideoSearchConfig] = useState<{
+    isOpen: boolean;
+    exerciseName: string;
+    currentUrl: string;
+    onSelect: (url: string) => void;
+  } | null>(null);
+  const [modalSearchQuery, setModalSearchQuery] = useState('');
+  const [modalSearchResults, setModalSearchResults] = useState<{title: string, url: string, channel?: string}[]>([]);
+  const [isModalSearching, setIsModalSearching] = useState(false);
+  const [previewingId, setPreviewingId] = useState<string | null>(null);
   const [selectedProgramDayIdx, setSelectedProgramDayIdx] = useState<number>(0);
 
   const downloadActiveAsWordDoc = () => {
@@ -7198,6 +7474,36 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
       } else {
         setIsGlobalSearching(false);
       }
+    }
+  };
+
+  const openVideoSearchModal = (config: { exerciseName: string; currentUrl: string; onSelect: (url: string) => void }) => {
+    setVideoSearchConfig({
+      isOpen: true,
+      ...config
+    });
+    setModalSearchQuery(config.exerciseName);
+    setModalSearchResults([]);
+    setIsModalSearching(false);
+    setPreviewingId(null);
+    
+    if (config.exerciseName.trim()) {
+      handleModalSearch(config.exerciseName);
+    }
+  };
+
+  const handleModalSearch = async (queryText: string) => {
+    if (!queryText.trim()) return;
+    setIsModalSearching(true);
+    setModalSearchResults([]);
+    setPreviewingId(null);
+    try {
+      const results = await searchExerciseVideos(queryText);
+      setModalSearchResults(results || []);
+    } catch (error) {
+      console.error("Error in modal video search:", error);
+    } finally {
+      setIsModalSearching(false);
     }
   };
 
@@ -7816,11 +8122,16 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
                                   className="flex-1 bg-zinc-950 border border-white/5 rounded-xl px-4 py-3 text-[10px] font-mono text-zinc-400 outline-none focus:border-orange-500/30 transition-all"
                                 />
                                 <button
-                                  onClick={() => handleSearchVideos(idx, ex.name)}
-                                  disabled={!ex.name || searchingIndex === idx}
+                                  onClick={() => openVideoSearchModal({
+                                    exerciseName: ex.name,
+                                    currentUrl: ex.youtubeLink || '',
+                                    onSelect: (url) => updateExercise(idx, 'youtubeLink', url)
+                                  })}
+                                  disabled={!ex.name}
                                   className="p-3 bg-zinc-950 border border-white/5 rounded-xl hover:text-orange-500 hover:border-orange-500/30 transition-all disabled:opacity-20"
+                                  title="Search relevant exercise videos on YouTube"
                                 >
-                                  {searchingIndex === idx ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                                  <Search className="w-4 h-4" />
                                 </button>
                               </div>
                             </div>
@@ -8646,6 +8957,216 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
                 >
                   <X className="w-5 h-5" />
                 </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {videoSearchConfig && videoSearchConfig.isOpen && (
+          <div className="fixed inset-0 z-[130] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setVideoSearchConfig(null)}
+              className="absolute inset-0 bg-black/95 backdrop-blur-xl"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-3xl bg-zinc-900 border border-white/10 rounded-[40px] shadow-2xl overflow-hidden flex flex-col max-h-[85vh] z-[131]"
+            >
+              {/* Header */}
+              <div className="p-6 md:p-8 border-b border-white/5 bg-zinc-950/40 flex items-center justify-between">
+                <div>
+                  <h3 className="font-black text-xl md:text-2xl uppercase italic tracking-tighter text-white flex items-center gap-2">
+                    <Youtube className="w-6 h-6 text-red-500 shrink-0" />
+                    DEMO VIDEO SEARCH <span className="text-zinc-500">ENGINE</span>
+                  </h3>
+                  <p className="text-orange-500 text-[10px] font-black uppercase tracking-[0.2em] mt-1">
+                    Powered by Gemini Search Grounding
+                  </p>
+                </div>
+                <button 
+                  onClick={() => setVideoSearchConfig(null)} 
+                  className="p-2.5 bg-zinc-950 rounded-2xl text-zinc-500 hover:text-white border border-white/5 transition-all"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-6 md:p-8 space-y-6 overflow-y-auto custom-scrollbar flex-1">
+                {/* Search query input */}
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500">
+                    Search Phrase
+                  </label>
+                  <div className="flex gap-3">
+                    <input
+                      type="text"
+                      value={modalSearchQuery}
+                      onChange={(e) => setModalSearchQuery(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleModalSearch(modalSearchQuery)}
+                      placeholder="e.g. Barbell Squat Form"
+                      className="flex-1 bg-zinc-950 border border-white/10 rounded-2xl px-5 py-4 text-sm text-white font-bold outline-none focus:border-orange-500/40 transition-all placeholder:text-zinc-700"
+                    />
+                    <button
+                      onClick={() => handleModalSearch(modalSearchQuery)}
+                      disabled={isModalSearching}
+                      className="px-6 py-4 bg-orange-500 hover:bg-orange-600 text-white font-black uppercase text-xs tracking-widest rounded-2xl transition-all shadow-lg shadow-orange-500/10 flex items-center justify-center gap-2 disabled:opacity-40"
+                    >
+                      {isModalSearching ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Search className="w-4 h-4" />
+                      )}
+                      <span>Search</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Search Results list */}
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-[10px] font-black uppercase tracking-widest text-zinc-500">
+                      Suggested Video Results
+                    </h4>
+                    {modalSearchResults.length > 0 && (
+                      <span className="text-[9px] text-zinc-500 bg-zinc-950 px-2.5 py-1 rounded-full border border-white/5 font-mono">
+                        {modalSearchResults.length} Options Found
+                      </span>
+                    )}
+                  </div>
+
+                  {isModalSearching ? (
+                    <div className="py-12 flex flex-col items-center justify-center space-y-4 border border-white/5 border-dashed rounded-3xl bg-zinc-950/30">
+                      <div className="w-10 h-10 border-4 border-orange-500/20 border-t-orange-500 rounded-full animate-spin" />
+                      <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500 animate-pulse">
+                        Scanning Web Index for High Quality Form Guides...
+                      </p>
+                    </div>
+                  ) : modalSearchResults.length > 0 ? (
+                    <div className="space-y-3.5 max-h-[350px] overflow-y-auto pr-1">
+                      {modalSearchResults.map((video, vIdx) => {
+                        const videoId = getYouTubeId(video.url);
+                        const isShorts = video.url.includes('/shorts/');
+                        const isCurrentlyPreviewing = previewingId === videoId;
+                        
+                        return (
+                          <div 
+                            key={vIdx}
+                            className="bg-zinc-950/80 border border-white/5 rounded-3xl p-4 flex flex-col md:flex-row gap-4 hover:border-orange-500/20 transition-all items-center"
+                          >
+                            {/* Left: Thumbnail / Embed */}
+                            {videoId ? (
+                              <div className="relative w-full md:w-44 aspect-video rounded-2xl overflow-hidden bg-zinc-900 border border-white/5 shrink-0">
+                                {isCurrentlyPreviewing ? (
+                                  <iframe
+                                    src={`https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&rel=0`}
+                                    className="w-full h-full"
+                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                    allowFullScreen
+                                  />
+                                ) : (
+                                  <div className="relative w-full h-full group/preview cursor-pointer" onClick={() => setPreviewingId(videoId)}>
+                                    <img 
+                                      src={`https://img.youtube.com/vi/${videoId}/mqdefault.jpg`} 
+                                      alt="Thumbnail" 
+                                      className="w-full h-full object-cover opacity-60 group-hover/preview:opacity-85 transition-opacity"
+                                      referrerPolicy="no-referrer"
+                                    />
+                                    <div className="absolute inset-0 flex items-center justify-center bg-black/20">
+                                      <div className="p-2.5 bg-black/60 backdrop-blur-md rounded-full border border-white/10 group-hover/preview:scale-110 transition-transform">
+                                        <Play className="w-4 h-4 text-orange-500 fill-current" />
+                                      </div>
+                                    </div>
+                                    {isShorts && (
+                                      <div className="absolute bottom-2 right-2 bg-red-600 text-[8px] font-black uppercase px-1.5 py-0.5 rounded text-white tracking-widest">
+                                        Shorts
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="w-full md:w-44 aspect-video rounded-2xl bg-zinc-900 border border-white/5 flex items-center justify-center text-zinc-700 font-mono text-[9px] uppercase shrink-0">
+                                Link Preview N/A
+                              </div>
+                            )}
+
+                            {/* Middle: Details */}
+                            <div className="flex-1 min-w-0 text-center md:text-left space-y-1">
+                              <span className="text-[9px] font-black uppercase px-2 py-0.5 bg-white/5 rounded border border-white/5 text-zinc-400">
+                                {video.channel || 'Verified Source'}
+                              </span>
+                              <h5 className="font-bold text-white text-sm tracking-tight leading-tight line-clamp-2 uppercase mt-1">
+                                {video.title}
+                              </h5>
+                              <p className="text-[10px] text-zinc-500 font-mono truncate">
+                                {video.url}
+                              </p>
+                            </div>
+
+                            {/* Right: Select Action */}
+                            <div className="shrink-0 flex flex-row md:flex-col gap-2">
+                              <button
+                                onClick={() => {
+                                  videoSearchConfig.onSelect(video.url);
+                                  setVideoSearchConfig(null);
+                                  showToast('Exercise Video Configured!');
+                                }}
+                                className="px-4 py-2.5 bg-orange-500/10 hover:bg-orange-500 border border-orange-500/20 text-orange-500 hover:text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all"
+                              >
+                                Select Video
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="py-12 border border-dashed border-white/5 rounded-3xl text-center space-y-2 bg-zinc-950/10">
+                      <p className="text-xs font-black uppercase tracking-tight text-zinc-500">
+                        No active results loaded
+                      </p>
+                      <p className="text-[10px] text-zinc-600 font-medium max-w-sm mx-auto">
+                        Type the exercise above and hit search to query high quality form guides from fitness authorities.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Manual paste field option as requested */}
+                <div className="pt-4 border-t border-white/5 space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500">
+                    Or Manually Paste a Link
+                  </label>
+                  <div className="flex gap-3">
+                    <input
+                      type="text"
+                      defaultValue={videoSearchConfig.currentUrl}
+                      id="manualVideoUrlInput"
+                      placeholder="Paste YouTube, YouTube Shorts, or Vimeo URL..."
+                      className="flex-1 bg-zinc-950 border border-white/10 rounded-2xl px-5 py-4 text-xs text-white font-mono outline-none focus:border-orange-500/40 transition-all placeholder:text-zinc-700"
+                    />
+                    <button
+                      onClick={() => {
+                        const inputEl = document.getElementById('manualVideoUrlInput') as HTMLInputElement;
+                        if (inputEl) {
+                          videoSearchConfig.onSelect(inputEl.value.trim());
+                          setVideoSearchConfig(null);
+                          showToast('Custom Link Applied!');
+                        }
+                      }}
+                      className="px-6 py-4 bg-zinc-950 hover:bg-white hover:text-zinc-950 text-white font-black uppercase text-xs tracking-widest rounded-2xl border border-white/5 transition-all flex items-center justify-center"
+                    >
+                      Apply Link
+                    </button>
+                  </div>
+                </div>
               </div>
             </motion.div>
           </div>

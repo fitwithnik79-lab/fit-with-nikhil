@@ -176,46 +176,58 @@ async function startServer() {
   app.post('/api/gemini/search-videos', async (req, res) => {
     const { exerciseName } = req.body;
     try {
-      // Direct, fast, and free heuristic generation without active search grounding tools (prevents 429 quota exhaustion)
       try {
-        const fallbackResponse = await fetchWithRetry(() => ai.models.generateContent({
+        const groundingResponse = await fetchWithRetry(() => ai.models.generateContent({
           model: "gemini-3.5-flash",
-          contents: [{ role: 'user', parts: [{ text: `Generate 3 high-quality YouTube search or demonstration links for the exercise: "${exerciseName}".
-          You must generate highly specific YouTube search query URLs or standard demonstration titles from elite fitness channels (like Athlean-X, Squat University, Jeff Nippard, Mountain Dog, or standard YouTube Search Query URLs) which are reliable query targets.
+          contents: [{ role: 'user', parts: [{ text: `Search the web to find 4-5 high-quality, real, active YouTube videos or YouTube Shorts demonstrating proper form/technique for the exercise: "${exerciseName}".
+          You MUST search and return actual, direct YouTube video watch URLs (e.g., https://www.youtube.com/watch?v=VIDEO_ID or https://youtu.be/VIDEO_ID) or YouTube Shorts URLs (e.g., https://www.youtube.com/shorts/VIDEO_ID). Do NOT return search query pages, channels, or non-YouTube URLs.
+          Ensure that the titles describe the video clearly, and the 'channel' field lists the fitness creator/channel name (such as Squat University, Athlean-X, Jeff Nippard, Mountain Dog, etc.).
           
-          Return the result as a JSON array of objects, each with 'title' and 'url' properties.
-          Example item formats:
-          { "title": "Proper Form Demonstration (Squat University)", "url": "https://www.youtube.com/results?search_query=how+to+squat+squat+university" }
-          { "title": "Full Exercise Guide (Athlean-X)", "url": "https://www.youtube.com/results?search_query=bicep+curls+athlean-x" }
-  
-          Do NOT fail. Provide exactly 3 valid video search options and match the JSON format exactly.` }]}],
+          Return the result as a JSON array of objects, matching the response schema.` }]}],
           config: { 
-            responseMimeType: "application/json" 
+            tools: [{ googleSearch: {} }],
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  title: { type: Type.STRING },
+                  url: { type: Type.STRING },
+                  channel: { type: Type.STRING }
+                },
+                required: ["title", "url", "channel"]
+              }
+            }
           }
         }));
-        const parsedFallback = parseSafeJson(fallbackResponse.text || "[]");
-        if (parsedFallback && parsedFallback.length > 0) {
-          res.json(parsedFallback);
+
+        const parsedResults = parseSafeJson(groundingResponse.text || "[]");
+        if (parsedResults && Array.isArray(parsedResults) && parsedResults.length > 0) {
+          res.json(parsedResults);
           return;
         }
-      } catch (fallbackError) {
-        console.error("Heuristic fallback failed:", fallbackError);
+      } catch (groundingError) {
+        console.error("Grounding exercise search failed, using fallback:", groundingError);
       }
 
-      // Fallback 2: Fail-safe programmatic search query mapping (Always succeeds, no API calls needed)
+      // Fallback: Generate high-quality search target URLs with heuristic titles
       const encodedQuery = encodeURIComponent(exerciseName);
       res.json([
         {
           title: `How-to: ${exerciseName} (YouTube Search)`,
-          url: `https://www.youtube.com/results?search_query=${encodedQuery}+exercise+form`
+          url: `https://www.youtube.com/results?search_query=${encodedQuery}+exercise+form`,
+          channel: "YouTube Search"
         },
         {
-          title: `${exerciseName} Form Checklist (Squat University / Jeff Nippard)`,
-          url: `https://www.youtube.com/results?search_query=${encodedQuery}+squat+university+tutorial`
+          title: `${exerciseName} Form Checklist`,
+          url: `https://www.youtube.com/results?search_query=${encodedQuery}+squat+university+tutorial`,
+          channel: "Squat University"
         },
         {
-          title: `${exerciseName} Common Mistakes (Athlean-X / Scott Herman)`,
-          url: `https://www.youtube.com/results?search_query=${encodedQuery}+athlean-x+mistakes`
+          title: `${exerciseName} Mistake Correction`,
+          url: `https://www.youtube.com/results?search_query=${encodedQuery}+athlean-x+mistakes`,
+          channel: "Athlean-X"
         }
       ]);
     } catch (error: any) {
