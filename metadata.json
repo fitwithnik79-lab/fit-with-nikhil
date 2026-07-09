@@ -1,6 +1,6 @@
 {
   "name": "Fit With Nik",
   "description": "An elite fitness coaching command center and athlete dashboard with real-time AI nutrition tracking, dynamic workout management, and interactive performance metrics.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": ["microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

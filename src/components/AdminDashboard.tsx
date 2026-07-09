@@ -12,9 +12,10 @@ import { triggerPushNotification, sendInAppNotification } from '../lib/notificat
 import { SAMPLE_PROGRAMS, WEEKLY_PROGRAMS, WORKOUT_TEMPLATES } from '../constants/workoutTemplates';
 import { NUTRITION_TEMPLATES } from '../constants/nutritionTemplates';
 import { NutritionPlan, NutritionTemplate } from '../types';
-import { Plus, Users, Calendar, CheckCircle, ExternalLink, ChevronRight, Search, Activity, Clock, MessageSquare, Trash2, Edit2, ChevronDown, ChevronUp, Save, Download, Layout, Copy, ChevronLeft, Play, Sparkles, Loader2, Droplets, Footprints, Flame, Scale, LayoutDashboard, X, Bell, Send, BookOpen, Layers, Upload, Youtube, Utensils, Shield, Zap, ArrowRight, Check, Target, RefreshCcw, Circle, Settings, Camera, TrendingUp, Calculator, Dumbbell, FileSearch, FileType, FileText } from 'lucide-react';
+import { Plus, Users, Calendar, CheckCircle, ExternalLink, ChevronRight, Search, Activity, Clock, MessageSquare, Trash2, Edit2, ChevronDown, ChevronUp, Save, Download, Layout, Copy, ChevronLeft, Play, Sparkles, Loader2, Droplets, Footprints, Flame, Scale, LayoutDashboard, X, Bell, Send, BookOpen, Layers, Upload, Youtube, Utensils, Shield, Zap, ArrowRight, Check, Target, RefreshCcw, Circle, Settings, Camera, TrendingUp, Calculator, Dumbbell, FileSearch, FileType, FileText, Mic, Volume2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, playNotificationSound, getAvatarUrl } from '../lib/utils';
+import { VoiceNoteRecorder } from './VoiceNoteRecorder';
 import Chat from './Chat';
 import { GoogleSheetsSyncWidget } from './GoogleSheetsSyncWidget';
 import { AdminKPICommandBar } from './AdminKPICommandBar';
@@ -4001,6 +4002,14 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
                                   />
                                 </div>
                               )}
+
+                              {/* Voice Instruction Recording/Playback */}
+                              <div className="mt-2">
+                                <VoiceNoteRecorder
+                                  voiceNote={ex.voiceNote}
+                                  onSave={(base64) => updateDraftExercise(activeEditingDay, exIdx, 'voiceNote', base64)}
+                                />
+                              </div>
                             </div>
                           </div>
                         ))}
@@ -7095,8 +7104,6 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
   const [templateCategory, setTemplateCategory] = useState('General');
   const [templateDescription, setTemplateDescription] = useState('');
   const [filterCategory, setFilterCategory] = useState('All');
-  const [searchingIndex, setSearchingIndex] = useState<number | null>(null);
-  const [videoResults, setVideoResults] = useState<{title: string, url: string}[]>([]);
   const [workoutNotes, setWorkoutNotes] = useState(initialWorkout?.notes || '');
   const [globalSearchQuery, setGlobalSearchQuery] = useState('');
   const [globalSearchResults, setGlobalSearchResults] = useState<{title: string, url: string}[]>([]);
@@ -7449,31 +7456,18 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
     setExercises(newExercises);
   };
 
-  const handleSearchVideos = async (index: number | null, name: string) => {
+  const handleSearchVideos = async (name: string) => {
     if (!name.trim()) return;
-    if (index !== null) {
-      setSearchingIndex(index);
-      setVideoResults([]);
-    } else {
-      setIsGlobalSearching(true);
-      setGlobalSearchResults([]);
-    }
+    setIsGlobalSearching(true);
+    setGlobalSearchResults([]);
     
     try {
       const results = await searchExerciseVideos(name);
-      if (index !== null) {
-        setVideoResults(results);
-      } else {
-        setGlobalSearchResults(results);
-      }
+      setGlobalSearchResults(results);
     } catch (error) {
       console.error('Error searching videos:', error);
     } finally {
-      if (index !== null) {
-        setSearchingIndex(null);
-      } else {
-        setIsGlobalSearching(false);
-      }
+      setIsGlobalSearching(false);
     }
   };
 
@@ -8146,6 +8140,14 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
                             </div>
                           </div>
 
+                          {/* Voice Instruction Recording/Playback */}
+                          <div className="mt-4">
+                            <VoiceNoteRecorder
+                              voiceNote={ex.voiceNote}
+                              onSave={(base64) => updateExercise(idx, 'voiceNote', base64)}
+                            />
+                          </div>
+
                           {ex.youtubeLink && getYouTubeId(ex.youtubeLink) && (
                             <div 
                               onClick={() => setActiveVideo({ url: ex.youtubeLink!, title: ex.name })}
@@ -8225,7 +8227,7 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
                   type="text" 
                   value={globalSearchQuery}
                   onChange={(e) => setGlobalSearchQuery(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSearchVideos(null, globalSearchQuery)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSearchVideos(globalSearchQuery)}
                   placeholder="Scan YouTube for elite demonstrations..." 
                   className="w-full bg-zinc-950 border border-white/5 rounded-[24px] pl-16 pr-24 py-5 text-sm text-zinc-300 outline-none focus:border-orange-500/50 shadow-2xl transition-all"
                 />
@@ -8239,7 +8241,7 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
                     </button>
                   )}
                   <button 
-                    onClick={() => handleSearchVideos(null, globalSearchQuery)}
+                    onClick={() => handleSearchVideos(globalSearchQuery)}
                     disabled={!globalSearchQuery || isGlobalSearching}
                     className="p-3 bg-orange-500 text-white rounded-xl shadow-lg shadow-orange-500/20 hover:bg-orange-600 transition-all disabled:opacity-50"
                   >

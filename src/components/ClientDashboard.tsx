@@ -71,11 +71,14 @@ import {
   Bell,
   AlertTriangle,
   RefreshCw,
-  Eye
+  Eye,
+  Mic,
+  Volume2
 } from 'lucide-react';
 import { requestNotificationPermission, onForegroundMessage } from '../lib/notifications';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, playNotificationSound, getAvatarUrl } from '../lib/utils';
+import { VoiceNoteRecorder } from './VoiceNoteRecorder';
 import Chat from './Chat';
 import { HeroMomentumBanner } from './HeroMomentumBanner';
 import { generateMotivationalMessage, analyzeMealImage, analyzeMealText, analyzeDailyNutrition, getMacrosForItemsWithQuantities } from '../lib/gemini';
@@ -4146,6 +4149,17 @@ export default function ClientDashboard({ user, profile, onLogout }: ClientDashb
                                 />
                               </div>
 
+                              <div>
+                                <VoiceNoteRecorder
+                                  voiceNote={ex.voiceNote}
+                                  onSave={(base64) => {
+                                    const updated = [...editableExercises];
+                                    updated[idx].voiceNote = base64;
+                                    setEditableExercises(updated);
+                                  }}
+                                />
+                              </div>
+
                               <div className="space-y-1.5">
                                 <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">YouTube Video URL</label>
                                 <input
@@ -5164,6 +5178,15 @@ function WorkoutCard({
                       <div className="flex gap-2 items-start bg-zinc-950/50 p-3 rounded-xl border border-zinc-800/50 text-sm text-zinc-400 mb-4">
                         <MessageSquare className="w-4 h-4 mt-0.5 flex-shrink-0 text-orange-500/50" />
                         <p>{ex.coachNote}</p>
+                      </div>
+                    )}
+
+                    {ex.voiceNote && (
+                      <div className="mb-4">
+                        <VoiceNoteRecorder
+                          voiceNote={ex.voiceNote}
+                          isReadOnly={true}
+                        />
                       </div>
                     )}
 
