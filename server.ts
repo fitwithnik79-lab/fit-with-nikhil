@@ -44,16 +44,16 @@ const originalGenerateContent = ai.models.generateContent.bind(ai.models);
 let preferredModel = "gemini-3.5-flash";
 
 ai.models.generateContent = async function (params: any): Promise<any> {
-  const modelsToTry = ["gemini-3.5-flash"];
+  const modelsToTry = ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3.1-pro-preview"];
   const initialModel = params.model || preferredModel;
   const modelQueue = [initialModel, ...modelsToTry.filter(m => m !== initialModel)];
 
   let lastError: any;
   for (const model of modelQueue) {
-    // Retry up to 2 times per model for 503, rate limiting, or temporary demand spikes
-    for (let attempt = 1; attempt <= 2; attempt++) {
+    // Retry up to 3 times per model for 503, rate limiting, or temporary demand spikes
+    for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        console.log(`[Gemini Interceptor] Routing request to: ${model} (Attempt ${attempt}/2)`);
+        console.log(`[Gemini Interceptor] Routing request to: ${model} (Attempt ${attempt}/3)`);
         const adjustedParams = { ...params, model };
         const response = await originalGenerateContent(adjustedParams);
         console.log(`[Gemini Interceptor] Successful response from model: ${model}`);
@@ -63,16 +63,16 @@ ai.models.generateContent = async function (params: any): Promise<any> {
         lastError = err;
         const errMsg = err.message || JSON.stringify(err);
         const sanitizedDetails = sanitizeLogText(errMsg.substring(0, 200));
-        console.log(`[Gemini Interceptor] Transition status: attempt ${attempt}/2 was not completed on ${model}. Details: ${sanitizedDetails}`);
+        console.log(`[Gemini Interceptor] Transition status: attempt ${attempt}/3 was not completed on ${model}. Details: ${sanitizedDetails}`);
         
-        // If it's a 404 (Unsupported/Not found model), skip retries for this model and try the next fallback right away
-        if (errMsg.includes("NOT_FOUND") || errMsg.includes("404") || errMsg.includes("not found")) {
-          console.log(`[Gemini Interceptor] Model ${model} is not supported on this endpoint. Skipping retries...`);
+        // If it's a 404 (Unsupported/Not found model) or 403 (e.g. Permission Denied if no paid key), skip retries for this model and try the next fallback right away
+        if (errMsg.includes("NOT_FOUND") || errMsg.includes("404") || errMsg.includes("not found") || errMsg.includes("PERMISSION_DENIED") || errMsg.includes("403")) {
+          console.log(`[Gemini Interceptor] Model ${model} is not supported or accessible. Skipping retries...`);
           break;
         }
 
-        if (attempt < 2) {
-          const sleepMs = 500; // Shorter sleep for fast fallback switching
+        if (attempt < 3) {
+          const sleepMs = attempt * 800; // Progressive delay: 800ms, 1600ms
           console.log(`[Gemini Interceptor] Delaying for ${sleepMs}ms before re-routing with ${model}...`);
           await new Promise(resolve => setTimeout(resolve, sleepMs));
         }
@@ -236,7 +236,7 @@ async function startServer() {
     }
   });
 
-  async function fetchWithRetry<T>(fn: () => Promise<T>, retries = 1, delayMs = 1000): Promise<T> {
+  async function fetchWithRetry<T>(fn: () => Promise<T>, retries = 3, delayMs = 1000): Promise<T> {
     let lastError: any;
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {

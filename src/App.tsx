@@ -116,30 +116,26 @@ export default function App() {
   const handleLogin = async () => {
     setSigningIn(true);
     const provider = new GoogleAuthProvider();
-    
-    // Check if the user is on a mobile device or tablet to prefer redirect over popup
-    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    
-    if (isMobile) {
-      try {
-        await signInWithRedirect(auth, provider);
-      } catch (error) {
-        console.error('Mobile redirect login error:', error);
-        setSigningIn(false);
-      }
-      return;
-    }
+    provider.setCustomParameters({
+      prompt: 'select_account'
+    });
 
     try {
+      // Try signInWithPopup first as it works reliably across custom domains (e.g. Vercel)
+      // and avoids 3rd-party cookie blocking issues on mobile Safari/Chrome/Webviews.
       await signInWithPopup(auth, provider);
     } catch (error: any) {
-      console.warn('Popup login blocked or failed. Attempting fallback redirect...', error);
-      // Fallback to redirect on popup failure (e.g. popup blocker active)
-      if (error.code === 'auth/popup-blocked' || error.code === 'auth/popup-closed-by-user' || error.code === 'auth/cancelled-popup-request') {
+      console.warn('Popup login failed or was blocked. Attempting fallback redirect...', error);
+      if (error.code === 'auth/unauthorized-domain') {
+        alert('This domain is not authorized in Firebase. Please add your domain (e.g., fit-with-nikhil.vercel.app) to Firebase Console -> Authentication -> Settings -> Authorized Domains.');
+      } else {
         try {
           await signInWithRedirect(auth, provider);
-        } catch (redirectError) {
+        } catch (redirectError: any) {
           console.error('Fallback redirect login error:', redirectError);
+          if (redirectError?.code === 'auth/unauthorized-domain') {
+            alert('This domain is not authorized in Firebase. Please add your domain (e.g., fit-with-nikhil.vercel.app) to Firebase Console -> Authentication -> Settings -> Authorized Domains.');
+          }
         }
       }
     } finally {
