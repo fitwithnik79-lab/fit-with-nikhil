@@ -28,6 +28,7 @@ export interface UserProfile {
   streak?: number;
   badges?: Badge[];
   status?: 'active' | 'inactive';
+  inviteToken?: string;
   createdAt?: any;
   stepGoal?: number;
   googleFitTokens?: {
@@ -113,6 +114,23 @@ export interface WorkoutTemplate {
   notes?: string;
   exercises: Exercise[];
   createdAt?: any;
+}
+
+export interface ExerciseLibraryItem {
+  id?: string;
+  name: string;
+  normalizedName: string;
+  youtubeLink?: string;
+  sets?: number;
+  reps?: string;
+  weight?: string;
+  rest?: string;
+  coachNote?: string;
+  block?: string;
+  usageCount?: number;
+  source?: string;
+  createdAt?: any;
+  updatedAt?: any;
 }
 
 export interface ProgramTemplate {

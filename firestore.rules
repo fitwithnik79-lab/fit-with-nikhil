@@ -142,6 +142,14 @@ service cloud.firestore {
              data.category is string && data.category.size() <= 128;
     }
 
+    function isValidExerciseLibraryItem(data) {
+      return data.keys().hasAll(['name']) &&
+             data.name is string && data.name.size() <= 200 &&
+             (!('youtubeLink' in data) || data.youtubeLink is string) &&
+             (!('coachNote' in data) || data.coachNote is string) &&
+             (!('normalizedName' in data) || data.normalizedName is string);
+    }
+
     // ===============================================================
     // Collection Rules
     // ===============================================================
@@ -265,6 +273,13 @@ service cloud.firestore {
     match /templates/{id} {
       allow read: if isAdmin();
       allow write: if isAdmin();
+    }
+
+    match /exerciseLibrary/{exerciseId} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin() && isValidExerciseLibraryItem(incoming());
+      allow update: if isAdmin() && isValidExerciseLibraryItem(incoming());
+      allow delete: if isAdmin();
     }
 
     match /messageTemplates/{id} {

@@ -1,18 +1,20 @@
 import { useState, useEffect, useMemo } from 'react';
 import { User, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import { DynamicKineticLogo } from './DynamicKineticLogo';
-import { collection, query, where, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, getDocs, orderBy, deleteDoc, limit, increment } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, setDoc, getDocs, orderBy, deleteDoc, limit, increment } from 'firebase/firestore';
 import { db, storage, auth } from '../lib/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { UserProfile, Workout, Exercise, Feedback, WorkoutTemplate, BodyMetrics, Message, Habit, HabitLog, Goal, MessageTemplate, ClientType, WeeklyCheckIn } from '../types';
+import { UserProfile, Workout, Exercise, Feedback, WorkoutTemplate, BodyMetrics, Message, Habit, HabitLog, Goal, MessageTemplate, ClientType, WeeklyCheckIn, ExerciseLibraryItem } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { searchExerciseVideos, parseWorkoutFile, analyzeNutritionFile } from '../lib/gemini';
 import { getFileContentAsText } from '../lib/fileParser';
+import { extractAllVaultExercises, enrichExercisesWithVault, enrichProgramWithVault, findVaultExerciseMatch, isDirectVideoLink, saveExercisesToGlobalLibrary, updateLibraryExerciseLink, deleteExerciseFromGlobalLibrary, normalizeExerciseName, sanitizeExerciseDocId, VaultExerciseItem } from '../lib/vaultExerciseHelper';
+import { ExerciseAutocompleteInput } from './ExerciseAutocompleteInput';
 import { triggerPushNotification, sendInAppNotification } from '../lib/notifications';
 import { SAMPLE_PROGRAMS, WEEKLY_PROGRAMS, WORKOUT_TEMPLATES } from '../constants/workoutTemplates';
 import { NUTRITION_TEMPLATES } from '../constants/nutritionTemplates';
 import { NutritionPlan, NutritionTemplate } from '../types';
-import { Plus, Users, Calendar, CheckCircle, ExternalLink, ChevronRight, Search, Activity, Clock, MessageSquare, Trash2, Edit2, ChevronDown, ChevronUp, Save, Download, Layout, Copy, ChevronLeft, Play, Sparkles, Loader2, Droplets, Footprints, Flame, Scale, LayoutDashboard, X, Bell, Send, BookOpen, Layers, Upload, Youtube, Utensils, Shield, Zap, ArrowRight, Check, Target, RefreshCcw, Circle, Settings, Camera, TrendingUp, Calculator, Dumbbell, FileSearch, FileType, FileText, Mic, Volume2 } from 'lucide-react';
+import { Plus, Users, Calendar, CheckCircle, ExternalLink, ChevronRight, Search, Activity, Clock, MessageSquare, Trash2, Edit2, ChevronDown, ChevronUp, Save, Download, Layout, Copy, ChevronLeft, Play, Sparkles, Loader2, Droplets, Footprints, Flame, Scale, LayoutDashboard, X, Bell, Send, BookOpen, Layers, Upload, Youtube, Utensils, Shield, Zap, ArrowRight, Check, Target, RefreshCcw, Circle, Settings, Camera, TrendingUp, Calculator, Dumbbell, FileSearch, FileType, FileText, Mic, Volume2, UserPlus, Mail, Link, Link as LinkIcon, Key, Share2, MessageCircle, Video, Film, Wand2, PlaySquare, CheckCircle2, HelpCircle, FileSpreadsheet } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, playNotificationSound, getAvatarUrl } from '../lib/utils';
 import { VoiceNoteRecorder } from './VoiceNoteRecorder';
@@ -92,6 +94,19 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
   const [clientStatusTab, setClientStatusTab] = useState<'active' | 'inactive' | 'all'>('active');
   const [isSeeding, setIsSeeding] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+
+  // Client Invite & Credentials management state
+  const [inviteClientModal, setInviteClientModal] = useState<UserProfile | null>(null);
+  const [showAddClientModal, setShowAddClientModal] = useState(false);
+  const [newClientForm, setNewClientForm] = useState({
+    displayName: '',
+    email: '',
+    clientType: 'fitness' as ClientType,
+    programGoals: ''
+  });
+  const [editingClientEmail, setEditingClientEmail] = useState('');
+  const [isSavingClientCreds, setIsSavingClientCreds] = useState(false);
+  const [copiedInviteText, setCopiedInviteText] = useState(false);
 
   const handleSeedRoster = async () => {
     if (!(import.meta as any).env?.DEV) {
@@ -1176,6 +1191,17 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
             className="grid grid-cols-1 md:grid-cols-4 gap-6"
           >
             <div className="md:col-span-1 space-y-4">
+              <button
+                onClick={() => {
+                  setNewClientForm({ displayName: '', email: '', clientType: 'fitness', programGoals: '' });
+                  setShowAddClientModal(true);
+                }}
+                className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-lg shadow-orange-500/20 active:scale-98"
+              >
+                <UserPlus className="w-4 h-4" />
+                + Add & Invite Client
+              </button>
+
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
                 <input
@@ -1325,6 +1351,18 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
                           View Live Dashboard
                         </button>
                       )}
+
+                      <button
+                        onClick={() => {
+                          setEditingClientEmail(selectedClient.email || '');
+                          setInviteClientModal(selectedClient);
+                        }}
+                        className="flex items-center gap-2 px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-xl shadow-lg shadow-orange-500/20 transition-all text-xs font-black uppercase tracking-wider active:scale-95"
+                        title="Send invite link or manage login credentials for this client"
+                      >
+                        <Mail className="w-4 h-4" />
+                        Invite / Access Link
+                      </button>
                       <div className="flex bg-zinc-950 p-1 rounded-xl border border-zinc-800">
                       <button
                         onClick={() => setClientViewTab('program')}
@@ -1872,6 +1910,378 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
           />
         )}
       </AnimatePresence>
+
+      {/* Client Invite & Credentials Manager Modal */}
+      <AnimatePresence>
+        {inviteClientModal && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setInviteClientModal(null)}
+              className="absolute inset-0 bg-black/80 backdrop-blur-md"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="relative w-full max-w-xl bg-zinc-900 border border-zinc-800 rounded-3xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col"
+            >
+              {/* Header */}
+              <div className="p-6 border-b border-zinc-800 flex items-center justify-between bg-zinc-950/60">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-orange-500 to-amber-500 flex items-center justify-center font-bold text-white text-xl shadow-lg shadow-orange-500/20">
+                    {inviteClientModal.displayName?.[0] || 'C'}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-lg font-bold text-white">{inviteClientModal.displayName}</h3>
+                      <span className="text-[10px] font-black uppercase tracking-wider bg-orange-500/10 text-orange-400 border border-orange-500/20 px-2 py-0.5 rounded-full">
+                        Client Access
+                      </span>
+                    </div>
+                    <p className="text-xs text-zinc-400 font-mono">{inviteClientModal.email}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setInviteClientModal(null)}
+                  className="w-9 h-9 rounded-full bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white flex items-center justify-center transition-all"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="p-6 space-y-6 overflow-y-auto custom-scrollbar text-sm">
+                
+                {/* 1. Direct App Invite Link */}
+                <div className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-zinc-300 uppercase tracking-wider flex items-center gap-2">
+                      <Link className="w-4 h-4 text-orange-400" />
+                      Direct Client Sign-In Link
+                    </label>
+                    <span className="text-[10px] text-zinc-500 font-medium">Auto-Links Account Data</span>
+                  </div>
+                  
+                  {(() => {
+                    const baseUrl = window.location.origin;
+                    const inviteToken = inviteClientModal.inviteToken || inviteClientModal.uid;
+                    const inviteUrl = `${baseUrl}/?invite=${inviteToken}&email=${encodeURIComponent(inviteClientModal.email || '')}`;
+                    
+                    const mailSubject = encodeURIComponent(`Fit with Nik Coaching - App Login Access & Link`);
+                    const mailBody = encodeURIComponent(
+                      `Hi ${inviteClientModal.displayName || 'Athlete'},\n\nHere is your direct access link to log into your Fit with Nik coaching app:\n\n${inviteUrl}\n\nHow to log in:\n1. Tap the link above or open ${baseUrl}\n2. Tap "Sign In with Google"\n3. Select your email (${inviteClientModal.email})\n\nAll your custom workout programs, nutrition targets, and progress logs will load automatically!\n\nBest regards,\nCoach Nik`
+                    );
+                    const whatsappMsg = encodeURIComponent(
+                      `Hi ${inviteClientModal.displayName || 'Athlete'}! 💪 Here is your direct access link to your Fit with Nik coaching app:\n\n${inviteUrl}\n\nClick the link and tap "Sign In with Google" using your email (${inviteClientModal.email}) to seamlessly access your workouts & nutrition plans!`
+                    );
+
+                    return (
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2 bg-zinc-900 p-2.5 rounded-xl border border-zinc-800">
+                          <input
+                            type="text"
+                            readOnly
+                            value={inviteUrl}
+                            className="bg-transparent border-none text-xs font-mono text-orange-400 focus:outline-none flex-1 truncate"
+                          />
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(inviteUrl);
+                              showToast("Invite link copied to clipboard!", "success");
+                            }}
+                            className="flex items-center gap-1.5 bg-orange-500 hover:bg-orange-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-md shadow-orange-500/20 active:scale-95"
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                            Copy Link
+                          </button>
+                        </div>
+
+                        {/* Quick Sharing Buttons */}
+                        <div className="grid grid-cols-2 gap-2">
+                          <a
+                            href={`mailto:${inviteClientModal.email}?subject=${mailSubject}&body=${mailBody}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center justify-center gap-2 py-2.5 px-3 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/80 rounded-xl text-xs font-bold text-zinc-200 transition-all hover:text-white"
+                          >
+                            <Mail className="w-4 h-4 text-orange-400" />
+                            Send Email Invite
+                          </a>
+                          <a
+                            href={`https://wa.me/?text=${whatsappMsg}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center justify-center gap-2 py-2.5 px-3 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 rounded-xl text-xs font-bold text-emerald-400 transition-all"
+                          >
+                            <MessageCircle className="w-4 h-4 text-emerald-400" />
+                            Send via WhatsApp
+                          </a>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                {/* 2. Re-Link Account Credentials / Change Email */}
+                <div className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-zinc-300 uppercase tracking-wider flex items-center gap-2">
+                      <Key className="w-4 h-4 text-amber-400" />
+                      Re-Link Client Email & Credentials
+                    </label>
+                    <span className="text-[10px] text-amber-500/90 font-medium">Use if client changed email</span>
+                  </div>
+                  <p className="text-xs text-zinc-400 leading-relaxed">
+                    If your client lost access to their previous email or wants to log in with a new Google account, update their email address below. Their existing workout plans, habit history, and progress records will stay linked to them.
+                  </p>
+                  
+                  <div className="space-y-3 pt-1">
+                    <div>
+                      <label className="block text-[11px] text-zinc-400 font-bold mb-1 uppercase tracking-wider">
+                        Registered Login Email
+                      </label>
+                      <input
+                        type="email"
+                        value={editingClientEmail}
+                        onChange={(e) => setEditingClientEmail(e.target.value)}
+                        placeholder="client@gmail.com"
+                        className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-orange-500/50"
+                      />
+                    </div>
+
+                    <div className="flex gap-2">
+                      <button
+                        onClick={async () => {
+                          if (!editingClientEmail.trim()) {
+                            showToast("Email address cannot be empty", "error");
+                            return;
+                          }
+                          setIsSavingClientCreds(true);
+                          try {
+                            const newInviteToken = 'INV-' + Math.random().toString(36).substring(2, 8).toUpperCase();
+                            await updateDoc(doc(db, 'users', inviteClientModal.uid), {
+                              email: editingClientEmail.trim().toLowerCase(),
+                              inviteToken: newInviteToken,
+                              updatedAt: serverTimestamp()
+                            });
+                            
+                            const updated = {
+                              ...inviteClientModal,
+                              email: editingClientEmail.trim().toLowerCase(),
+                              inviteToken: newInviteToken
+                            };
+                            setInviteClientModal(updated);
+                            setSelectedClient(prev => prev && prev.uid === inviteClientModal.uid ? updated : prev);
+                            showToast("Client credentials updated and re-linked successfully!", "success");
+                          } catch (e) {
+                            showToast("Failed to update client email credentials", "error");
+                          } finally {
+                            setIsSavingClientCreds(false);
+                          }
+                        }}
+                        disabled={isSavingClientCreds}
+                        className="flex-1 flex items-center justify-center gap-2 bg-zinc-800 hover:bg-zinc-750 text-white font-bold py-2.5 px-4 rounded-xl border border-zinc-700 text-xs transition-all disabled:opacity-50"
+                      >
+                        {isSavingClientCreds ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4 text-orange-400" />}
+                        Save Credentials & Re-Link
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. Ready Instructions snippet for Client */}
+                <div className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-zinc-300 uppercase tracking-wider flex items-center gap-1.5">
+                      <Share2 className="w-4 h-4 text-orange-400" />
+                      Client Login Guide Snippet
+                    </span>
+                    <button
+                      onClick={() => {
+                        const baseUrl = window.location.origin;
+                        const text = `Hi ${inviteClientModal.displayName || 'Athlete'},\n\nHere is your step-by-step guide to access the Fit with Nik app smoothly:\n\n1. Open link: ${baseUrl}/?invite=${inviteClientModal.inviteToken || inviteClientModal.uid}\n2. Click "Sign In with Google"\n3. Choose your account: ${inviteClientModal.email}\n\nIf you face any issue, let Coach Nik know! 💪`;
+                        navigator.clipboard.writeText(text);
+                        showToast("Login guide snippet copied!", "success");
+                      }}
+                      className="text-xs text-orange-400 hover:text-orange-300 font-bold flex items-center gap-1"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      Copy Instructions
+                    </button>
+                  </div>
+                  <div className="bg-zinc-900/80 p-3 rounded-xl border border-zinc-800/80 text-xs font-mono text-zinc-400 whitespace-pre-wrap leading-relaxed select-all">
+                    {`Hi ${inviteClientModal.displayName || 'Athlete'},\n\nHere is your direct login link to access your coaching app:\n${window.location.origin}/?invite=${inviteClientModal.inviteToken || inviteClientModal.uid}\n\n1. Tap the link.\n2. Tap "Sign In with Google".\n3. Select your email (${inviteClientModal.email}).\nYour workout routines and nutrition plans will be ready!`}
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Footer */}
+              <div className="p-4 border-t border-zinc-800 bg-zinc-950/60 flex justify-end">
+                <button
+                  onClick={() => setInviteClientModal(null)}
+                  className="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl text-xs font-bold transition-all"
+                >
+                  Done
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Add New Client Modal */}
+      <AnimatePresence>
+        {showAddClientModal && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowAddClientModal(false)}
+              className="absolute inset-0 bg-black/80 backdrop-blur-md"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="relative w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl shadow-2xl p-6 space-y-6"
+            >
+              <div className="flex items-center justify-between border-b border-zinc-800 pb-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-orange-500/10 border border-orange-500/20 text-orange-400 flex items-center justify-center font-bold">
+                    <UserPlus className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-white">Add & Invite New Client</h3>
+                    <p className="text-xs text-zinc-400">Register a client profile & generate login link</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowAddClientModal(false)}
+                  className="w-8 h-8 rounded-full bg-zinc-800 hover:bg-zinc-700 text-zinc-400 flex items-center justify-center transition-all"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  if (!newClientForm.displayName.trim() || !newClientForm.email.trim()) {
+                    showToast("Please provide both full name and email address", "error");
+                    return;
+                  }
+                  
+                  try {
+                    const tempUid = 'client_' + Math.random().toString(36).substring(2, 10);
+                    const inviteToken = 'INV-' + Math.random().toString(36).substring(2, 8).toUpperCase();
+                    
+                    const newProfile: UserProfile = {
+                      uid: tempUid,
+                      email: newClientForm.email.trim().toLowerCase(),
+                      displayName: newClientForm.displayName.trim(),
+                      role: 'client',
+                      clientType: newClientForm.clientType,
+                      programGoals: newClientForm.programGoals.trim() || 'Custom Fitness Coaching',
+                      status: 'active',
+                      inviteToken: inviteToken,
+                      createdAt: serverTimestamp(),
+                      onboardingComplete: false
+                    };
+
+                    await setDoc(doc(db, 'users', tempUid), newProfile);
+                    setShowAddClientModal(false);
+                    setSelectedClient(newProfile);
+                    setEditingClientEmail(newProfile.email);
+                    setInviteClientModal(newProfile);
+                    showToast(`Client ${newProfile.displayName} registered successfully!`, "success");
+                  } catch (err) {
+                    showToast("Failed to create new client profile", "error");
+                  }
+                }}
+                className="space-y-4"
+              >
+                <div>
+                  <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-1">
+                    Client Full Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Ankit Ghag"
+                    value={newClientForm.displayName}
+                    onChange={(e) => setNewClientForm(prev => ({ ...prev, displayName: e.target.value }))}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-orange-500/50"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-1">
+                    Client Email Address *
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    placeholder="e.g. client@gmail.com"
+                    value={newClientForm.email}
+                    onChange={(e) => setNewClientForm(prev => ({ ...prev, email: e.target.value }))}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-orange-500/50"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-1">
+                    Coaching Focus / Program Category
+                  </label>
+                  <select
+                    value={newClientForm.clientType}
+                    onChange={(e) => setNewClientForm(prev => ({ ...prev, clientType: e.target.value as ClientType }))}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-orange-500/50"
+                  >
+                    <option value="fitness">Fitness & Body Transformation</option>
+                    <option value="knee_injury">Knee Injury Rehab</option>
+                    <option value="back_injury">Back Injury Rehab</option>
+                    <option value="shoulder_injury">Shoulder Injury Rehab</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-1">
+                    Program Goals & Target Notes
+                  </label>
+                  <textarea
+                    rows={2}
+                    placeholder="e.g. Hypertrophy, fat loss, ACL rehab protocol..."
+                    value={newClientForm.programGoals}
+                    onChange={(e) => setNewClientForm(prev => ({ ...prev, programGoals: e.target.value }))}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-orange-500/50"
+                  />
+                </div>
+
+                <div className="pt-2 flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddClientModal(false)}
+                    className="flex-1 py-3 px-4 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl font-bold text-xs transition-all"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 py-3 px-4 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl font-bold text-xs transition-all shadow-lg shadow-orange-500/20"
+                  >
+                    Create & Generate Link
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -2083,7 +2493,56 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
   const [customPrograms, setCustomPrograms] = useState<ProgramTemplate[]>([]);
   const [templates, setTemplates] = useState<WorkoutTemplate[]>([]);
   const [customNutrition, setCustomNutrition] = useState<NutritionTemplate[]>([]);
-  const [templateTab, setTemplateTab] = useState<'workout' | 'nutrition'>('workout');
+  const [templateTab, setTemplateTab] = useState<'workout' | 'nutrition' | 'exercises'>('workout');
+  const [exerciseSearchQuery, setExerciseSearchQuery] = useState('');
+  const [exerciseFilter, setExerciseFilter] = useState<'all' | 'has_video' | 'missing_video' | 'custom_only'>('all');
+  const [previewVideoItem, setPreviewVideoItem] = useState<VaultExerciseItem | null>(null);
+  const [editingExerciseItem, setEditingExerciseItem] = useState<VaultExerciseItem | null>(null);
+  const [editingExerciseUrl, setEditingExerciseUrl] = useState('');
+  const [isSavingExerciseUrl, setIsSavingExerciseUrl] = useState(false);
+  const [libraryExercises, setLibraryExercises] = useState<ExerciseLibraryItem[]>([]);
+
+  useEffect(() => {
+    const q = query(collection(db, 'exerciseLibrary'), orderBy('name', 'asc'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as ExerciseLibraryItem);
+      setLibraryExercises(items);
+    }, (error) => {
+      console.warn("Exercise library listener error in TemplatesView:", error);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const allVaultExercises = useMemo(() => {
+    return extractAllVaultExercises(templates, WORKOUT_TEMPLATES, WEEKLY_PROGRAMS, libraryExercises);
+  }, [templates, libraryExercises]);
+
+  const filteredVaultExercises = useMemo(() => {
+    return allVaultExercises.filter(item => {
+      if (exerciseSearchQuery.trim()) {
+        const q = exerciseSearchQuery.toLowerCase();
+        const matchesName = item.name.toLowerCase().includes(q);
+        const matchesBlock = item.block?.toLowerCase().includes(q);
+        const matchesNote = item.coachNote?.toLowerCase().includes(q);
+        const matchesSource = item.sourceName.toLowerCase().includes(q);
+        if (!matchesName && !matchesBlock && !matchesNote && !matchesSource) {
+          return false;
+        }
+      }
+
+      if (exerciseFilter === 'has_video') {
+        return isDirectVideoLink(item.youtubeLink);
+      }
+      if (exerciseFilter === 'missing_video') {
+        return !isDirectVideoLink(item.youtubeLink);
+      }
+      if (exerciseFilter === 'custom_only') {
+        return !!item.isCustom;
+      }
+      return true;
+    });
+  }, [allVaultExercises, exerciseSearchQuery, exerciseFilter]);
+
   const [isEditingTemplate, setIsEditingTemplate] = useState(false);
   const [editingTemplateName, setEditingTemplateName] = useState('');
   const [editingTemplateCategory, setEditingTemplateCategory] = useState('');
@@ -2477,13 +2936,15 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
       days.forEach((day, i) => {
         initialDates[i] = format(addDays(new Date(), i), 'yyyy-MM-dd');
         const template = WORKOUT_TEMPLATES.find(t => t.id === day.workoutTemplateId);
-        initialExercises[i] = template ? JSON.parse(JSON.stringify(template.exercises)) : (day.exercises || []);
+        const baseExs = template ? JSON.parse(JSON.stringify(template.exercises)) : (day.exercises || []);
+        const { enriched } = enrichExercisesWithVault(baseExs, allVaultExercises);
+        initialExercises[i] = enriched;
       });
       setProgramDates(initialDates);
       setProgramWorkoutsDraft(initialExercises);
       setActiveEditingDay(null);
     }
-  }, [selectedProgram]);
+  }, [selectedProgram, allVaultExercises]);
 
   const moveDay = (index: number, direction: 'up' | 'down') => {
     if (!selectedProgram || !selectedProgram.weeks || selectedProgram.weeks.length === 0) return;
@@ -2536,17 +2997,44 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
   const updateDraftExercise = (dayIdx: number, exIdx: number, field: keyof Exercise, value: any) => {
     setProgramWorkoutsDraft(prev => {
       const newDraft = { ...prev };
-      const newDayExercises = [...newDraft[dayIdx]];
-      newDayExercises[exIdx] = { ...newDayExercises[exIdx], [field]: value };
+      const newDayExercises = [...(newDraft[dayIdx] || [])];
+      const currentEx = newDayExercises[exIdx] || { name: '', youtubeLink: '', sets: 3, reps: '12', weight: '', rest: '60s', coachNote: '' };
+      
+      newDayExercises[exIdx] = { ...currentEx, [field]: value };
+
+      if (field === 'name' && typeof value === 'string' && value.trim().length >= 3) {
+        const match = findVaultExerciseMatch(value, allVaultExercises);
+        if (match && isDirectVideoLink(match.youtubeLink)) {
+          if (!isDirectVideoLink(currentEx.youtubeLink)) {
+            newDayExercises[exIdx].youtubeLink = match.youtubeLink;
+            if (!newDayExercises[exIdx].coachNote && match.coachNote) {
+              newDayExercises[exIdx].coachNote = match.coachNote;
+            }
+            if (match.block) newDayExercises[exIdx].block = match.block;
+          }
+        }
+      }
+
       newDraft[dayIdx] = newDayExercises;
       return newDraft;
     });
   };
 
+  const handleAutoLinkDraftDay = (dayIdx: number) => {
+    const dayExercises = programWorkoutsDraft[dayIdx] || [];
+    const { enriched, matchCount } = enrichExercisesWithVault(dayExercises, allVaultExercises);
+    setProgramWorkoutsDraft(prev => ({ ...prev, [dayIdx]: enriched }));
+    if (matchCount > 0) {
+      showToast(`Linked ${matchCount} exercise${matchCount === 1 ? '' : 's'} with video demos from Vault!`, 'success');
+    } else {
+      showToast('All exercises linked or no matching Vault video links found.', 'success');
+    }
+  };
+
   const addDraftExercise = (dayIdx: number) => {
     setProgramWorkoutsDraft(prev => {
       const newDraft = { ...prev };
-      newDraft[dayIdx] = [...newDraft[dayIdx], { name: '', youtubeLink: '', sets: 3, reps: '12', weight: '', rest: '60s', coachNote: '' }];
+      newDraft[dayIdx] = [...(newDraft[dayIdx] || []), { name: '', youtubeLink: '', sets: 3, reps: '12', weight: '', rest: '60s', coachNote: '' }];
       return newDraft;
     });
   };
@@ -2554,7 +3042,7 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
   const removeDraftExercise = (dayIdx: number, exIdx: number) => {
     setProgramWorkoutsDraft(prev => {
       const newDraft = { ...prev };
-      newDraft[dayIdx] = newDraft[dayIdx].filter((_, i) => i !== exIdx);
+      newDraft[dayIdx] = (newDraft[dayIdx] || []).filter((_, i) => i !== exIdx);
       return newDraft;
     });
   };
@@ -2589,15 +3077,90 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
     }
   };
 
+  const handleSaveCustomExerciseUrl = async () => {
+    if (!editingExerciseItem) return;
+    setIsSavingExerciseUrl(true);
+    try {
+      const targetName = editingExerciseItem.name.trim().toLowerCase();
+      const newUrl = editingExerciseUrl.trim();
+
+      // Persist directly into the Global Exercise Library in Firestore
+      await updateLibraryExerciseLink(editingExerciseItem.name, newUrl, editingExerciseItem.coachNote);
+
+      // Find any custom template in Firestore that has this exercise and update it
+      let updatedCount = 0;
+      for (const t of templates) {
+        if (!t.id) continue;
+        let modified = false;
+        const updatedExercises = (t.exercises || []).map(ex => {
+          if (ex.name && ex.name.trim().toLowerCase() === targetName) {
+            modified = true;
+            return { ...ex, youtubeLink: newUrl };
+          }
+          return ex;
+        });
+
+        if (modified) {
+          await updateDoc(doc(db, 'templates', t.id), {
+            exercises: updatedExercises,
+            updatedAt: serverTimestamp()
+          });
+          updatedCount++;
+        }
+      }
+
+      // Also update custom program templates if matching
+      for (const p of customPrograms) {
+        if (!p.id || !p.weeks) continue;
+        let modified = false;
+        const updatedWeeks = p.weeks.map(w => ({
+          ...w,
+          days: (w.days || []).map(d => ({
+            ...d,
+            exercises: (d.exercises || []).map(ex => {
+              if (ex.name && ex.name.trim().toLowerCase() === targetName) {
+                modified = true;
+                return { ...ex, youtubeLink: newUrl };
+              }
+              return ex;
+            })
+          }))
+        }));
+
+        if (modified) {
+          await updateDoc(doc(db, 'templates', p.id), {
+            weeks: updatedWeeks,
+            updatedAt: serverTimestamp()
+          });
+          updatedCount++;
+        }
+      }
+
+      showToast(`Updated video demo link for "${editingExerciseItem.name}" in Global Library!`, 'success');
+      setEditingExerciseItem(null);
+      setEditingExerciseUrl('');
+    } catch (error) {
+      console.error('Error saving exercise video URL:', error);
+      showToast('Failed to save exercise video URL', 'error');
+    } finally {
+      setIsSavingExerciseUrl(false);
+    }
+  };
+
   const handleAssignSingle = async () => {
     if (!selectedTemplate || !selectedClient || !assignDate) return;
     setAssigning(true);
     try {
+      const { enriched: finalExercises } = enrichExercisesWithVault(selectedTemplate.exercises || [], allVaultExercises);
+
+      // Auto sync to Global Exercise Library
+      saveExercisesToGlobalLibrary(finalExercises, selectedTemplate.name || 'Assigned Template');
+
       const workoutRef = await addDoc(collection(db, 'workouts'), {
         clientId: selectedClient.uid,
         weekNumber: 1,
         dayNumber: 1,
-        exercises: selectedTemplate.exercises,
+        exercises: finalExercises,
         scheduledDate: assignDate,
         createdAt: serverTimestamp()
       });
@@ -2638,13 +3201,18 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
       
       for (let i = 0; i < workoutsToCreate.length; i++) {
         const scheduledDate = programDates[i];
-        const exercises = programWorkoutsDraft[i] || [];
+        const rawExercises = programWorkoutsDraft[i] || [];
+        const cleanExercises = rawExercises.filter(e => e.name.trim() !== '');
+        const { enriched: finalExercises } = enrichExercisesWithVault(cleanExercises, allVaultExercises);
+
+        // Auto sync to Global Exercise Library
+        saveExercisesToGlobalLibrary(finalExercises, selectedProgram.name || 'Assigned Program');
 
         batch.push(addDoc(collection(db, 'workouts'), {
           clientId: selectedClient.uid,
           weekNumber: 1,
           dayNumber: i + 1,
-          exercises: exercises.filter(e => e.name.trim() !== ''),
+          exercises: finalExercises,
           scheduledDate: scheduledDate,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
@@ -2681,10 +3249,14 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
     try {
       const updatedWeeks = [{
         weekNumber: 1,
-        days: selectedProgram.weeks[0].days.map((day, i) => ({
-          ...day,
-          exercises: programWorkoutsDraft[i] || []
-        }))
+        days: selectedProgram.weeks[0].days.map((day, i) => {
+          const rawExercises = programWorkoutsDraft[i] || [];
+          const { enriched } = enrichExercisesWithVault(rawExercises, allVaultExercises);
+          return {
+            ...day,
+            exercises: enriched
+          };
+        })
       }];
 
       const templateData = {
@@ -2958,26 +3530,36 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
   return (
     <div className="space-y-12">
       {/* Sub-Tabs for Templates */}
-      <div className="flex gap-4 p-1 bg-zinc-900 border border-zinc-800 rounded-2xl w-fit mx-auto lg:mx-0">
+      <div className="flex flex-wrap gap-2 p-1.5 bg-zinc-900 border border-zinc-800 rounded-2xl w-fit mx-auto lg:mx-0">
         <button
           onClick={() => setTemplateTab('workout')}
           className={cn(
-            "px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2",
+            "px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2",
             templateTab === 'workout' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-zinc-500 hover:text-white"
           )}
         >
-          <Zap className="w-3 h-3" />
+          <Zap className="w-3.5 h-3.5" />
           Workout Programs
         </button>
         <button
           onClick={() => setTemplateTab('nutrition')}
           className={cn(
-            "px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2",
+            "px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2",
             templateTab === 'nutrition' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-zinc-500 hover:text-white"
           )}
         >
-          <Utensils className="w-3 h-3" />
+          <Utensils className="w-3.5 h-3.5" />
           Nutrition Protocols
+        </button>
+        <button
+          onClick={() => setTemplateTab('exercises')}
+          className={cn(
+            "px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2",
+            templateTab === 'exercises' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-zinc-500 hover:text-white"
+          )}
+        >
+          <PlaySquare className="w-3.5 h-3.5" />
+          Master Video Directory ({allVaultExercises.length})
         </button>
       </div>
 
@@ -3298,7 +3880,7 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
             </div>
           </section>
         </>
-      ) : (
+      ) : templateTab === 'nutrition' ? (
         <>
           {/* Nutrition AI Upload Section */}
           <section className="bg-zinc-900 border border-zinc-800 rounded-[40px] p-10 relative overflow-hidden group">
@@ -3456,7 +4038,432 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
           </div>
         </section>
       </>
+    ) : (
+      /* Master Exercise & Video Directory Tab */
+      <div className="space-y-8">
+        {/* Banner / Overview */}
+        <div className="bg-gradient-to-br from-zinc-900 via-zinc-900/90 to-zinc-950 border border-zinc-800 rounded-[32px] p-8 md:p-10 relative overflow-hidden">
+          <div className="absolute top-0 right-0 p-8 opacity-5">
+            <PlaySquare className="w-48 h-48 text-orange-500" />
+          </div>
+          <div className="relative z-10 max-w-3xl space-y-4">
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-orange-500/10 border border-orange-500/20 text-orange-400 rounded-xl text-[10px] font-black uppercase tracking-widest">
+              <Sparkles className="w-3.5 h-3.5" />
+              Centralized Exercise Vault & Video Registry
+            </div>
+            <h3 className="text-2xl md:text-3xl font-black text-white tracking-tight">
+              Master Exercise & Video Directory
+            </h3>
+            <p className="text-zinc-400 text-sm leading-relaxed">
+              Every exercise imported from your Excel spreadsheets, custom templates, and curated programs is indexed here.
+              When you generate or assign client plans, workouts automatically inherit these exact video links and coaching cues.
+            </p>
+          </div>
+
+          {/* Quick Metrics */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-8 pt-8 border-t border-zinc-800/80">
+            <div className="bg-zinc-950/60 border border-zinc-800/60 rounded-2xl p-4">
+              <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">Total Vault Exercises</div>
+              <div className="text-2xl font-black text-white">{allVaultExercises.length}</div>
+            </div>
+            <div className="bg-zinc-950/60 border border-emerald-500/20 rounded-2xl p-4">
+              <div className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider mb-1">Direct Demo Links</div>
+              <div className="text-2xl font-black text-emerald-400">
+                {allVaultExercises.filter(e => isDirectVideoLink(e.youtubeLink)).length}
+              </div>
+            </div>
+            <div className="bg-zinc-950/60 border border-zinc-800/60 rounded-2xl p-4">
+              <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">From Your Spreadsheets</div>
+              <div className="text-2xl font-black text-orange-400">
+                {allVaultExercises.filter(e => e.isCustom).length}
+              </div>
+            </div>
+            <div className="bg-zinc-950/60 border border-zinc-800/60 rounded-2xl p-4">
+              <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">Auto-Link Engine</div>
+              <div className="text-2xl font-black text-white flex items-center gap-1.5">
+                <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                Active
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Search & Filter Controls */}
+        <div className="flex flex-col md:flex-row gap-4 items-stretch md:items-center justify-between">
+          <div className="relative flex-1 max-w-lg">
+            <Search className="w-4 h-4 text-zinc-500 absolute left-4 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              placeholder="Search exercise name, biomechanical cue, or source sheet..."
+              value={exerciseSearchQuery}
+              onChange={(e) => setExerciseSearchQuery(e.target.value)}
+              className="w-full pl-11 pr-10 py-3 bg-zinc-900 border border-zinc-800 rounded-2xl text-xs text-white placeholder:text-zinc-600 focus:border-orange-500 outline-none transition-all"
+            />
+            {exerciseSearchQuery && (
+              <button
+                onClick={() => setExerciseSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-zinc-500 hover:text-white"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          {/* Filter Chips */}
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => setExerciseFilter('all')}
+              className={cn(
+                "px-4 py-2 rounded-xl text-xs font-bold transition-all",
+                exerciseFilter === 'all'
+                  ? "bg-zinc-100 text-zinc-950"
+                  : "bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white"
+              )}
+            >
+              All ({allVaultExercises.length})
+            </button>
+            <button
+              onClick={() => setExerciseFilter('has_video')}
+              className={cn(
+                "px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5",
+                exerciseFilter === 'has_video'
+                  ? "bg-emerald-500 text-white"
+                  : "bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-emerald-400"
+              )}
+            >
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              Has Video ({allVaultExercises.filter(e => isDirectVideoLink(e.youtubeLink)).length})
+            </button>
+            <button
+              onClick={() => setExerciseFilter('missing_video')}
+              className={cn(
+                "px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5",
+                exerciseFilter === 'missing_video'
+                  ? "bg-amber-500 text-zinc-950"
+                  : "bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-amber-400"
+              )}
+            >
+              <HelpCircle className="w-3.5 h-3.5" />
+              Needs Video ({allVaultExercises.filter(e => !isDirectVideoLink(e.youtubeLink)).length})
+            </button>
+            <button
+              onClick={() => setExerciseFilter('custom_only')}
+              className={cn(
+                "px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5",
+                exerciseFilter === 'custom_only'
+                  ? "bg-orange-500 text-white"
+                  : "bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-orange-400"
+              )}
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              From Spreadsheets ({allVaultExercises.filter(e => e.isCustom).length})
+            </button>
+          </div>
+        </div>
+
+        {/* Exercises Grid */}
+        {filteredVaultExercises.length === 0 ? (
+          <div className="bg-zinc-900/50 border border-zinc-800 rounded-3xl p-16 text-center space-y-3">
+            <Search className="w-12 h-12 text-zinc-700 mx-auto" />
+            <h4 className="text-base font-bold text-white">No matching exercises found</h4>
+            <p className="text-xs text-zinc-500 max-w-sm mx-auto">
+              Try adjusting your search query or filter settings.
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+            {filteredVaultExercises.map((item, idx) => {
+              const hasDirectLink = isDirectVideoLink(item.youtubeLink);
+              const ytId = getYouTubeId(item.youtubeLink);
+
+              return (
+                <div
+                  key={`${item.id || item.name}-${idx}`}
+                  className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 flex flex-col justify-between hover:border-zinc-700 transition-all group"
+                >
+                  <div className="space-y-4">
+                    {/* Top Row: Block & Source */}
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {item.block && (
+                          <span className="px-2.5 py-1 bg-zinc-950 border border-zinc-800 text-zinc-400 rounded-lg text-[10px] font-bold">
+                            {item.block}
+                          </span>
+                        )}
+                        {item.isCustom ? (
+                          <span className="px-2.5 py-1 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-lg text-[10px] font-bold flex items-center gap-1">
+                            <FileSpreadsheet className="w-3 h-3" />
+                            {item.sourceName}
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-1 bg-zinc-950 border border-zinc-800 text-zinc-500 rounded-lg text-[10px] font-bold flex items-center gap-1">
+                            <BookOpen className="w-3 h-3" />
+                            {item.sourceName}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Video status indicator */}
+                      {hasDirectLink ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                          <CheckCircle2 className="w-3 h-3" />
+                          Demo Linked
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20">
+                          <HelpCircle className="w-3 h-3" />
+                          Search Fallback
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Exercise Name */}
+                    <div>
+                      <h4 className="text-base font-bold text-white group-hover:text-orange-400 transition-colors">
+                        {item.name}
+                      </h4>
+                      <div className="flex items-center gap-3 text-xs text-zinc-500 mt-1 font-mono">
+                        <span>{item.sets} sets</span>
+                        <span>•</span>
+                        <span>{item.reps} reps</span>
+                        {item.rest && (
+                          <>
+                            <span>•</span>
+                            <span>{item.rest} rest</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Coaching Notes / Biomechanical Cues */}
+                    {item.coachNote && (
+                      <div className="p-3 bg-zinc-950 border border-zinc-800/80 rounded-2xl">
+                        <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1 flex items-center gap-1">
+                          <Sparkles className="w-3 h-3 text-orange-400" />
+                          Coaching Cues & Notes
+                        </div>
+                        <p className="text-xs text-zinc-300 leading-relaxed line-clamp-3">
+                          {item.coachNote}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Video Link Display */}
+                    {hasDirectLink && (
+                      <div className="text-[11px] text-zinc-500 truncate font-mono bg-zinc-950/50 px-3 py-1.5 rounded-xl border border-zinc-800/50">
+                        {item.youtubeLink}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex items-center gap-2 mt-5 pt-4 border-t border-zinc-800/80">
+                    {hasDirectLink ? (
+                      <>
+                        <button
+                          onClick={() => setPreviewVideoItem(item)}
+                          className="flex-1 py-2.5 bg-orange-500 hover:bg-orange-600 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-lg shadow-orange-500/10"
+                        >
+                          <Play className="w-3.5 h-3.5 fill-current" />
+                          Watch Demo
+                        </button>
+                        <button
+                          onClick={() => {
+                            setEditingExerciseItem(item);
+                            setEditingExerciseUrl(item.youtubeLink);
+                          }}
+                          className="p-2.5 bg-zinc-950 hover:bg-zinc-800 text-zinc-400 hover:text-white border border-zinc-800 rounded-xl transition-all"
+                          title="Edit Demo Link"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => {
+                            setEditingExerciseItem(item);
+                            setEditingExerciseUrl('');
+                          }}
+                          className="flex-1 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all"
+                        >
+                          <LinkIcon className="w-3.5 h-3.5 text-orange-400" />
+                          Add Video URL
+                        </button>
+                        <button
+                          onClick={() => {
+                            openVideoSearchModal({
+                              exerciseName: item.name,
+                              currentUrl: item.youtubeLink,
+                              onSelect: (newUrl) => {
+                                setEditingExerciseItem(item);
+                                setEditingExerciseUrl(newUrl);
+                              }
+                            });
+                          }}
+                          className="p-2.5 bg-zinc-950 hover:bg-zinc-800 text-zinc-400 hover:text-orange-400 border border-zinc-800 rounded-xl transition-all"
+                          title="Search YouTube"
+                        >
+                          <Search className="w-3.5 h-3.5" />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     )}
+
+      {/* Video Preview Modal */}
+      <AnimatePresence>
+        {previewVideoItem && (
+          <div className="fixed inset-0 z-[350] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setPreviewVideoItem(null)}
+              className="absolute inset-0 bg-black/90 backdrop-blur-md"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-3xl bg-zinc-950 border border-zinc-800 rounded-[32px] shadow-2xl overflow-hidden z-10"
+            >
+              <div className="p-6 border-b border-zinc-800 flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-bold text-white">{previewVideoItem.name}</h3>
+                  <p className="text-xs text-zinc-500">Source: {previewVideoItem.sourceName}</p>
+                </div>
+                <button
+                  onClick={() => setPreviewVideoItem(null)}
+                  className="p-2 text-zinc-500 hover:text-white rounded-xl bg-zinc-900 border border-zinc-800"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-4">
+                {getYouTubeId(previewVideoItem.youtubeLink) ? (
+                  <div className="relative aspect-video rounded-2xl overflow-hidden border border-zinc-800 bg-black">
+                    <iframe
+                      className="absolute inset-0 w-full h-full"
+                      src={`https://www.youtube.com/embed/${getYouTubeId(previewVideoItem.youtubeLink)}?autoplay=1`}
+                      title={previewVideoItem.name}
+                      frameBorder="0"
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                      allowFullScreen
+                    />
+                  </div>
+                ) : (
+                  <div className="p-8 text-center bg-zinc-900/50 rounded-2xl border border-zinc-800 space-y-4">
+                    <Video className="w-12 h-12 text-orange-500 mx-auto" />
+                    <div>
+                      <p className="text-sm font-bold text-white">External Video Link</p>
+                      <p className="text-xs text-zinc-400 mt-1 font-mono break-all">{previewVideoItem.youtubeLink}</p>
+                    </div>
+                    <a
+                      href={previewVideoItem.youtubeLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 px-6 py-3 bg-orange-500 hover:bg-orange-600 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-orange-500/20"
+                    >
+                      Open Video in New Tab
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                  </div>
+                )}
+
+                {previewVideoItem.coachNote && (
+                  <div className="p-4 bg-zinc-900 border border-zinc-800 rounded-2xl">
+                    <div className="text-[10px] font-bold text-orange-400 uppercase tracking-widest mb-1">
+                      Coaching Instructions
+                    </div>
+                    <p className="text-xs text-zinc-300 leading-relaxed">{previewVideoItem.coachNote}</p>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Edit Video Link Modal */}
+      <AnimatePresence>
+        {editingExerciseItem && (
+          <div className="fixed inset-0 z-[350] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setEditingExerciseItem(null)}
+              className="absolute inset-0 bg-black/90 backdrop-blur-md"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-lg bg-zinc-950 border border-zinc-800 rounded-[32px] shadow-2xl p-6 z-10 space-y-6"
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-bold text-white">Edit Demo Video Link</h3>
+                  <p className="text-xs text-zinc-500">{editingExerciseItem.name}</p>
+                </div>
+                <button
+                  onClick={() => setEditingExerciseItem(null)}
+                  className="p-2 text-zinc-500 hover:text-white rounded-xl bg-zinc-900 border border-zinc-800"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="space-y-3">
+                <label className="text-xs font-bold text-zinc-400 block">
+                  Video URL (YouTube, Vimeo, Google Drive, Loom, etc.)
+                </label>
+                <div className="relative">
+                  <LinkIcon className="w-4 h-4 text-zinc-500 absolute left-4 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="url"
+                    value={editingExerciseUrl}
+                    onChange={(e) => setEditingExerciseUrl(e.target.value)}
+                    placeholder="https://www.youtube.com/watch?v=..."
+                    className="w-full pl-11 pr-4 py-3 bg-zinc-900 border border-zinc-800 rounded-2xl text-xs text-white placeholder:text-zinc-600 focus:border-orange-500 outline-none transition-all font-mono"
+                  />
+                </div>
+                <p className="text-[11px] text-zinc-500">
+                  Saving this link will update the exercise across your custom Vault templates and auto-enrich any workouts created for clients.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setEditingExerciseItem(null)}
+                  className="flex-1 py-3 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 rounded-xl text-xs font-bold transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveCustomExerciseUrl}
+                  disabled={isSavingExerciseUrl || !editingExerciseUrl.trim()}
+                  className="flex-1 py-3 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-lg shadow-orange-500/20"
+                >
+                  {isSavingExerciseUrl ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    'Save Video Link'
+                  )}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Paste Modal */}
       <AnimatePresence>
@@ -3877,12 +4884,22 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
                           </h4>
                           <p className="text-xs text-zinc-500 font-bold uppercase tracking-widest">Workout Day {activeEditingDay + 1}</p>
                         </div>
-                        <button 
-                          onClick={() => setActiveEditingDay(null)}
-                          className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all"
-                        >
-                          Back to Summary
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleAutoLinkDraftDay(activeEditingDay)}
+                            className="flex items-center gap-1.5 px-3 py-2 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all"
+                            title="Auto-match exercise demo videos from Vault"
+                          >
+                            <Wand2 className="w-3.5 h-3.5" />
+                            Auto-Link Vault
+                          </button>
+                          <button 
+                            onClick={() => setActiveEditingDay(null)}
+                            className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all"
+                          >
+                            Back to Summary
+                          </button>
+                        </div>
                       </div>
                       
                       <div className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar">
@@ -4014,13 +5031,20 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
                           </div>
                         ))}
                         
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                           <button 
                             onClick={() => addDraftExercise(activeEditingDay)}
-                            className="py-3.5 border border-dashed border-zinc-800 rounded-2xl text-zinc-550 hover:text-white hover:border-zinc-700 transition-all flex items-center justify-center gap-2 text-xs font-bold"
+                            className="py-3.5 border border-dashed border-zinc-800 rounded-2xl text-zinc-400 hover:text-white hover:border-zinc-700 transition-all flex items-center justify-center gap-2 text-xs font-bold"
                           >
-                            <Plus className="w-4 h-4 text-zinc-600 group-hover:text-white" />
-                            Add Blank Exercise
+                            <Plus className="w-4 h-4 text-zinc-500 group-hover:text-white" />
+                            Add Exercise
+                          </button>
+                          <button 
+                            onClick={() => handleAutoLinkDraftDay(activeEditingDay)}
+                            className="py-3.5 border border-emerald-500/20 bg-emerald-500/5 hover:bg-emerald-500/10 rounded-2xl text-emerald-400 hover:text-emerald-300 transition-all flex items-center justify-center gap-2 text-xs font-black uppercase tracking-widest"
+                          >
+                            <Wand2 className="w-4 h-4" />
+                            Auto-Link Vault
                           </button>
                           <button 
                             onClick={() => {
@@ -4029,7 +5053,7 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
                               setProgSelectedSrcDayIdx(0);
                               setShowProgramAddExerciseModal(true);
                             }}
-                            className="py-3.5 border border-orange-500/20 bg-orange-500/5 hover:bg-orange-500/10 rounded-2xl text-orange-500 hover:text-orange-400 transition-all flex items-center justify-center gap-4 text-xs font-black uppercase tracking-widest"
+                            className="py-3.5 border border-orange-500/20 bg-orange-500/5 hover:bg-orange-500/10 rounded-2xl text-orange-500 hover:text-orange-400 transition-all flex items-center justify-center gap-2 text-xs font-black uppercase tracking-widest"
                           >
                             <Copy className="w-4 h-4" />
                             Copy From Vault
@@ -7427,6 +8451,8 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
     setExpandedIndex(0);
   }, [initialWorkout, initialDate]);
 
+  const [libraryExercises, setLibraryExercises] = useState<ExerciseLibraryItem[]>([]);
+
   useEffect(() => {
     const q = query(collection(db, 'templates'), orderBy('createdAt', 'desc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -7438,6 +8464,21 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
     });
     return () => unsubscribe();
   }, []);
+
+  useEffect(() => {
+    const q = query(collection(db, 'exerciseLibrary'), orderBy('name', 'asc'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as ExerciseLibraryItem);
+      setLibraryExercises(items);
+    }, (error) => {
+      console.warn("Exercise library listener error in WorkoutManager:", error);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const allVaultExercises = useMemo(() => {
+    return extractAllVaultExercises(templates, WORKOUT_TEMPLATES, WEEKLY_PROGRAMS, libraryExercises);
+  }, [templates, libraryExercises]);
 
   const addExercise = () => {
     const newIdx = exercises.length;
@@ -7452,8 +8493,33 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
 
   const updateExercise = (index: number, field: keyof Exercise, value: any) => {
     const newExercises = [...exercises];
-    newExercises[index] = { ...newExercises[index], [field]: value };
+    const currentEx = newExercises[index];
+    newExercises[index] = { ...currentEx, [field]: value };
+
+    if (field === 'name' && typeof value === 'string' && value.trim().length >= 3) {
+      const match = findVaultExerciseMatch(value, allVaultExercises);
+      if (match && isDirectVideoLink(match.youtubeLink)) {
+        if (!isDirectVideoLink(currentEx.youtubeLink)) {
+          newExercises[index].youtubeLink = match.youtubeLink;
+          if (!newExercises[index].coachNote && match.coachNote) {
+            newExercises[index].coachNote = match.coachNote;
+          }
+          if (match.block) newExercises[index].block = match.block;
+        }
+      }
+    }
+
     setExercises(newExercises);
+  };
+
+  const handleAutoLinkVaultExercises = () => {
+    const { enriched, matchCount } = enrichExercisesWithVault(exercises, allVaultExercises);
+    setExercises(enriched);
+    if (matchCount > 0) {
+      showToast(`Linked ${matchCount} exercise${matchCount === 1 ? '' : 's'} with video links from your Vault!`, 'success');
+    } else {
+      showToast('All exercises already linked or no matching Vault video links found.', 'success');
+    }
   };
 
   const handleSearchVideos = async (name: string) => {
@@ -7530,11 +8596,17 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
   const handleSaveWorkout = async () => {
     setSaving(true);
     try {
+      const cleanExercises = exercises.filter(e => e.name.trim() !== '');
+      const { enriched: finalExercises } = enrichExercisesWithVault(cleanExercises, allVaultExercises);
+
+      // Automatically sync exercises into Global Exercise Library
+      saveExercisesToGlobalLibrary(finalExercises, `${client.displayName || 'Client'} Workout`);
+
       const workoutData = {
         clientId: client.uid,
         weekNumber: week,
         dayNumber: day,
-        exercises: exercises.filter(e => e.name.trim() !== ''),
+        exercises: finalExercises,
         notes: workoutNotes,
         scheduledDate: scheduledDate || null,
         startTime: startTime,
@@ -7646,12 +8718,17 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
     if (!templateName.trim()) return;
     setSaving(true);
     try {
+      const cleanExs = exercises.filter(e => e.name.trim() !== '');
+      const { enriched: finalExercises } = enrichExercisesWithVault(cleanExs, allVaultExercises);
+      
+      saveExercisesToGlobalLibrary(finalExercises, templateName);
+
       await addDoc(collection(db, 'templates'), {
         name: templateName,
         category: templateCategory,
         description: templateDescription,
         notes: workoutNotes,
-        exercises: exercises.filter(e => e.name.trim() !== ''),
+        exercises: finalExercises,
         createdAt: serverTimestamp(),
         type: 'workout' // Add discriminator
       }).catch(err => handleFirestoreError(err, OperationType.CREATE, 'templates'));
@@ -7972,6 +9049,14 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
                   <button className="px-3 py-1.5 text-[8px] font-black uppercase tracking-widest text-zinc-500 hover:text-white transition-colors">Superset</button>
                   <button className="px-3 py-1.5 text-[8px] font-black uppercase tracking-widest text-zinc-500 hover:text-white transition-colors">Circuit</button>
                   <button 
+                    onClick={handleAutoLinkVaultExercises}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 text-emerald-400 text-[8px] font-black uppercase tracking-widest rounded-lg border border-emerald-500/20 hover:bg-emerald-500/20 hover:border-emerald-500/40 transition-all"
+                    title="Automatically check Vault for demo video links and coaching cues"
+                  >
+                    <Wand2 className="w-3 h-3" />
+                    Auto-Link Vault
+                  </button>
+                  <button 
                     onClick={() => setShowAddExerciseFromVaultModal(true)}
                     className="flex items-center gap-2 px-3 py-1.5 bg-orange-500/10 text-orange-500 text-[8px] font-black uppercase tracking-widest rounded-lg border border-orange-500/10 hover:bg-orange-500/20 hover:border-orange-500/30 transition-all"
                   >
@@ -8003,13 +9088,32 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
                         {String(idx + 1).padStart(2, '0')}
                       </div>
                       
-                      <div className="flex-1 min-w-0">
-                        <input
+                      <div className="flex-1 min-w-0" onClick={(e) => e.stopPropagation()}>
+                        <ExerciseAutocompleteInput
                           value={ex.name}
-                          onClick={(e) => e.stopPropagation()}
-                          onChange={(e) => updateExercise(idx, 'name', e.target.value)}
-                          placeholder="Select an exercise..."
-                          className="w-full bg-transparent text-sm font-black uppercase italic tracking-tighter text-white outline-none placeholder:text-zinc-700"
+                          onChange={(name) => updateExercise(idx, 'name', name)}
+                          onSelectVaultItem={(vaultItem) => {
+                            const updated = {
+                              ...ex,
+                              name: vaultItem.name,
+                              youtubeLink: vaultItem.youtubeLink || ex.youtubeLink || '',
+                              sets: vaultItem.sets || ex.sets || 3,
+                              reps: vaultItem.reps || ex.reps || '12',
+                              weight: vaultItem.weight || ex.weight || '',
+                              rest: vaultItem.rest || ex.rest || '60s',
+                              coachNote: vaultItem.coachNote || ex.coachNote || '',
+                              block: vaultItem.block || ex.block || 'Conditioning'
+                            };
+                            const newExs = [...exercises];
+                            newExs[idx] = updated;
+                            setExercises(newExs);
+                            if (isDirectVideoLink(vaultItem.youtubeLink)) {
+                              showToast(`Loaded "${vaultItem.name}" with demo video from Library!`, 'success');
+                            }
+                          }}
+                          vaultExercises={allVaultExercises}
+                          hasVideoLink={isDirectVideoLink(ex.youtubeLink)}
+                          placeholder="Select or type exercise name..."
                         />
                       </div>
 

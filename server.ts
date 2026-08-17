@@ -464,7 +464,7 @@ async function startServer() {
       },
       youtubeLink: {
         type: Type.STRING,
-        description: "Robust programmatic YouTube search URL: 'https://www.youtube.com/results?search_query=' followed by the URL-encoded exercise name."
+        description: "The direct video link / demo URL extracted from the spreadsheet or file (e.g. YouTube, Vimeo, Drive, Shorts, Loom, web URL, or link column). Only if no link exists in the input for this exercise, fallback to 'https://www.youtube.com/results?search_query=' + URL-encoded exercise name."
       }
     },
     required: ["name", "block", "sets", "reps", "weight", "rest", "coachNote", "youtubeLink"]
@@ -561,8 +561,9 @@ async function startServer() {
         - weight: Realistic professional load suggestions or guidelines (string, e.g., 'BW', 'Light/Med', 'Medium', 'Heavy', 'Band', 'Dumbbell').
         - rest: Athlete recovery intervals (string, e.g., '30s', '45s', '60s', '90s').
         - coachNote: Elite actionable, biomechanical cueing written directly to the athlete (e.g., 'Soft knee bend, hinge from hips. Keep neutral spine and draw shoulder blades back.', 'Stand tall, squeeze glutes at the top to protect lower back. Breathe out as you press.').
-        - youtubeLink: Populate with a robust programmatic YouTube search URL:
-          "https://www.youtube.com/results?search_query=" followed by the URL-encoded exercise name (e.g. "https://www.youtube.com/results?search_query=bench+press+proper+form"). Keep the query clean and direct.
+        - youtubeLink: 
+          * CRITICAL REQUIREMENT FOR LINKS IN EXCEL/SPREADSHEETS: If the input content, spreadsheet, table, notes, or rows contain a direct video link, YouTube URL, video URL, tutorial link, demo URL, Google Drive link, Vimeo, Shorts, or hyperlink for this exercise (such as in a Link/Video column or in parentheses like "(Link: https://...)" or in the exercise cell itself), you MUST extract and use that EXACT link URL without modifying or replacing it.
+          * ONLY if NO link or URL is provided anywhere in the input for this exercise, fallback to a clean programmatic search URL: "https://www.youtube.com/results?search_query=" followed by the URL-encoded exercise name (e.g. "https://www.youtube.com/results?search_query=bench+press+proper+form").
 
         Structure the parsed data into a premium JSON representing a single ProgramTemplate:
         - name: Give the program an elite, professional systematic name based on the content (e.g., "Full Body Compound Split", "Elite Ankle & Lower Body Tactical Recovery", or similar top-tier names).

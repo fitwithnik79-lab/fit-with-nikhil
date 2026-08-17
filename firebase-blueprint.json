@@ -241,9 +241,33 @@
         "category": { "type": "string" }
       },
       "required": ["id", "name", "icon", "description", "unlockedAt", "category"]
+    },
+    "ExerciseLibrary": {
+      "title": "Global Exercise Library",
+      "description": "Persistent repository of exercises with demo video links and coaching cues.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "normalizedName": { "type": "string" },
+        "youtubeLink": { "type": "string" },
+        "sets": { "type": "integer" },
+        "reps": { "type": "string" },
+        "weight": { "type": "string" },
+        "rest": { "type": "string" },
+        "coachNote": { "type": "string" },
+        "block": { "type": "string" },
+        "usageCount": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name"]
     }
   },
   "firestore": {
+    "/exerciseLibrary/{exerciseId}": {
+      "schema": "ExerciseLibrary",
+      "description": "Global exercise library items"
+    },
     "/users/{uid}": {
       "schema": "User",
       "description": "User profiles and roles"

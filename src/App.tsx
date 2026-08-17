@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from 'react';
 import { onAuthStateChanged, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, signOut, User } from 'firebase/auth';
-import { doc, getDoc, getDocFromCache, setDoc, updateDoc, collection, query, where, onSnapshot, orderBy, limit, addDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, getDocFromCache, setDoc, updateDoc, collection, query, where, getDocs, onSnapshot, orderBy, limit, addDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from './lib/firebase';
 import { UserProfile, UserRole } from './types';
 import { handleFirestoreError, OperationType } from './lib/firestoreErrors';
@@ -89,17 +89,59 @@ export default function App() {
             };
             setProfile(fallbackProfile);
           } else {
-            // New user
-            const newProfile: UserProfile = {
-              uid: user.uid,
-              email: user.email || '',
-              role: isAdminEmail ? 'admin' : 'client',
-              displayName: user.displayName || '',
-              photoURL: user.photoURL || '',
-              createdAt: serverTimestamp(),
-            };
-            await setDoc(userDocRef, newProfile).catch(err => handleFirestoreError(err, OperationType.CREATE, `users/${user.uid}`));
-            setProfile(newProfile);
+            // Check if there is an existing pre-created client profile or invite token matching this user's email
+            const urlParams = new URLSearchParams(window.location.search);
+            const inviteParam = urlParams.get('invite') || urlParams.get('token');
+            const userEmailLower = user.email ? user.email.toLowerCase() : '';
+
+            let matchedDoc: UserProfile | null = null;
+            let matchedDocId: string | null = null;
+
+            if (userEmailLower) {
+              const emailQuery = query(collection(db, 'users'), where('email', '==', userEmailLower));
+              const emailSnap = await getDocs(emailQuery).catch(() => null);
+              if (emailSnap && !emailSnap.empty) {
+                matchedDocId = emailSnap.docs[0].id;
+                matchedDoc = emailSnap.docs[0].data() as UserProfile;
+              }
+            }
+
+            if (!matchedDoc && inviteParam) {
+              const tokenQuery = query(collection(db, 'users'), where('inviteToken', '==', inviteParam));
+              const tokenSnap = await getDocs(tokenQuery).catch(() => null);
+              if (tokenSnap && !tokenSnap.empty) {
+                matchedDocId = tokenSnap.docs[0].id;
+                matchedDoc = tokenSnap.docs[0].data() as UserProfile;
+              }
+            }
+
+            if (matchedDoc && matchedDocId && matchedDocId !== user.uid) {
+              // Existing client profile found! Copy profile to user.uid to seamlessly link workouts & plans
+              const linkedProfile: UserProfile = {
+                ...matchedDoc,
+                uid: user.uid,
+                email: user.email || matchedDoc.email,
+                role: isAdminEmail ? 'admin' : (matchedDoc.role || 'client'),
+                displayName: user.displayName || matchedDoc.displayName || user.email?.split('@')[0] || 'User',
+                photoURL: user.photoURL || matchedDoc.photoURL || '',
+                lastLogin: serverTimestamp(),
+              };
+              await setDoc(userDocRef, linkedProfile).catch(err => handleFirestoreError(err, OperationType.CREATE, `users/${user.uid}`));
+              setProfile(linkedProfile);
+            } else {
+              // New user profile
+              const newProfile: UserProfile = {
+                uid: user.uid,
+                email: user.email || '',
+                role: isAdminEmail ? 'admin' : 'client',
+                displayName: user.displayName || user.email?.split('@')[0] || 'User',
+                photoURL: user.photoURL || '',
+                createdAt: serverTimestamp(),
+                lastLogin: serverTimestamp()
+              };
+              await setDoc(userDocRef, newProfile).catch(err => handleFirestoreError(err, OperationType.CREATE, `users/${user.uid}`));
+              setProfile(newProfile);
+            }
           }
         } catch (error) {
           console.error('Error in auth state change:', error);

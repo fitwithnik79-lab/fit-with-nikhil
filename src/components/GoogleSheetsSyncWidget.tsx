@@ -23,6 +23,7 @@ import { parseWorkoutFile } from '../lib/gemini';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { cn } from '../lib/utils';
 import { parseExcelWorkbook } from '../lib/fileParser';
+import { saveExercisesToGlobalLibrary } from '../lib/vaultExerciseHelper';
 
 interface GoogleSheetsSyncWidgetProps {
   showToast: (m: string, t?: 'success' | 'error') => void;
@@ -123,6 +124,9 @@ export function GoogleSheetsSyncWidget({ showToast, onSyncComplete }: GoogleShee
             break;
           } else if (cellVal.includes('rest') || cellVal.includes('interval')) {
             initialMappings[colIdx] = 'rest';
+            break;
+          } else if (cellVal.includes('video') || cellVal.includes('link') || cellVal.includes('url') || cellVal.includes('youtube') || cellVal.includes('demo') || cellVal.includes('tutorial') || cellVal.includes('form') || cellVal.includes('media')) {
+            initialMappings[colIdx] = 'link';
             break;
           } else if (cellVal.includes('note') || cellVal.includes('cue') || cellVal.includes('coach') || cellVal.includes('comment')) {
             initialMappings[colIdx] = 'notes';
@@ -457,6 +461,22 @@ export function GoogleSheetsSyncWidget({ showToast, onSyncComplete }: GoogleShee
           handleFirestoreError(err, OperationType.CREATE, 'templates');
           throw err;
         });
+
+      // Automatically sync all extracted exercises into the Global Exercise Library
+      const allExtractedExercises: any[] = [];
+      if (hasWeeks && Array.isArray(generatedPlan.weeks)) {
+        generatedPlan.weeks.forEach((w: any) => {
+          w.days?.forEach((d: any) => {
+            if (Array.isArray(d.exercises)) allExtractedExercises.push(...d.exercises);
+          });
+        });
+      }
+      if (Array.isArray(generatedPlan.exercises)) {
+        allExtractedExercises.push(...generatedPlan.exercises);
+      }
+      if (allExtractedExercises.length > 0) {
+        saveExercisesToGlobalLibrary(allExtractedExercises, payload.name || 'Google Sheet Import');
+      }
 
       let exerciseCount = 0;
       if (hasWeeks) {
