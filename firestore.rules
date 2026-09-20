@@ -275,10 +275,17 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    match /global_exercise_library/{exerciseId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidExerciseLibraryItem(incoming());
+      allow update: if isSignedIn() && isValidExerciseLibraryItem(incoming());
+      allow delete: if isAdmin();
+    }
+
     match /exerciseLibrary/{exerciseId} {
       allow read: if isSignedIn();
-      allow create: if isAdmin() && isValidExerciseLibraryItem(incoming());
-      allow update: if isAdmin() && isValidExerciseLibraryItem(incoming());
+      allow create: if isSignedIn() && isValidExerciseLibraryItem(incoming());
+      allow update: if isSignedIn() && isValidExerciseLibraryItem(incoming());
       allow delete: if isAdmin();
     }
 

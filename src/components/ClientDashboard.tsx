@@ -5,9 +5,19 @@ import { DynamicKineticLogo } from './DynamicKineticLogo';
 import { collection, query, where, onSnapshot, addDoc, serverTimestamp, orderBy, limit, getDocs, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db, storage } from '../lib/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { BodyMetrics, Workout, Exercise, Feedback, UserProfile, NutritionPlan, Message, Habit, HabitLog, Goal, WeeklyCheckIn, Badge, PersonalRecord } from '../types';
+import { BodyMetrics, Workout, Exercise, Feedback, UserProfile, NutritionPlan, Message, Habit, HabitLog, Goal, WeeklyCheckIn, Badge, PersonalRecord, ExerciseLibraryItem } from '../types';
 import { WeeklyCheckInForm } from './WeeklyCheckInForm';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
+import { 
+  extractAllVaultExercises, 
+  saveExercisesToGlobalLibrary, 
+  syncSingleExerciseToGlobalLibrary, 
+  normalizeExerciseName, 
+  isDirectVideoLink,
+  GLOBAL_EXERCISE_LIBRARY_COLLECTION,
+  LEGACY_EXERCISE_LIBRARY_COLLECTION
+} from '../lib/vaultExerciseHelper';
+import { ExerciseAutocompleteInput } from './ExerciseAutocompleteInput';
 import { 
   Maximize2,
   Minimize2,
@@ -2060,6 +2070,48 @@ export default function ClientDashboard({ user, profile, onLogout }: ClientDashb
     return () => unsubscribe();
   }, [clientId]);
 
+  // Global Exercise Library listener for exercise search, reuse, and auto-sync
+  const [libraryExercises, setLibraryExercises] = useState<ExerciseLibraryItem[]>([]);
+
+  useEffect(() => {
+    let globalItems: ExerciseLibraryItem[] = [];
+    let legacyItems: ExerciseLibraryItem[] = [];
+
+    const updateCombined = () => {
+      const combinedMap = new Map<string, ExerciseLibraryItem>();
+      legacyItems.forEach(item => {
+        const norm = normalizeExerciseName(item.name);
+        if (norm) combinedMap.set(norm, item);
+      });
+      globalItems.forEach(item => {
+        const norm = normalizeExerciseName(item.name);
+        if (norm) combinedMap.set(norm, item);
+      });
+      setLibraryExercises(Array.from(combinedMap.values()).sort((a, b) => a.name.localeCompare(b.name)));
+    };
+
+    const qGlobal = query(collection(db, GLOBAL_EXERCISE_LIBRARY_COLLECTION), orderBy('name', 'asc'));
+    const unsubGlobal = onSnapshot(qGlobal, (snapshot) => {
+      globalItems = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as ExerciseLibraryItem);
+      updateCombined();
+    }, () => {});
+
+    const qLegacy = query(collection(db, LEGACY_EXERCISE_LIBRARY_COLLECTION), orderBy('name', 'asc'));
+    const unsubLegacy = onSnapshot(qLegacy, (snapshot) => {
+      legacyItems = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as ExerciseLibraryItem);
+      updateCombined();
+    }, () => {});
+
+    return () => {
+      unsubGlobal();
+      unsubLegacy();
+    };
+  }, []);
+
+  const allVaultExercises = useMemo(() => {
+    return extractAllVaultExercises([], [], [], libraryExercises);
+  }, [libraryExercises]);
+
   // Automated reminders for missed workouts/meals
   useEffect(() => {
     const checkMissedCheckins = async () => {
@@ -4041,16 +4093,32 @@ export default function ClientDashboard({ user, profile, onLogout }: ClientDashb
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                               <div className="space-y-1.5">
                                 <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Exercise Name</label>
-                                <input
-                                  type="text"
+                                <ExerciseAutocompleteInput
                                   value={ex.name}
-                                  onChange={(e) => {
+                                  onChange={(name) => {
                                     const updated = [...editableExercises];
-                                    updated[idx].name = e.target.value;
+                                    updated[idx].name = name;
                                     setEditableExercises(updated);
+                                    if (name.trim().length >= 2) {
+                                      syncSingleExerciseToGlobalLibrary(updated[idx], `${user?.displayName || 'Client'} Program`);
+                                    }
                                   }}
-                                  className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3 text-sm text-white focus:border-orange-500/40 outline-none transition-all"
-                                  placeholder="e.g. Barbell Bench Press"
+                                  onSelectVaultItem={(vaultItem) => {
+                                    const updated = [...editableExercises];
+                                    updated[idx].name = vaultItem.name;
+                                    if (vaultItem.youtubeLink) updated[idx].youtubeLink = vaultItem.youtubeLink;
+                                    if (vaultItem.sets) updated[idx].sets = vaultItem.sets;
+                                    if (vaultItem.reps) updated[idx].reps = vaultItem.reps;
+                                    if (vaultItem.weight) updated[idx].weight = vaultItem.weight;
+                                    if (vaultItem.rest) updated[idx].rest = vaultItem.rest;
+                                    if (vaultItem.coachNote) updated[idx].coachNote = vaultItem.coachNote;
+                                    if (vaultItem.block) updated[idx].block = vaultItem.block;
+                                    setEditableExercises(updated);
+                                    syncSingleExerciseToGlobalLibrary(updated[idx], `${user?.displayName || 'Client'} Program`);
+                                  }}
+                                  vaultExercises={allVaultExercises}
+                                  hasVideoLink={isDirectVideoLink(ex.youtubeLink)}
+                                  placeholder="Search library or type custom exercise..."
                                 />
                               </div>
 
@@ -4169,6 +4237,9 @@ export default function ClientDashboard({ user, profile, onLogout }: ClientDashb
                                     const updated = [...editableExercises];
                                     updated[idx].youtubeLink = e.target.value;
                                     setEditableExercises(updated);
+                                    if (updated[idx].name && updated[idx].name.trim().length >= 2) {
+                                      syncSingleExerciseToGlobalLibrary(updated[idx], `${user?.displayName || 'Client'} Program`);
+                                    }
                                   }}
                                   className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3 text-sm text-zinc-400 focus:border-orange-500/40 outline-none transition-all placeholder:text-zinc-800 font-mono text-xs"
                                   placeholder="YouTube video or Shorts URL..."
@@ -4196,6 +4267,9 @@ export default function ClientDashboard({ user, profile, onLogout }: ClientDashb
                               exercises: editableExercises,
                               notes: editableNotes
                             });
+                            // Automatically upsert any new custom exercise from the user's program into global_exercise_library
+                            saveExercisesToGlobalLibrary(editableExercises, `${user?.displayName || 'Client'} Program`);
+
                             const updatedWorkout = {
                               ...selectedWorkout,
                               exercises: editableExercises,

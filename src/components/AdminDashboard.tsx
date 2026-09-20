@@ -8,7 +8,23 @@ import { UserProfile, Workout, Exercise, Feedback, WorkoutTemplate, BodyMetrics,
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { searchExerciseVideos, parseWorkoutFile, analyzeNutritionFile } from '../lib/gemini';
 import { getFileContentAsText } from '../lib/fileParser';
-import { extractAllVaultExercises, enrichExercisesWithVault, enrichProgramWithVault, findVaultExerciseMatch, isDirectVideoLink, saveExercisesToGlobalLibrary, updateLibraryExerciseLink, deleteExerciseFromGlobalLibrary, normalizeExerciseName, sanitizeExerciseDocId, VaultExerciseItem } from '../lib/vaultExerciseHelper';
+import { 
+  extractAllVaultExercises, 
+  enrichExercisesWithVault, 
+  enrichProgramWithVault, 
+  findVaultExerciseMatch, 
+  isDirectVideoLink, 
+  saveExercisesToGlobalLibrary, 
+  syncSingleExerciseToGlobalLibrary,
+  upsertCustomExerciseToLibrary,
+  updateLibraryExerciseLink, 
+  deleteExerciseFromGlobalLibrary, 
+  normalizeExerciseName, 
+  sanitizeExerciseDocId, 
+  GLOBAL_EXERCISE_LIBRARY_COLLECTION,
+  LEGACY_EXERCISE_LIBRARY_COLLECTION,
+  VaultExerciseItem 
+} from '../lib/vaultExerciseHelper';
 import { ExerciseAutocompleteInput } from './ExerciseAutocompleteInput';
 import { triggerPushNotification, sendInAppNotification } from '../lib/notifications';
 import { SAMPLE_PROGRAMS, WEEKLY_PROGRAMS, WORKOUT_TEMPLATES } from '../constants/workoutTemplates';
@@ -2503,14 +2519,40 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
   const [libraryExercises, setLibraryExercises] = useState<ExerciseLibraryItem[]>([]);
 
   useEffect(() => {
-    const q = query(collection(db, 'exerciseLibrary'), orderBy('name', 'asc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as ExerciseLibraryItem);
-      setLibraryExercises(items);
+    let globalItems: ExerciseLibraryItem[] = [];
+    let legacyItems: ExerciseLibraryItem[] = [];
+
+    const updateCombined = () => {
+      const combinedMap = new Map<string, ExerciseLibraryItem>();
+      legacyItems.forEach(item => {
+        const norm = normalizeExerciseName(item.name);
+        if (norm) combinedMap.set(norm, item);
+      });
+      globalItems.forEach(item => {
+        const norm = normalizeExerciseName(item.name);
+        if (norm) combinedMap.set(norm, item);
+      });
+      setLibraryExercises(Array.from(combinedMap.values()).sort((a, b) => a.name.localeCompare(b.name)));
+    };
+
+    const qGlobal = query(collection(db, GLOBAL_EXERCISE_LIBRARY_COLLECTION), orderBy('name', 'asc'));
+    const unsubGlobal = onSnapshot(qGlobal, (snapshot) => {
+      globalItems = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as ExerciseLibraryItem);
+      updateCombined();
     }, (error) => {
-      console.warn("Exercise library listener error in TemplatesView:", error);
+      console.warn("Global exercise library listener error in TemplatesView:", error);
     });
-    return () => unsubscribe();
+
+    const qLegacy = query(collection(db, LEGACY_EXERCISE_LIBRARY_COLLECTION), orderBy('name', 'asc'));
+    const unsubLegacy = onSnapshot(qLegacy, (snapshot) => {
+      legacyItems = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as ExerciseLibraryItem);
+      updateCombined();
+    }, () => {});
+
+    return () => {
+      unsubGlobal();
+      unsubLegacy();
+    };
   }, []);
 
   const allVaultExercises = useMemo(() => {
@@ -2998,7 +3040,7 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
     setProgramWorkoutsDraft(prev => {
       const newDraft = { ...prev };
       const newDayExercises = [...(newDraft[dayIdx] || [])];
-      const currentEx = newDayExercises[exIdx] || { name: '', youtubeLink: '', sets: 3, reps: '12', weight: '', rest: '60s', coachNote: '' };
+      const currentEx = newDayExercises[exIdx] || { name: '', youtubeLink: '', sets: 3, reps: '12', weight: '', rest: '60s', coachNote: '', block: 'Conditioning' };
       
       newDayExercises[exIdx] = { ...currentEx, [field]: value };
 
@@ -3015,6 +3057,14 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
         }
       }
 
+      // Automatically debounced upsert custom exercise to global_exercise_library
+      if (newDayExercises[exIdx].name && newDayExercises[exIdx].name.trim().length >= 2) {
+        syncSingleExerciseToGlobalLibrary(
+          newDayExercises[exIdx], 
+          selectedProgram?.name ? `Program: ${selectedProgram.name}` : 'User Program'
+        );
+      }
+
       newDraft[dayIdx] = newDayExercises;
       return newDraft;
     });
@@ -3024,6 +3074,7 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
     const dayExercises = programWorkoutsDraft[dayIdx] || [];
     const { enriched, matchCount } = enrichExercisesWithVault(dayExercises, allVaultExercises);
     setProgramWorkoutsDraft(prev => ({ ...prev, [dayIdx]: enriched }));
+    saveExercisesToGlobalLibrary(enriched, selectedProgram?.name ? `Program: ${selectedProgram.name}` : 'User Program');
     if (matchCount > 0) {
       showToast(`Linked ${matchCount} exercise${matchCount === 1 ? '' : 's'} with video demos from Vault!`, 'success');
     } else {
@@ -3034,7 +3085,7 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
   const addDraftExercise = (dayIdx: number) => {
     setProgramWorkoutsDraft(prev => {
       const newDraft = { ...prev };
-      newDraft[dayIdx] = [...(newDraft[dayIdx] || []), { name: '', youtubeLink: '', sets: 3, reps: '12', weight: '', rest: '60s', coachNote: '' }];
+      newDraft[dayIdx] = [...(newDraft[dayIdx] || []), { name: '', youtubeLink: '', sets: 3, reps: '12', weight: '', rest: '60s', coachNote: '', block: 'Conditioning' }];
       return newDraft;
     });
   };
@@ -3247,17 +3298,22 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
     if (!selectedProgram) return;
     setSavingTemplate(true);
     try {
+      const allProgramExercises: Exercise[] = [];
       const updatedWeeks = [{
         weekNumber: 1,
         days: selectedProgram.weeks[0].days.map((day, i) => {
           const rawExercises = programWorkoutsDraft[i] || [];
           const { enriched } = enrichExercisesWithVault(rawExercises, allVaultExercises);
+          allProgramExercises.push(...enriched);
           return {
             ...day,
             exercises: enriched
           };
         })
       }];
+
+      // Automatically upsert any new custom exercise from the user's program into global_exercise_library
+      saveExercisesToGlobalLibrary(allProgramExercises, editingTemplateName || selectedProgram.name || 'Program Template');
 
       const templateData = {
         name: editingTemplateName,
@@ -4910,12 +4966,25 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
                                 <div className="w-6 h-6 rounded-full bg-zinc-800 flex items-center justify-center text-[10px] font-bold text-zinc-500">
                                   {exIdx + 1}
                                 </div>
-                                <input 
-                                  className="bg-transparent border-b border-zinc-800 focus:border-orange-500 outline-none font-bold text-sm w-full py-1"
-                                  value={ex.name}
-                                  placeholder="Exercise name..."
-                                  onChange={(e) => updateDraftExercise(activeEditingDay, exIdx, 'name', e.target.value)}
-                                />
+                                <div className="flex-1">
+                                  <ExerciseAutocompleteInput
+                                    value={ex.name}
+                                    onChange={(name) => updateDraftExercise(activeEditingDay, exIdx, 'name', name)}
+                                    onSelectVaultItem={(vaultItem) => {
+                                      updateDraftExercise(activeEditingDay, exIdx, 'name', vaultItem.name);
+                                      if (vaultItem.youtubeLink) updateDraftExercise(activeEditingDay, exIdx, 'youtubeLink', vaultItem.youtubeLink);
+                                      if (vaultItem.sets) updateDraftExercise(activeEditingDay, exIdx, 'sets', vaultItem.sets);
+                                      if (vaultItem.reps) updateDraftExercise(activeEditingDay, exIdx, 'reps', vaultItem.reps);
+                                      if (vaultItem.weight) updateDraftExercise(activeEditingDay, exIdx, 'weight', vaultItem.weight);
+                                      if (vaultItem.rest) updateDraftExercise(activeEditingDay, exIdx, 'rest', vaultItem.rest);
+                                      if (vaultItem.coachNote) updateDraftExercise(activeEditingDay, exIdx, 'coachNote', vaultItem.coachNote);
+                                      if (vaultItem.block) updateDraftExercise(activeEditingDay, exIdx, 'block', vaultItem.block);
+                                    }}
+                                    vaultExercises={allVaultExercises}
+                                    hasVideoLink={isDirectVideoLink(ex.youtubeLink)}
+                                    placeholder="Exercise name (select from Library or type custom)..."
+                                  />
+                                </div>
                               </div>
                               <div className="flex items-center gap-1 mr-2">
                                 <button
@@ -8466,14 +8535,40 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
   }, []);
 
   useEffect(() => {
-    const q = query(collection(db, 'exerciseLibrary'), orderBy('name', 'asc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as ExerciseLibraryItem);
-      setLibraryExercises(items);
+    let globalItems: ExerciseLibraryItem[] = [];
+    let legacyItems: ExerciseLibraryItem[] = [];
+
+    const updateCombined = () => {
+      const combinedMap = new Map<string, ExerciseLibraryItem>();
+      legacyItems.forEach(item => {
+        const norm = normalizeExerciseName(item.name);
+        if (norm) combinedMap.set(norm, item);
+      });
+      globalItems.forEach(item => {
+        const norm = normalizeExerciseName(item.name);
+        if (norm) combinedMap.set(norm, item);
+      });
+      setLibraryExercises(Array.from(combinedMap.values()).sort((a, b) => a.name.localeCompare(b.name)));
+    };
+
+    const qGlobal = query(collection(db, GLOBAL_EXERCISE_LIBRARY_COLLECTION), orderBy('name', 'asc'));
+    const unsubGlobal = onSnapshot(qGlobal, (snapshot) => {
+      globalItems = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as ExerciseLibraryItem);
+      updateCombined();
     }, (error) => {
-      console.warn("Exercise library listener error in WorkoutManager:", error);
+      console.warn("Global exercise library listener error in WorkoutManager:", error);
     });
-    return () => unsubscribe();
+
+    const qLegacy = query(collection(db, LEGACY_EXERCISE_LIBRARY_COLLECTION), orderBy('name', 'asc'));
+    const unsubLegacy = onSnapshot(qLegacy, (snapshot) => {
+      legacyItems = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as ExerciseLibraryItem);
+      updateCombined();
+    }, () => {});
+
+    return () => {
+      unsubGlobal();
+      unsubLegacy();
+    };
   }, []);
 
   const allVaultExercises = useMemo(() => {
@@ -8482,7 +8577,7 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
 
   const addExercise = () => {
     const newIdx = exercises.length;
-    setExercises([...exercises, { name: '', youtubeLink: '', sets: 3, reps: '12', weight: '', rest: '60s', coachNote: '' }]);
+    setExercises([...exercises, { name: '', youtubeLink: '', sets: 3, reps: '12', weight: '', rest: '60s', coachNote: '', block: 'Conditioning' }]);
     setExpandedIndex(newIdx);
   };
 
@@ -8509,12 +8604,18 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
       }
     }
 
+    // Automatically upsert custom exercise to global_exercise_library
+    if (newExercises[index].name && newExercises[index].name.trim().length >= 2) {
+      syncSingleExerciseToGlobalLibrary(newExercises[index], `${client.displayName || 'Client'} Workout`);
+    }
+
     setExercises(newExercises);
   };
 
   const handleAutoLinkVaultExercises = () => {
     const { enriched, matchCount } = enrichExercisesWithVault(exercises, allVaultExercises);
     setExercises(enriched);
+    saveExercisesToGlobalLibrary(enriched, `${client.displayName || 'Client'} Workout`);
     if (matchCount > 0) {
       showToast(`Linked ${matchCount} exercise${matchCount === 1 ? '' : 's'} with video links from your Vault!`, 'success');
     } else {
@@ -8569,16 +8670,19 @@ function WorkoutManager({ client, clients, initialDate, initialWorkout, onSave, 
 
   const handleAddFromSearch = (video: { title: string, url: string }) => {
     const newIdx = exercises.length;
-    setExercises([...exercises, { 
+    const newEx: Exercise = { 
       name: video.title, 
       youtubeLink: video.url, 
       sets: 3, 
       reps: '12', 
       weight: '', 
       rest: '60s', 
-      coachNote: '' 
-    }]);
+      coachNote: '',
+      block: 'Conditioning'
+    };
+    setExercises([...exercises, newEx]);
     setExpandedIndex(newIdx);
+    syncSingleExerciseToGlobalLibrary(newEx, `${client.displayName || 'Client'} Workout`);
     showToast(`Added ${video.title}`);
   };
 

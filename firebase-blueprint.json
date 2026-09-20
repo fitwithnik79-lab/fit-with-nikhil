@@ -264,9 +264,13 @@
     }
   },
   "firestore": {
-    "/exerciseLibrary/{exerciseId}": {
+    "/global_exercise_library/{exerciseId}": {
       "schema": "ExerciseLibrary",
       "description": "Global exercise library items"
+    },
+    "/exerciseLibrary/{exerciseId}": {
+      "schema": "ExerciseLibrary",
+      "description": "Legacy global exercise library items"
     },
     "/users/{uid}": {
       "schema": "User",

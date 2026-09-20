@@ -211,13 +211,16 @@ export function extractAllVaultExercises(
   return Array.from(exerciseMap.values());
 }
 
+export const GLOBAL_EXERCISE_LIBRARY_COLLECTION = 'global_exercise_library';
+export const LEGACY_EXERCISE_LIBRARY_COLLECTION = 'exerciseLibrary';
+
 /**
  * Automatically persists or updates exercises in the Global Exercise Library in Firestore.
- * Automatically called whenever a coach adds or saves exercises in a client workout or program.
+ * Automatically called whenever a coach or client adds, customizes, or saves exercises in a workout or program.
  */
 export async function saveExercisesToGlobalLibrary(
   exercises: (Exercise | any)[],
-  sourceLabel: string = 'Client Program'
+  sourceLabel: string = 'User Program'
 ): Promise<{ added: number; updated: number }> {
   if (!Array.isArray(exercises) || exercises.length === 0) {
     return { added: 0, updated: 0 };
@@ -233,20 +236,22 @@ export async function saveExercisesToGlobalLibrary(
     if (!normalized) continue;
 
     const docId = sanitizeExerciseDocId(normalized);
-    const docRef = doc(db, 'exerciseLibrary', docId);
+    const globalDocRef = doc(db, GLOBAL_EXERCISE_LIBRARY_COLLECTION, docId);
+    const legacyDocRef = doc(db, LEGACY_EXERCISE_LIBRARY_COLLECTION, docId);
 
     try {
-      const snap = await getDoc(docRef);
-      const directVideo = isDirectVideoLink(ex.youtubeLink) ? ex.youtubeLink.trim() : '';
+      const snap = await getDoc(globalDocRef);
+      const directVideo = isDirectVideoLink(ex.youtubeLink) ? ex.youtubeLink.trim() : (typeof ex.youtubeLink === 'string' && ex.youtubeLink.trim() ? ex.youtubeLink.trim() : '');
 
       if (snap.exists()) {
         const existingData = snap.data();
         const updatePayload: any = {
           usageCount: increment(1),
-          updatedAt: serverTimestamp()
+          updatedAt: serverTimestamp(),
+          lastUsedAt: serverTimestamp()
         };
 
-        // If incoming exercise has a direct video link, update it
+        // If incoming exercise has a direct video link, update it or replace empty/fallback
         if (directVideo && (!isDirectVideoLink(existingData.youtubeLink) || directVideo !== existingData.youtubeLink)) {
           updatePayload.youtubeLink = directVideo;
         }
@@ -256,11 +261,11 @@ export async function saveExercisesToGlobalLibrary(
           updatePayload.coachNote = ex.coachNote.trim();
         }
 
-        if (ex.block && !existingData.block) {
+        if (ex.block && (!existingData.block || ex.block !== existingData.block)) {
           updatePayload.block = ex.block;
         }
 
-        if (ex.sets && !existingData.sets) {
+        if (ex.sets !== undefined && !existingData.sets) {
           updatePayload.sets = typeof ex.sets === 'number' ? ex.sets : parseInt(ex.sets as any) || 3;
         }
 
@@ -268,7 +273,21 @@ export async function saveExercisesToGlobalLibrary(
           updatePayload.reps = ex.reps;
         }
 
-        await updateDoc(docRef, updatePayload);
+        if (ex.weight && !existingData.weight) {
+          updatePayload.weight = ex.weight;
+        }
+
+        if (ex.rest && !existingData.rest) {
+          updatePayload.rest = ex.rest;
+        }
+
+        if (ex.voiceNote && !existingData.voiceNote) {
+          updatePayload.voiceNote = ex.voiceNote;
+        }
+
+        await updateDoc(globalDocRef, updatePayload);
+        // Also update legacy collection mirror non-blockingly
+        updateDoc(legacyDocRef, updatePayload).catch(() => {});
         updated++;
       } else {
         const createPayload = {
@@ -280,17 +299,22 @@ export async function saveExercisesToGlobalLibrary(
           weight: ex.weight || 'Moderate',
           rest: ex.rest || '60s',
           coachNote: ex.coachNote || '',
+          voiceNote: ex.voiceNote || '',
           block: ex.block || 'Conditioning',
+          isCustom: true,
           usageCount: 1,
           source: sourceLabel,
           createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp()
+          updatedAt: serverTimestamp(),
+          lastUsedAt: serverTimestamp()
         };
-        await setDoc(docRef, createPayload);
+        await setDoc(globalDocRef, createPayload);
+        // Also write legacy collection mirror non-blockingly
+        setDoc(legacyDocRef, createPayload).catch(() => {});
         added++;
       }
     } catch (err) {
-      console.warn(`[GlobalExerciseLibrary] Error persisting ${trimmedName}:`, err);
+      console.warn(`[GlobalExerciseLibrary] Error upserting "${trimmedName}" to ${GLOBAL_EXERCISE_LIBRARY_COLLECTION}:`, err);
     }
   }
 
@@ -298,12 +322,25 @@ export async function saveExercisesToGlobalLibrary(
 }
 
 /**
+ * Directly upserts a single custom exercise into the global_exercise_library Firestore collection.
+ * Ensures metadata (sets, reps, weight, rest, cues, block) and video link are saved for future search/reuse.
+ */
+export async function upsertCustomExerciseToLibrary(
+  exercise: Exercise | { name: string; youtubeLink?: string; coachNote?: string; sets?: number; reps?: string; weight?: string; rest?: string; block?: string; voiceNote?: string },
+  sourceLabel: string = 'User Program'
+): Promise<boolean> {
+  if (!exercise || !exercise.name || !exercise.name.trim()) return false;
+  const result = await saveExercisesToGlobalLibrary([exercise], sourceLabel);
+  return (result.added + result.updated) > 0;
+}
+
+/**
  * Debounced / real-time single exercise synchronization to Global Exercise Library.
  */
 let syncTimeoutMap = new Map<string, any>();
 export function syncSingleExerciseToGlobalLibrary(
-  exercise: Exercise | { name: string; youtubeLink?: string; coachNote?: string; sets?: number; reps?: string; weight?: string; rest?: string; block?: string },
-  sourceLabel: string = 'Client Program'
+  exercise: Exercise | { name: string; youtubeLink?: string; coachNote?: string; sets?: number; reps?: string; weight?: string; rest?: string; block?: string; voiceNote?: string },
+  sourceLabel: string = 'User Program'
 ) {
   if (!exercise || !exercise.name || !exercise.name.trim() || exercise.name.trim().length < 2) return;
   const norm = normalizeExerciseName(exercise.name.trim());
@@ -332,18 +369,21 @@ export async function updateLibraryExerciseLink(
   const normalized = normalizeExerciseName(exerciseName);
   if (!normalized) return;
   const docId = sanitizeExerciseDocId(normalized);
-  const docRef = doc(db, 'exerciseLibrary', docId);
+  const globalDocRef = doc(db, GLOBAL_EXERCISE_LIBRARY_COLLECTION, docId);
+  const legacyDocRef = doc(db, LEGACY_EXERCISE_LIBRARY_COLLECTION, docId);
 
-  const snap = await getDoc(docRef);
+  const snap = await getDoc(globalDocRef);
   if (snap.exists()) {
     const payload: any = {
       youtubeLink: youtubeLink.trim(),
-      updatedAt: serverTimestamp()
+      updatedAt: serverTimestamp(),
+      lastUsedAt: serverTimestamp()
     };
     if (coachNote !== undefined) payload.coachNote = coachNote;
-    await updateDoc(docRef, payload);
+    await updateDoc(globalDocRef, payload);
+    updateDoc(legacyDocRef, payload).catch(() => {});
   } else {
-    await setDoc(docRef, {
+    const newDoc = {
       name: exerciseName.trim(),
       normalizedName: normalized,
       youtubeLink: youtubeLink.trim(),
@@ -353,11 +393,15 @@ export async function updateLibraryExerciseLink(
       weight: 'Moderate',
       rest: '60s',
       block: 'Conditioning',
+      isCustom: true,
       usageCount: 1,
       source: 'Master Directory',
       createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
-    });
+      updatedAt: serverTimestamp(),
+      lastUsedAt: serverTimestamp()
+    };
+    await setDoc(globalDocRef, newDoc);
+    setDoc(legacyDocRef, newDoc).catch(() => {});
   }
 }
 
@@ -366,7 +410,8 @@ export async function updateLibraryExerciseLink(
  */
 export async function deleteExerciseFromGlobalLibrary(docId: string): Promise<void> {
   if (!docId) return;
-  await deleteDoc(doc(db, 'exerciseLibrary', docId));
+  await deleteDoc(doc(db, GLOBAL_EXERCISE_LIBRARY_COLLECTION, docId)).catch(() => {});
+  await deleteDoc(doc(db, LEGACY_EXERCISE_LIBRARY_COLLECTION, docId)).catch(() => {});
 }
 
 /**
