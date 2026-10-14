@@ -224,7 +224,20 @@
         "overheadReach": { "type": "string", "enum": ["yes", "no"] },
         "sleepAffected": { "type": "string", "enum": ["yes", "no"] },
         "dietAdherence": { "type": "string", "enum": ["yes", "partially", "no"] },
-        "freeText": { "type": "string" }
+        "freeText": { "type": "string" },
+        "exerciseFeedbackNotes": { "type": "string" },
+        "painAreas": { "type": "array", "items": { "type": "string" } },
+        "exercisesTooHard": { "type": "array", "items": { "type": "string" } },
+        "exercisesTooEasy": { "type": "array", "items": { "type": "string" } },
+        "equipmentConstraints": { "type": "string" },
+        "sleepRating": { "type": "number" },
+        "aiAdaptedStatus": { "type": "string", "enum": ["pending", "adapted", "reviewed", "applied"] },
+        "adaptationSummary": { "type": "string" },
+        "adaptedAt": { "type": "string" },
+        "targetNextWeek": { "type": "integer" },
+        "conductedInMeeting": { "type": "boolean" },
+        "meetingNotes": { "type": "string" },
+        "coachConductedBy": { "type": "string" }
       },
       "required": ["uid", "clientType", "weekOf", "submittedAt"]
     },
@@ -261,9 +274,27 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["name"]
+    },
+    "PersonalRecord": {
+      "title": "PersonalRecord",
+      "description": "Client personal best record for an exercise",
+      "type": "object",
+      "properties": {
+        "clientId": { "type": "string" },
+        "exerciseName": { "type": "string" },
+        "weight": { "type": "number" },
+        "reps": { "type": "string" },
+        "achievedAt": { "type": "string" },
+        "weekNumber": { "type": "integer" }
+      },
+      "required": ["clientId", "exerciseName", "weight", "reps", "achievedAt", "weekNumber"]
     }
   },
   "firestore": {
+    "/personalRecords/{recordId}": {
+      "schema": "PersonalRecord",
+      "description": "Client personal records for exercises"
+    },
     "/global_exercise_library/{exerciseId}": {
       "schema": "ExerciseLibrary",
       "description": "Global exercise library items"

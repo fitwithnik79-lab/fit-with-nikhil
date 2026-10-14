@@ -6,7 +6,6 @@ import { collection, query, where, onSnapshot, addDoc, serverTimestamp, orderBy,
 import { db, storage } from '../lib/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { BodyMetrics, Workout, Exercise, Feedback, UserProfile, NutritionPlan, Message, Habit, HabitLog, Goal, WeeklyCheckIn, Badge, PersonalRecord, ExerciseLibraryItem } from '../types';
-import { WeeklyCheckInForm } from './WeeklyCheckInForm';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { 
   extractAllVaultExercises, 
@@ -1431,8 +1430,6 @@ export default function ClientDashboard({ user, profile, onLogout }: ClientDashb
   const [personalRecords, setPersonalRecords] = useState<PersonalRecord[]>([]);
   const [adminProfile, setAdminProfile] = useState<UserProfile | null>(null);
   const [activeTab, setActiveTab] = useState<'dash' | 'calendar' | 'goals' | 'tasks' | 'program' | 'progress' | 'profile' | 'meal-ai' | 'nutrition'>('dash');
-  const [showWeeklyCheckIn, setShowWeeklyCheckIn] = useState(false);
-  const [hasCheckedInThisWeek, setHasCheckedInThisWeek] = useState(false);
   const [weeklyCheckIn, setWeeklyCheckIn] = useState<WeeklyCheckIn | null>(null);
 
   const handleToggleHabit = async (habitId: string) => {
@@ -1616,10 +1613,8 @@ export default function ClientDashboard({ user, profile, onLogout }: ClientDashb
 
     const unsubscribeCheckIn = onSnapshot(qCheckIn, (snapshot) => {
       if (!snapshot.empty) {
-        setHasCheckedInThisWeek(true);
         setWeeklyCheckIn(snapshot.docs[0].data() as WeeklyCheckIn);
       } else {
-        setHasCheckedInThisWeek(false);
         setWeeklyCheckIn(null);
       }
     }, (error) => {
@@ -2637,40 +2632,41 @@ export default function ClientDashboard({ user, profile, onLogout }: ClientDashb
                       onGoToChat={() => setShowChat(true)}
                     />
 
-                    {isSunday && !hasCheckedInThisWeek && !showWeeklyCheckIn && (
+                    {/* AI Adapted Routine Success Notice if program was customized */}
+                    {weeklyCheckIn?.aiAdaptedStatus === 'applied' && (
                       <motion.div
                         variants={bentoItemVariants}
-                        className="bg-gradient-to-r from-orange-500 via-amber-500 to-yellow-500 p-8 rounded-[40px] border border-orange-400/20 shadow-2xl flex flex-col md:flex-row md:items-center justify-between gap-6 relative overflow-hidden group"
+                        className="bg-gradient-to-r from-emerald-500/10 via-zinc-900 to-zinc-900 p-6 md:p-8 rounded-[36px] border border-emerald-500/30 shadow-2xl flex flex-col md:flex-row md:items-center justify-between gap-6 relative overflow-hidden"
                       >
-                        <div className="absolute inset-0 bg-white/[0.05] pointer-events-none group-hover:scale-105 transition-transform duration-700" />
-                        <div>
-                          <p className="text-[10px] bg-white/20 text-white font-black uppercase tracking-widest px-3 py-1 rounded-full w-fit mb-3">ACTION REQUIRED</p>
-                          <h3 className="text-xl md:text-2xl font-black tracking-tight text-white flex items-center gap-2">
-                            📋 Sunday Check-in — 2 minutes, helps Nik tune your program
+                        <div className="space-y-1.5 relative z-10">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] bg-emerald-500 text-white font-black uppercase tracking-wider px-3 py-1 rounded-full">
+                              ✨ AI PROGRAM CUSTOMIZED
+                            </span>
+                            <span className="text-emerald-400 text-xs font-bold">
+                              Week {weeklyCheckIn.targetNextWeek || 'Routine'} Ready
+                            </span>
+                          </div>
+                          <h3 className="text-xl md:text-2xl font-black tracking-tight text-white">
+                            Your routine has been updated based on your weekly update!
                           </h3>
+                          {weeklyCheckIn.adaptationSummary && (
+                            <p className="text-xs text-zinc-300 max-w-2xl leading-relaxed italic">
+                              "{weeklyCheckIn.adaptationSummary}"
+                            </p>
+                          )}
                         </div>
                         <button
-                          onClick={() => setShowWeeklyCheckIn(true)}
-                          className="bg-zinc-950 text-white hover:bg-orange-600 hover:text-white font-black uppercase text-xs tracking-widest px-8 py-4 rounded-2xl transition-all self-start md:self-auto shrink-0 shadow-lg"
+                          onClick={() => setActiveTab('program')}
+                          className="px-6 py-3.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl text-xs font-black uppercase tracking-wider transition-all self-start md:self-auto shrink-0 shadow-lg shadow-emerald-500/20 flex items-center gap-2"
                         >
-                          Start
+                          <Folder className="w-4 h-4" />
+                          View Adapted Program
                         </button>
                       </motion.div>
                     )}
 
-                    {showWeeklyCheckIn && !hasCheckedInThisWeek && (
-                      <motion.div variants={bentoItemVariants}>
-                        <WeeklyCheckInForm
-                          profile={profile}
-                          weekOf={thisMonday}
-                          onSuccess={() => {
-                            setShowWeeklyCheckIn(false);
-                            setHasCheckedInThisWeek(true);
-                          }}
-                          onCancel={() => setShowWeeklyCheckIn(false)}
-                        />
-                      </motion.div>
-                    )}
+
 
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                       <div className="lg:col-span-3 space-y-8">

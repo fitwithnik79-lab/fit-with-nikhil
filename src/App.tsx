@@ -375,7 +375,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 py-8 relative z-10">
+      <main className="w-full max-w-7xl mx-auto px-4 py-8 relative z-10 overflow-x-hidden">
         <NotificationBanner userId={user?.uid} />
         <ErrorBoundary>
           {profile.role === 'admin' ? (

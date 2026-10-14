@@ -135,3 +135,33 @@ export async function analyzeNutritionFile(fileContent: string, fileName: string
     return null;
   }
 }
+
+export async function adaptProgramWithAI(params: {
+  clientProfile: any;
+  weeklyCheckIn: any;
+  previousWeekNumber: number;
+  targetWeekNumber: number;
+  previousWeekWorkouts: any[];
+  globalLibraryExercises?: any[];
+}) {
+  try {
+    const response = await fetch('/api/gemini/adapt-program', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    if (!response.ok) {
+      let errMsg = `Server responded with ${response.status}`;
+      try {
+        const body = await response.json();
+        if (body?.error) errMsg = body.error;
+      } catch (e) {}
+      throw new Error(errMsg);
+    }
+    return await response.json();
+  } catch (error) {
+    console.error("Error adapting program with AI:", error);
+    throw error;
+  }
+}
+

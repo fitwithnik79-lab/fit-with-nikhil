@@ -25,7 +25,16 @@ export function WeeklyCheckInForm({ profile, weekOf, onSuccess, onCancel }: Week
   // Common to all
   const [workoutPattern, setWorkoutPattern] = useState<'boring' | 'interesting' | null>(null);
   const [programRating, setProgramRating] = useState<number>(5);
+  const [sleepRating, setSleepRating] = useState<number>(4);
   const [freeText, setFreeText] = useState('');
+
+  // AI Exercise Adaptation Specifics
+  const [selectedPainAreas, setSelectedPainAreas] = useState<string[]>([]);
+  const [exerciseFeedbackNotes, setExerciseFeedbackNotes] = useState('');
+  const [exercisesTooHardInput, setExercisesTooHardInput] = useState('');
+  const [exercisesTooEasyInput, setExercisesTooEasyInput] = useState('');
+  const [equipmentConstraints, setEquipmentConstraints] = useState<'full_gym' | 'dumbbells' | 'bodyweight_travel' | 'custom'>('full_gym');
+  const [customEquipmentNote, setCustomEquipmentNote] = useState('');
 
   // Fitness only
   const [strengthGain, setStrengthGain] = useState<boolean | null>(null);
@@ -45,6 +54,19 @@ export function WeeklyCheckInForm({ profile, weekOf, onSuccess, onCancel }: Week
   // Shoulder only
   const [overheadReach, setOverheadReach] = useState<'yes' | 'no' | 'didnt_test' | null>(null);
   const [sleepAffected, setSleepAffected] = useState<boolean | null>(null);
+
+  const togglePainArea = (area: string) => {
+    if (area === 'none') {
+      setSelectedPainAreas(['none']);
+      return;
+    }
+    const filtered = selectedPainAreas.filter(a => a !== 'none');
+    if (filtered.includes(area)) {
+      setSelectedPainAreas(filtered.filter(a => a !== area));
+    } else {
+      setSelectedPainAreas([...filtered, area]);
+    }
+  };
 
   const validateForm = (): boolean => {
     if (!workoutPattern) return setErrorMsg('Please choose your workout pattern (Boring or Interesting).');
@@ -93,13 +115,23 @@ export function WeeklyCheckInForm({ profile, weekOf, onSuccess, onCancel }: Week
         submittedAt: new Date().toISOString(),
         workoutPattern,
         programRating,
-        freeText: freeText.trim() || undefined
+        sleepRating,
+        freeText: freeText.trim() || undefined,
+        // AI Routine adaptation fields
+        painAreas: selectedPainAreas.filter(a => a !== 'none'),
+        exerciseFeedbackNotes: exerciseFeedbackNotes.trim() || undefined,
+        exercisesTooHard: exercisesTooHardInput ? exercisesTooHardInput.split(',').map(s => s.trim()).filter(Boolean) : [],
+        exercisesTooEasy: exercisesTooEasyInput ? exercisesTooEasyInput.split(',').map(s => s.trim()).filter(Boolean) : [],
+        equipmentConstraints: equipmentConstraints === 'custom' 
+          ? (customEquipmentNote || 'Custom equipment') 
+          : equipmentConstraints === 'full_gym' ? 'Full standard gym' : equipmentConstraints === 'dumbbells' ? 'Dumbbells & Bench only' : 'Bodyweight & Travel',
+        aiAdaptedStatus: 'pending'
       };
 
       if (clientType === 'fitness') {
-        payload.strengthGain = strengthGain;
+        payload.strengthGain = strengthGain ? 'yes' : 'no';
         payload.energyLevel = energyLevel;
-        payload.dietAdherence = dietAdherence;
+        payload.dietAdherence = dietAdherence === 'partial' ? 'partially' : dietAdherence;
       } else {
         // Map BETTER/SAME/WORSE to 'moderate'/'slight'/'no'
         if (painReduction === 'better') payload.painReduction = 'moderate';
@@ -111,19 +143,19 @@ export function WeeklyCheckInForm({ profile, weekOf, onSuccess, onCancel }: Week
           else if (movementImprovement === 'same') payload.movementImprovement = 'slight';
           else if (movementImprovement === 'harder') payload.movementImprovement = 'no';
 
-          payload.kneeStiffness = kneeStiffness;
+          payload.kneeStiffness = kneeStiffness ? 'yes' : 'no';
         } else if (clientType === 'back_injury') {
           if (movementImprovement === 'easier') payload.movementImprovement = 'moderate';
           else if (movementImprovement === 'same') payload.movementImprovement = 'slight';
           else if (movementImprovement === 'harder') payload.movementImprovement = 'no';
 
-          payload.sharpPain = sharpPain;
+          payload.sharpPain = sharpPain ? 'yes' : 'no';
         } else if (clientType === 'shoulder_injury') {
-          if (overheadReach === 'yes') payload.overheadReach = true;
-          else if (overheadReach === 'no') payload.overheadReach = false;
+          if (overheadReach === 'yes') payload.overheadReach = 'yes';
+          else if (overheadReach === 'no') payload.overheadReach = 'no';
           // if 'didnt_test', omit or set to undefined
 
-          payload.sleepAffected = sleepAffected;
+          payload.sleepAffected = sleepAffected ? 'yes' : 'no';
         }
       }
 
@@ -762,16 +794,185 @@ export function WeeklyCheckInForm({ profile, weekOf, onSuccess, onCancel }: Week
                   </div>
                 </div>
 
+                {/* Sleep & Recovery Rating */}
+                <div className="space-y-3">
+                  <label className="text-sm font-bold text-zinc-200 block">
+                    Sleep & Recovery Quality:
+                  </label>
+                  <div className="flex items-center gap-3">
+                    {[1, 2, 3, 4, 5].map((level) => (
+                      <button
+                        key={level}
+                        type="button"
+                        onClick={() => setSleepRating(level)}
+                        className={`w-12 h-12 rounded-2xl text-sm font-black transition-all border flex items-center justify-center ${
+                          sleepRating === level
+                            ? 'bg-blue-600 border-blue-400 text-white shadow-lg shadow-blue-500/20'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-white'
+                        }`}
+                      >
+                        {level}★
+                      </button>
+                    ))}
+                    <span className="text-zinc-500 text-xs font-bold uppercase tracking-widest ml-2">
+                      {sleepRating >= 4 ? 'Deep Rest' : sleepRating === 3 ? 'Average' : 'High Fatigue'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* === AI EXERCISE ROUTINE CUSTOMIZATION SECTION === */}
+                <div className="p-6 bg-zinc-900/60 border border-orange-500/20 rounded-3xl space-y-6">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 bg-orange-500/10 rounded-xl text-orange-500">
+                      <Sparkles className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-black uppercase tracking-wider text-white">
+                        AI Exercise Routine Customizer
+                      </h4>
+                      <p className="text-xs text-zinc-400">
+                        The AI will adapt your next week exercises based on your feedback below.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Joint Discomfort Hotspots */}
+                  <div className="space-y-3">
+                    <label className="text-xs font-bold text-zinc-300 block uppercase tracking-wider">
+                      Any joint stiffness or discomfort during workouts this week?
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      {[
+                        { id: 'none', label: '✅ Pain-Free & Great' },
+                        { id: 'knees', label: '🦵 Knees' },
+                        { id: 'lower_back', label: '🦴 Lower Back' },
+                        { id: 'shoulders', label: '💪 Shoulders' },
+                        { id: 'elbows', label: '🦾 Elbows' },
+                        { id: 'wrists', label: '✋ Wrists' },
+                        { id: 'hips', label: '🏃 Hips' },
+                        { id: 'neck', label: '🧘 Neck' }
+                      ].map((chip) => {
+                        const isSelected = selectedPainAreas.includes(chip.id);
+                        return (
+                          <button
+                            key={chip.id}
+                            type="button"
+                            onClick={() => togglePainArea(chip.id)}
+                            className={`px-4 py-2.5 rounded-2xl text-xs font-bold transition-all border ${
+                              isSelected
+                                ? chip.id === 'none'
+                                  ? 'bg-emerald-500 border-emerald-400 text-white'
+                                  : 'bg-red-500/20 border-red-500 text-red-300'
+                                : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                            }`}
+                          >
+                            {chip.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Exercises that caused pain / need swapping */}
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-zinc-300 block uppercase tracking-wider">
+                      Specific exercises that felt awkward or aggravated pain:
+                    </label>
+                    <input
+                      type="text"
+                      value={exerciseFeedbackNotes}
+                      onChange={(e) => setExerciseFeedbackNotes(e.target.value)}
+                      placeholder="e.g., Barbell Back Squat irritated left knee, Overhead press pinched shoulder"
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl p-4 text-xs focus:border-orange-500 outline-none text-white placeholder:text-zinc-650"
+                    />
+                    <span className="text-[10px] text-zinc-500">
+                      💡 The AI will automatically swap these exercises for joint-friendly alternatives in next week's split.
+                    </span>
+                  </div>
+
+                  {/* Progression / Overload */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-zinc-300 block uppercase tracking-wider">
+                        Felt Too Easy / Ready to Increase:
+                      </label>
+                      <input
+                        type="text"
+                        value={exercisesTooEasyInput}
+                        onChange={(e) => setExercisesTooEasyInput(e.target.value)}
+                        placeholder="e.g., Bench Press, Lat Pulldown"
+                        className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl p-3.5 text-xs focus:border-orange-500 outline-none text-white placeholder:text-zinc-650"
+                      />
+                      <span className="text-[10px] text-zinc-500">
+                        AI will increase load or intensity targets.
+                      </span>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-zinc-300 block uppercase tracking-wider">
+                        Felt Too Heavy / Stalled:
+                      </label>
+                      <input
+                        type="text"
+                        value={exercisesTooHardInput}
+                        onChange={(e) => setExercisesTooHardInput(e.target.value)}
+                        placeholder="e.g., Barbell Deadlift, Pull-Ups"
+                        className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl p-3.5 text-xs focus:border-orange-500 outline-none text-white placeholder:text-zinc-650"
+                      />
+                      <span className="text-[10px] text-zinc-500">
+                        AI will adjust volume or provide regressions.
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Equipment for Next Week */}
+                  <div className="space-y-2.5">
+                    <label className="text-xs font-bold text-zinc-300 block uppercase tracking-wider">
+                      Equipment availability for Next Week:
+                    </label>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                      {[
+                        { id: 'full_gym', label: '🏋️ Full Gym' },
+                        { id: 'dumbbells', label: '🔩 DBs & Bench' },
+                        { id: 'bodyweight_travel', label: '✈️ Bodyweight / Travel' },
+                        { id: 'custom', label: '⚙️ Custom' }
+                      ].map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => setEquipmentConstraints(item.id as any)}
+                          className={`p-3 rounded-2xl text-xs font-bold transition-all border text-center ${
+                            equipmentConstraints === item.id
+                              ? 'bg-orange-500 border-orange-400 text-white'
+                              : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                          }`}
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
+                    {equipmentConstraints === 'custom' && (
+                      <input
+                        type="text"
+                        value={customEquipmentNote}
+                        onChange={(e) => setCustomEquipmentNote(e.target.value)}
+                        placeholder="Describe what equipment you have access to..."
+                        className="w-full mt-2 bg-zinc-950 border border-zinc-800 rounded-2xl p-3.5 text-xs focus:border-orange-500 outline-none text-white"
+                      />
+                    )}
+                  </div>
+                </div>
+
                 {/* Free Text: optional textarea "Anything Nik should know?" */}
                 <div className="space-y-3">
                   <label className="text-sm font-bold text-zinc-200 block">
-                    Anything Nik should know?
+                    Personal note to Coach Nik:
                   </label>
                   <textarea
                     value={freeText}
                     onChange={(e) => setFreeText(e.target.value)}
                     placeholder="Tell Nik how you felt, where you struggled, or any milestones..."
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded-3xl p-5 text-sm focus:ring-1 focus:ring-orange-500 outline-none min-h-[120px] text-zinc-100 placeholder:text-zinc-600"
+                    className="w-full bg-zinc-900 border border-zinc-800 rounded-3xl p-5 text-sm focus:ring-1 focus:ring-orange-500 outline-none min-h-[100px] text-zinc-100 placeholder:text-zinc-600"
                   />
                 </div>
               </div>

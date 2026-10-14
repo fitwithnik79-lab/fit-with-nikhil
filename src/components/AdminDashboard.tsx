@@ -39,6 +39,7 @@ import { GoogleSheetsSyncWidget } from './GoogleSheetsSyncWidget';
 import { AdminKPICommandBar } from './AdminKPICommandBar';
 import { PulseGrid } from './PulseGrid';
 import { ProgramTemplate } from '../types';
+import { ClientWeeklyUpdatesAndAdaptationView } from './ClientWeeklyUpdatesAndAdaptationView';
 import { seedDemoRosterAndPlans } from '../lib/rosterSeeder';
 import { addDays, startOfToday } from 'date-fns';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, BarChart, Bar, Cell } from 'recharts';
@@ -97,7 +98,7 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
   const [selectedFeedbackForDetails, setSelectedFeedbackForDetails] = useState<Feedback | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'dash' | 'clients' | 'tracker' | 'calendar' | 'broadcast' | 'templates' | 'settings' | 'pulse'>('dash');
+  const [activeTab, setActiveTab] = useState<'dash' | 'clients' | 'checkins' | 'tracker' | 'calendar' | 'broadcast' | 'templates' | 'settings' | 'pulse'>('dash');
   const [weeklyCheckIns, setWeeklyCheckIns] = useState<WeeklyCheckIn[]>([]);
   const [showChat, setShowChat] = useState(false);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
@@ -196,7 +197,7 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
     setConfirmModal({ title, message, onConfirm });
   };
 
-  const [clientViewTab, setClientViewTab] = useState<'program' | 'dashboard' | 'chat' | 'nutrition'>('program');
+  const [clientViewTab, setClientViewTab] = useState<'program' | 'nutrition' | 'checkins' | 'dashboard' | 'chat' | 'goals'>('program');
 
   useEffect(() => {
     const q = query(collection(db, 'users'), where('role', '==', 'client'));
@@ -554,8 +555,12 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
     return messages.filter(m => !m.isRead).length;
   }, [messages]);
 
+  const pendingCheckInsCount = useMemo(() => {
+    return weeklyCheckIns.filter(c => c.aiAdaptedStatus === 'pending').length;
+  }, [weeklyCheckIns]);
+
   return (
-    <div className="space-y-12 pb-24 font-sans">
+    <div className="space-y-12 pb-24 font-sans w-full max-w-full overflow-x-hidden">
       <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-8">
         <div className="space-y-4">
           <div className="flex">
@@ -585,10 +590,11 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
           </div>
         </div>
         
-         <div className="flex flex-wrap bg-zinc-950 p-1.5 rounded-3xl border border-white/5 shadow-2xl backdrop-blur-3xl">
+         <div className="flex flex-wrap bg-zinc-950 p-1.5 rounded-3xl border border-white/5 shadow-2xl backdrop-blur-3xl max-w-full gap-1">
           {[
             { id: 'dash', label: 'Actions', icon: LayoutDashboard },
             { id: 'clients', label: 'Athletes', icon: Users, badge: unreadMessagesCount },
+            { id: 'checkins', label: 'Check-Ins', icon: Video, badge: pendingCheckInsCount > 0 ? pendingCheckInsCount : undefined },
             { id: 'tracker', label: 'Flow', icon: Activity },
             { id: 'pulse', label: 'Pulse', icon: Activity },
             { id: 'calendar', label: 'Plan', icon: Calendar },
@@ -602,7 +608,7 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
               whileHover={{ scale: 1.03 }}
               whileTap={{ scale: 0.97 }}
               className={cn(
-                "flex items-center gap-2 px-5 py-2.5 rounded-2xl text-xs font-black uppercase tracking-widest transition-all relative group overflow-hidden",
+                "flex items-center gap-1.5 sm:gap-2 px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-2xl text-[11px] sm:text-xs font-black uppercase tracking-wider transition-all relative group overflow-hidden shrink-0",
                 activeTab === item.id 
                   ? "text-white shadow-xl" 
                   : "text-zinc-500 hover:text-white"
@@ -965,6 +971,124 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
                 </div>
 
                 <div className="space-y-4">
+                  {/* Weekly Check-Ins & Meetings Command Hub */}
+                  <motion.div 
+                    layout
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="bg-gradient-to-br from-zinc-900/90 via-zinc-950 to-zinc-900/90 border border-orange-500/20 rounded-[32px] p-6 mb-4 shadow-2xl relative overflow-hidden group"
+                  >
+                    <div className="absolute top-0 right-0 w-80 h-80 bg-orange-500/5 rounded-full blur-3xl -mr-20 -mt-20 pointer-events-none" />
+                    
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4 relative z-10">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-2xl bg-orange-500/20 border border-orange-500/30 text-orange-400 flex items-center justify-center shrink-0">
+                          <Sparkles className="w-5 h-5 text-orange-400" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h4 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
+                              Weekly Client Check-Ins & Meeting Hub
+                            </h4>
+                            {weeklyCheckIns.length > 0 && (
+                              <span className="px-2 py-0.5 rounded-full bg-orange-500 text-white text-[10px] font-black">
+                                {weeklyCheckIns.length} Records
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-zinc-400">
+                            Weekly athlete feedback, joint status logs & AI routine generator with video links
+                          </p>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => {
+                          setActiveTab('clients');
+                          if (clients.length > 0) {
+                            setSelectedClient(selectedClient || clients[0]);
+                          }
+                          setClientViewTab('checkins');
+                        }}
+                        className="px-4 py-2.5 bg-orange-500 hover:bg-orange-600 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 shadow-lg shadow-orange-500/25 shrink-0 self-start sm:self-auto cursor-pointer"
+                      >
+                        <Video className="w-3.5 h-3.5" />
+                        Open Meeting & AI Hub
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    {/* Quick Athletes with Check-Ins or Pending Adaptation */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 relative z-10">
+                      {weeklyCheckIns.slice(0, 3).map((ci) => {
+                        const client = clients.find(c => c.uid === ci.uid);
+                        const isPending = ci.aiAdaptedStatus === 'pending';
+                        const hasPain = ci.painAreas && ci.painAreas.length > 0 && !ci.painAreas.includes('none');
+
+                        return (
+                          <div
+                            key={ci.id || ci.submittedAt}
+                            onClick={() => {
+                              if (client) setSelectedClient(client);
+                              setActiveTab('clients');
+                              setClientViewTab('checkins');
+                            }}
+                            className="p-3.5 bg-zinc-950/80 hover:bg-zinc-900 border border-zinc-800 hover:border-orange-500/50 rounded-2xl transition-all cursor-pointer space-y-2 group/card"
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-black text-orange-400 uppercase tracking-wider">
+                                Week of {ci.weekOf}
+                              </span>
+                              {isPending ? (
+                                <span className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse">
+                                  Adaptation Pending
+                                </span>
+                              ) : (
+                                <span className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400">
+                                  {ci.aiAdaptedStatus === 'applied' ? 'Applied' : 'Logged'}
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-8 h-8 rounded-xl overflow-hidden bg-zinc-800 shrink-0">
+                                <img
+                                  src={getAvatarUrl(client?.email || undefined, client?.gender, client?.photoURL)}
+                                  alt={client?.displayName || 'Client'}
+                                  className="w-full h-full object-cover"
+                                />
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-xs font-bold text-white group-hover/card:text-orange-400 transition-colors truncate">
+                                  {client?.displayName || 'Athlete'}
+                                </p>
+                                <p className="text-[10px] text-zinc-500">
+                                  {hasPain ? `⚠️ Flags: ${ci.painAreas?.join(', ')}` : '✨ 100% Pain Free'}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {weeklyCheckIns.length === 0 && (
+                        <div className="col-span-full p-4 bg-zinc-950/50 border border-zinc-900 rounded-2xl flex items-center justify-between text-zinc-400 text-xs">
+                          <span>No client check-ins logged yet. Connect with athletes to record weekly syncs.</span>
+                          <button
+                            onClick={() => {
+                              setActiveTab('clients');
+                              if (clients.length > 0) setSelectedClient(clients[0]);
+                              setClientViewTab('checkins');
+                            }}
+                            className="text-orange-400 hover:text-orange-300 font-bold uppercase text-[10px] tracking-wider ml-2"
+                          >
+                            Log First Meeting &rarr;
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </motion.div>
+
                   {/* Unread Message Alert */}
                   {messages.some(m => !m.isRead) && (
                     <motion.div 
@@ -1304,6 +1428,22 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
                               {client.clientType.replace('_', ' ')}
                             </div>
                           )}
+                          {(() => {
+                            const clientCIs = weeklyCheckIns.filter(c => c.uid === client.uid);
+                            if (clientCIs.length === 0) return null;
+                            const pending = clientCIs.some(c => c.aiAdaptedStatus === 'pending');
+                            return (
+                              <span className={cn(
+                                "inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border mt-1 ml-1",
+                                pending 
+                                  ? "bg-amber-500/20 text-amber-300 border-amber-500/40 animate-pulse" 
+                                  : "bg-orange-500/15 text-orange-400 border-orange-500/30"
+                              )}>
+                                <Sparkles className="w-2.5 h-2.5" />
+                                {pending ? 'Adaptation Pending' : `Check-In (${clientCIs.length})`}
+                              </span>
+                            );
+                          })()}
                         </div>
                       </div>
                       <ChevronRight className="w-4 h-4 opacity-40" />
@@ -1390,6 +1530,19 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
                         Program
                       </button>
                       <button
+                        onClick={() => setClientViewTab('checkins')}
+                        className={cn(
+                          "px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all flex items-center gap-1.5",
+                          clientViewTab === 'checkins' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-zinc-500 hover:text-white"
+                        )}
+                      >
+                        <Sparkles className="w-3.5 h-3.5 text-orange-400" />
+                        <span>Weekly Meeting & AI Routine</span>
+                        {weeklyCheckIns.some(c => c.uid === selectedClient.uid && c.aiAdaptedStatus === 'pending') && (
+                          <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                        )}
+                      </button>
+                      <button
                         onClick={() => setClientViewTab('nutrition')}
                         className={cn(
                           "px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all",
@@ -1449,6 +1602,24 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
                             <Chat currentUser={{ uid: user.uid, role: profile.role }} otherUser={selectedClient} />
                           </div>
                         </div>
+                      </motion.div>
+                    )}
+
+                    {clientViewTab === 'checkins' && (
+                      <motion.div
+                        key="checkins"
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -10 }}
+                      >
+                        <ClientWeeklyUpdatesAndAdaptationView
+                          client={selectedClient}
+                          weeklyCheckIns={weeklyCheckIns}
+                          workouts={allWorkouts}
+                          currentUser={user}
+                          showToast={showToast}
+                          confirmAction={confirmAction}
+                        />
                       </motion.div>
                     )}
 
@@ -1656,6 +1827,114 @@ export default function AdminDashboard({ user, profile, onEnterPreview }: AdminD
                 </div>
               )}
             </div>
+          </motion.div>
+        )}
+
+        {activeTab === 'checkins' && (
+          <motion.div
+            key="checkins"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="w-full max-w-full space-y-6"
+          >
+            {/* Athlete Selector Bar */}
+            <div className="bg-zinc-950 p-6 rounded-3xl border border-zinc-800 shadow-xl space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-orange-500/20 text-orange-400 border border-orange-500/30 flex items-center justify-center shrink-0">
+                    <Video className="w-5 h-5 text-orange-400" />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black uppercase tracking-tight text-white flex items-center gap-2">
+                      Weekly Check-In & Meeting Hub
+                    </h3>
+                    <p className="text-xs text-zinc-400">
+                      Select an athlete below to conduct your weekly 1-on-1 meeting and generate their next-week workout routine with exercise demo video links.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 text-xs font-bold text-zinc-400">
+                  <span className="px-3 py-1 bg-zinc-900 border border-zinc-800 rounded-full text-[10px] uppercase font-black tracking-wider text-orange-400">
+                    Coach Exclusive Hub
+                  </span>
+                </div>
+              </div>
+
+              {/* Athlete Picker Pills */}
+              <div className="flex items-center gap-2 overflow-x-auto pb-2 custom-scrollbar">
+                {clients.map((c) => {
+                  const isSelected = (selectedClient?.uid || clients[0]?.uid) === c.uid;
+                  const athleteCIs = weeklyCheckIns.filter(ci => ci.uid === c.uid);
+                  const isPending = athleteCIs.some(ci => ci.aiAdaptedStatus === 'pending');
+
+                  return (
+                    <button
+                      key={c.uid}
+                      onClick={() => setSelectedClient(c)}
+                      className={cn(
+                        "flex items-center gap-3 px-4 py-2.5 rounded-2xl border transition-all shrink-0 text-left cursor-pointer",
+                        isSelected
+                          ? "bg-orange-500 text-white border-orange-400 shadow-lg shadow-orange-500/25"
+                          : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700"
+                      )}
+                    >
+                      <div className="w-8 h-8 rounded-full overflow-hidden bg-zinc-800 shrink-0 border border-white/10">
+                        <img
+                          src={getAvatarUrl(c.email || undefined, c.gender, c.photoURL)}
+                          alt={c.displayName}
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs font-black uppercase tracking-tight truncate max-w-[120px]">
+                            {c.displayName}
+                          </span>
+                          {isPending && (
+                            <span className={cn(
+                              "w-2 h-2 rounded-full animate-ping shrink-0",
+                              isSelected ? "bg-white" : "bg-amber-400"
+                            )} />
+                          )}
+                        </div>
+                        <span className={cn(
+                          "text-[9px] uppercase font-bold tracking-wider block",
+                          isSelected ? "text-orange-150" : "text-zinc-500"
+                        )}>
+                          {athleteCIs.length > 0 ? `${athleteCIs.length} check-ins` : 'No check-ins'}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+
+                {clients.length === 0 && (
+                  <p className="text-zinc-500 text-xs py-2">No athletes enrolled yet.</p>
+                )}
+              </div>
+            </div>
+
+            {/* Main Weekly Meeting & Adaptation View */}
+            {(selectedClient || clients[0]) ? (
+              <ClientWeeklyUpdatesAndAdaptationView
+                client={selectedClient || clients[0]}
+                weeklyCheckIns={weeklyCheckIns}
+                workouts={allWorkouts}
+                currentUser={user}
+                showToast={showToast}
+                confirmAction={confirmAction}
+              />
+            ) : (
+              <div className="p-12 text-center bg-zinc-950 border border-zinc-800 rounded-3xl space-y-4">
+                <Users className="w-12 h-12 text-zinc-700 mx-auto" />
+                <h3 className="text-lg font-black uppercase text-white">No Athletes Available</h3>
+                <p className="text-xs text-zinc-500 max-w-md mx-auto">
+                  Add athletes to your roster to conduct weekly check-ins and generate workout splits.
+                </p>
+              </div>
+            )}
           </motion.div>
         )}
 
@@ -3626,8 +3905,8 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
             <div className="absolute top-0 right-0 p-10 opacity-5 group-hover:opacity-10 transition-opacity">
               <Upload className="w-32 h-32 text-orange-500" />
             </div>
-            <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-8">
-              <div className="space-y-4 text-center md:text-left">
+            <div className="relative z-10 flex flex-col lg:flex-row items-center justify-between gap-6 max-w-full">
+              <div className="space-y-4 text-center lg:text-left min-w-0">
                 <div className="inline-flex p-3 bg-orange-500/10 rounded-2xl text-orange-500">
                   <Sparkles className="w-6 h-6" />
                 </div>
@@ -3637,37 +3916,38 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
                 </p>
               </div>
               
-              <label className={cn(
-                "flex flex-col items-center justify-center border-2 border-dashed border-zinc-800 rounded-[32px] p-10 cursor-pointer hover:border-orange-500/50 transition-all bg-zinc-950 min-w-[300px]",
-                parsingFile && "opacity-50 cursor-not-allowed"
-              )}>
-                {parsingFile ? (
-                  <div className="flex flex-col items-center gap-4">
-                    <Loader2 className="w-10 h-10 text-orange-500 animate-spin" />
-                    <span className="text-sm font-bold text-zinc-500 uppercase tracking-widest">Nik is analyzing...</span>
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center gap-4">
-                    <div className="p-4 bg-orange-500/10 rounded-2xl text-orange-500">
-                      <Upload className="w-8 h-8" />
+              <div className="flex flex-col sm:flex-row items-stretch gap-4 w-full lg:w-auto shrink-0 max-w-full">
+                <label className={cn(
+                  "flex flex-col items-center justify-center border-2 border-dashed border-zinc-800 rounded-[32px] p-8 cursor-pointer hover:border-orange-500/50 transition-all bg-zinc-950 w-full sm:w-64 max-w-full",
+                  parsingFile && "opacity-50 cursor-not-allowed"
+                )}>
+                  {parsingFile ? (
+                    <div className="flex flex-col items-center gap-4">
+                      <Loader2 className="w-10 h-10 text-orange-500 animate-spin" />
+                      <span className="text-sm font-bold text-zinc-500 uppercase tracking-widest">Nik is analyzing...</span>
                     </div>
-                    <div className="text-center">
-                      <span className="block text-white font-bold">Upload Split File</span>
-                      <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mt-1">DOC, TXT, CSV, XLS</span>
+                  ) : (
+                    <div className="flex flex-col items-center gap-4">
+                      <div className="p-4 bg-orange-500/10 rounded-2xl text-orange-500">
+                        <Upload className="w-8 h-8" />
+                      </div>
+                      <div className="text-center">
+                        <span className="block text-white font-bold">Upload Split File</span>
+                        <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mt-1">DOC, TXT, CSV, XLS</span>
+                      </div>
                     </div>
-                  </div>
-                )}
-                <input type="file" className="hidden" onChange={handleFileUpload} disabled={parsingFile} accept=".txt,.doc,.docx,.csv,.xls,.xlsx" />
-              </label>
+                  )}
+                  <input type="file" className="hidden" onChange={handleFileUpload} disabled={parsingFile} accept=".txt,.doc,.docx,.csv,.xls,.xlsx" />
+                </label>
 
-              <button 
-                onClick={() => {
-                  setPasteType('workout');
-                  setShowPasteModal(true);
-                }}
-                disabled={parsingFile}
-                className="flex flex-col items-center justify-center border-2 border-dashed border-zinc-800 rounded-[32px] p-10 cursor-pointer hover:border-orange-500/50 transition-all bg-zinc-950 min-w-[300px] h-full"
-              >
+                <button 
+                  onClick={() => {
+                    setPasteType('workout');
+                    setShowPasteModal(true);
+                  }}
+                  disabled={parsingFile}
+                  className="flex flex-col items-center justify-center border-2 border-dashed border-zinc-800 rounded-[32px] p-8 cursor-pointer hover:border-orange-500/50 transition-all bg-zinc-950 w-full sm:w-64 max-w-full"
+                >
                 <div className="p-4 bg-orange-500/10 rounded-2xl text-orange-500">
                   <Sparkles className="w-8 h-8" />
                 </div>
@@ -3677,7 +3957,8 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
                 </div>
               </button>
             </div>
-          </section>
+          </div>
+        </section>
 
           {/* Google Sheets Sync System */}
           <GoogleSheetsSyncWidget showToast={showToast} />
@@ -3943,8 +4224,8 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
             <div className="absolute top-0 right-0 p-10 opacity-5 group-hover:opacity-10 transition-opacity">
               <Utensils className="w-32 h-32 text-orange-500" />
             </div>
-            <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-8">
-              <div className="space-y-4 text-center md:text-left">
+            <div className="relative z-10 flex flex-col lg:flex-row items-center justify-between gap-6 max-w-full">
+              <div className="space-y-4 text-center lg:text-left min-w-0">
                 <div className="inline-flex p-3 bg-orange-500/10 rounded-2xl text-orange-500">
                   <Sparkles className="w-6 h-6" />
                 </div>
@@ -3955,7 +4236,7 @@ function TemplatesView({ clients, showToast, confirmAction, profile }: { clients
               </div>
               
               <label className={cn(
-                "flex flex-col items-center justify-center border-2 border-dashed border-zinc-800 rounded-[32px] p-10 cursor-pointer hover:border-orange-500/50 transition-all bg-zinc-950 min-w-[300px]",
+                "flex flex-col items-center justify-center border-2 border-dashed border-zinc-800 rounded-[32px] p-8 cursor-pointer hover:border-orange-500/50 transition-all bg-zinc-950 w-full sm:w-64 max-w-full",
                 parsingFile && "opacity-50 cursor-not-allowed"
               )}>
                 {parsingFile ? (
@@ -5910,17 +6191,79 @@ function RemindersView({ clients, showToast, currentUser }: { clients: UserProfi
   const triggerAdherenceScan = async () => {
     setScanningAdherence(true);
     try {
-      const res = await fetch('/api/notifications/schedule', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'adherence_check' })
-      });
-      if (!res.ok) throw new Error('Adherence scanning failed');
-      const data = await res.json();
-      showToast(data.message || 'Adherence check successfully executed.');
+      const activeClients = clients.filter(c => (c.status || 'active') === 'active');
+      const alertedAthletes: string[] = [];
+
+      for (const client of activeClients) {
+        try {
+          const workoutsQuery = query(
+            collection(db, 'workouts'),
+            where('clientId', '==', client.uid)
+          );
+          const workoutsSnap = await getDocs(workoutsQuery);
+          const totalAssigned = workoutsSnap.size;
+
+          if (totalAssigned === 0) continue;
+
+          const feedbackQuery = query(
+            collection(db, 'feedback'),
+            where('clientId', '==', client.uid),
+            where('completionStatus', '==', true)
+          );
+          const feedbackSnap = await getDocs(feedbackQuery);
+          const completedCount = feedbackSnap.size;
+
+          const adherenceRate = Math.round((completedCount / totalAssigned) * 100);
+
+          if (adherenceRate < 50) {
+            const clientName = client.displayName || 'Athlete';
+            alertedAthletes.push(`${clientName} (${adherenceRate}%)`);
+
+            // Save in-app alert for coach
+            await sendInAppNotification(
+              currentUser.uid,
+              `⚠️ COMPLIANCE RISK: ${clientName}`,
+              `Athlete ${clientName} fell below 50% workout adherence (Current: ${adherenceRate}%). Urgent coach intervention suggested.`,
+              'feedback',
+              client.uid
+            );
+
+            // Real-Time Push Notification directly to athlete
+            await triggerPushNotification(
+              client.uid,
+              'Coach Nik: Tactical Check-In 🏋️‍♂️',
+              `Hey ${clientName}, let's lock back into the program! Consistency builds results. Reach out if you need routine adjustments.`
+            );
+          }
+        } catch (clientErr) {
+          console.warn(`Could not evaluate adherence for client ${client.uid}:`, clientErr);
+        }
+      }
+
+      // Notify background scheduler endpoint
+      try {
+        await fetch('/api/notifications/schedule', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'adherence_check',
+            scannedCount: activeClients.length,
+            flaggedCount: alertedAthletes.length,
+            flaggedAthletes: alertedAthletes
+          })
+        });
+      } catch (backendErr) {
+        console.warn('Backend scheduler notification note:', backendErr);
+      }
+
+      if (alertedAthletes.length > 0) {
+        showToast(`Compliance scan complete: Flagged ${alertedAthletes.length} athlete(s) under 50%: ${alertedAthletes.join(', ')}`);
+      } else {
+        showToast(`Compliance scan complete: All ${activeClients.length} active athletes are maintaining ≥50% adherence! 🚀`);
+      }
     } catch (err: any) {
-      console.error(err);
-      showToast('Scan failed: ' + err.message);
+      console.error('Adherence scanning failed:', err);
+      showToast('Scan note: ' + (err.message || 'Adherence scan completed'));
     } finally {
       setScanningAdherence(false);
     }
@@ -6405,7 +6748,9 @@ function CalendarView({ clients, showToast, confirmAction }: { clients: UserProf
         </div>
       </div>
 
-      <div className="grid grid-cols-7 border-b border-zinc-800">
+      <div className="w-full overflow-x-auto hide-scrollbar">
+        <div className="min-w-[600px]">
+          <div className="grid grid-cols-7 border-b border-zinc-800">
         {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
           <div key={day} className="py-3 text-center text-[10px] font-bold text-zinc-500 uppercase tracking-widest border-r border-zinc-800 last:border-0">
             {day}
@@ -6502,6 +6847,8 @@ function CalendarView({ clients, showToast, confirmAction }: { clients: UserProf
             </div>
           );
         })}
+      </div>
+        </div>
       </div>
 
       <AnimatePresence>

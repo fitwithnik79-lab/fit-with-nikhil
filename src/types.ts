@@ -296,19 +296,58 @@ export interface WeeklyCheckIn {
   programRating?: number;
   freeText?: string;
   // fitness only:
-  strengthGain?: boolean;
+  strengthGain?: boolean | string;
   energyLevel?: number;
-  dietAdherence?: 'yes' | 'partial' | 'no';
+  dietAdherence?: 'yes' | 'partial' | 'partially' | 'no';
   // injury clients:
-  painReduction?: 'slight' | 'moderate' | 'no';
-  movementImprovement?: 'slight' | 'moderate' | 'no';
+  painReduction?: 'slight' | 'moderate' | 'no' | string;
+  movementImprovement?: 'slight' | 'moderate' | 'no' | string;
   // knee only:
-  kneeStiffness?: boolean;
+  kneeStiffness?: boolean | string;
   // back only:
-  sharpPain?: boolean;
+  sharpPain?: boolean | string;
   // shoulder only:
-  overheadReach?: boolean;
-  sleepAffected?: boolean;
+  overheadReach?: boolean | string;
+  sleepAffected?: boolean | string;
+  // --- AI ADAPTATION FIELDS ---
+  exerciseFeedbackNotes?: string;
+  painAreas?: string[]; // e.g. ['knee', 'lower_back', 'shoulder']
+  exercisesTooHard?: string[];
+  exercisesTooEasy?: string[];
+  equipmentConstraints?: string;
+  sleepRating?: number;
+  aiAdaptedStatus?: 'pending' | 'adapted' | 'reviewed' | 'applied';
+  adaptationSummary?: string;
+  adaptedAt?: string;
+  targetNextWeek?: number;
+  conductedInMeeting?: boolean;
+  meetingNotes?: string;
+  coachConductedBy?: string;
+}
+
+export interface AdaptedExercise extends Exercise {
+  changeType?: 'substituted' | 'progressed' | 'deloaded' | 'unchanged' | 'new';
+  adaptationReason?: string;
+  originalExerciseName?: string;
+}
+
+export interface AdaptedWorkoutDay {
+  dayNumber: number;
+  label: string;
+  exercises: AdaptedExercise[];
+  focusNotes?: string;
+}
+
+export interface ProgramAdaptationResult {
+  clientUid: string;
+  checkInId?: string;
+  previousWeekNumber: number;
+  targetWeekNumber: number;
+  executiveSummary: string;
+  keyChanges: string[];
+  coachEncouragement: string;
+  adaptedDays: AdaptedWorkoutDay[];
+  adaptedAt: string;
 }
 
 export interface PersonalRecord {
@@ -320,3 +359,4 @@ export interface PersonalRecord {
   achievedAt: string;  // ISO date
   weekNumber: number;
 }
+

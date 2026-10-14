@@ -112,24 +112,47 @@ service cloud.firestore {
              data.createdAt is timestamp;
     }
 
+    function isValidPersonalRecord(data) {
+      return data.keys().hasAll(['clientId', 'exerciseName', 'weight', 'reps', 'achievedAt', 'weekNumber']) &&
+             data.clientId is string && data.clientId.size() <= 128 &&
+             data.exerciseName is string && data.exerciseName.size() <= 200 &&
+             (data.weight is int || data.weight is float) &&
+             data.reps is string && data.reps.size() <= 50 &&
+             data.achievedAt is string && data.achievedAt.size() <= 64 &&
+             data.weekNumber is int;
+    }
+
     function isValidWeeklyCheckIn(data) {
       return data.keys().hasAll(['uid', 'clientType', 'weekOf', 'submittedAt']) &&
              data.uid is string && data.uid.size() <= 128 &&
              data.clientType in ['fitness', 'knee_injury', 'back_injury', 'shoulder_injury'] &&
              data.weekOf is string && data.weekOf.size() <= 64 &&
              data.submittedAt is string && data.submittedAt.size() <= 64 &&
-             (!('strengthGain' in data) || (data.strengthGain is string && data.strengthGain in ['yes', 'no'])) &&
-             (!('painReduction' in data) || (data.painReduction is string && data.painReduction in ['slight', 'moderate', 'no'])) &&
-             (!('movementImprovement' in data) || (data.movementImprovement is string && data.movementImprovement in ['slight', 'moderate', 'no', 'yes', 'no_improvement'])) &&
+             (!('strengthGain' in data) || (data.strengthGain is bool || (data.strengthGain is string && data.strengthGain in ['yes', 'no']))) &&
+             (!('painReduction' in data) || (data.painReduction is string && data.painReduction in ['slight', 'moderate', 'no', 'better', 'same', 'worse'])) &&
+             (!('movementImprovement' in data) || (data.movementImprovement is string && data.movementImprovement in ['slight', 'moderate', 'no', 'yes', 'no_improvement', 'easier', 'same', 'harder'])) &&
              (!('workoutPattern' in data) || (data.workoutPattern is string && data.workoutPattern in ['boring', 'interesting'])) &&
-             (!('sharpPain' in data) || (data.sharpPain is string && data.sharpPain in ['yes', 'no'])) &&
-             (!('kneeStiffness' in data) || (data.kneeStiffness is string && data.kneeStiffness in ['yes', 'no'])) &&
-             (!('overheadReach' in data) || (data.overheadReach is string && data.overheadReach in ['yes', 'no'])) &&
-             (!('sleepAffected' in data) || (data.sleepAffected is string && data.sleepAffected in ['yes', 'no'])) &&
-             (!('dietAdherence' in data) || (data.dietAdherence is string && data.dietAdherence in ['yes', 'partially', 'no'])) &&
+             (!('sharpPain' in data) || (data.sharpPain is bool || (data.sharpPain is string && data.sharpPain in ['yes', 'no']))) &&
+             (!('kneeStiffness' in data) || (data.kneeStiffness is bool || (data.kneeStiffness is string && data.kneeStiffness in ['yes', 'no']))) &&
+             (!('overheadReach' in data) || (data.overheadReach is bool || (data.overheadReach is string && data.overheadReach in ['yes', 'no', 'didnt_test']))) &&
+             (!('sleepAffected' in data) || (data.sleepAffected is bool || (data.sleepAffected is string && data.sleepAffected in ['yes', 'no']))) &&
+             (!('dietAdherence' in data) || (data.dietAdherence is string && data.dietAdherence in ['yes', 'partially', 'partial', 'no'])) &&
              (!('freeText' in data) || (data.freeText is string && data.freeText.size() <= 4000)) &&
              (!('programRating' in data) || (data.programRating is int || data.programRating is float)) &&
-             (!('energyLevel' in data) || (data.energyLevel is int || data.energyLevel is float));
+             (!('energyLevel' in data) || (data.energyLevel is int || data.energyLevel is float)) &&
+             (!('sleepRating' in data) || (data.sleepRating is int || data.sleepRating is float)) &&
+             (!('exerciseFeedbackNotes' in data) || (data.exerciseFeedbackNotes is string && data.exerciseFeedbackNotes.size() <= 4000)) &&
+             (!('painAreas' in data) || data.painAreas is list) &&
+             (!('exercisesTooHard' in data) || (data.exercisesTooHard is list || data.exercisesTooHard is string)) &&
+             (!('exercisesTooEasy' in data) || (data.exercisesTooEasy is list || data.exercisesTooEasy is string)) &&
+             (!('equipmentConstraints' in data) || (data.equipmentConstraints is string && data.equipmentConstraints.size() <= 1000)) &&
+             (!('aiAdaptedStatus' in data) || (data.aiAdaptedStatus is string && data.aiAdaptedStatus in ['pending', 'adapted', 'reviewed', 'applied'])) &&
+             (!('adaptationSummary' in data) || (data.adaptationSummary is string && data.adaptationSummary.size() <= 4000)) &&
+             (!('adaptedAt' in data) || (data.adaptedAt is string && data.adaptedAt.size() <= 64)) &&
+             (!('targetNextWeek' in data) || data.targetNextWeek is int) &&
+             (!('conductedInMeeting' in data) || data.conductedInMeeting is bool) &&
+             (!('meetingNotes' in data) || (data.meetingNotes is string && data.meetingNotes.size() <= 4000)) &&
+             (!('coachConductedBy' in data) || (data.coachConductedBy is string && data.coachConductedBy.size() <= 128));
     }
 
     function isValidBadge(data) {
@@ -310,6 +333,14 @@ service cloud.firestore {
       allow update: if isSignedIn() && isValidId(checkInId) && (resource.data.uid == request.auth.uid || isAdmin()) && isValidWeeklyCheckIn(incoming());
       allow delete: if isAdmin() && isValidId(checkInId);
     }
+
+    match /personalRecords/{recordId} {
+      allow read: if isSignedIn() && (resource.data.clientId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && (incoming().clientId == request.auth.uid || isAdmin()) && isValidPersonalRecord(incoming());
+      allow update: if isSignedIn() && (resource.data.clientId == request.auth.uid || isAdmin()) && isValidPersonalRecord(incoming());
+      allow delete: if isAdmin() || (isSignedIn() && resource.data.clientId == request.auth.uid);
+    }
   }
 }
+
 
